@@ -419,19 +419,19 @@ describe('bootProblems', () => {
 
 describe('quotas', () => {
 	it('has finite defaults, also with the old selfhost value', async () => {
-		expect((await load({ TMT_MODE: 'selfhost' })).quotas().buildsPerWorkspace).toBe(10);
+		expect((await load({ TMT_MODE: 'selfhost' })).quotas().buildsPerWorkspace).toBe(50);
 		const q = (await load()).quotas();
 		expect(q).toEqual({
-			buildsPerWorkspace: 10,
+			buildsPerWorkspace: 50,
 			draftsPerUser: 20,
-			chaptersPerUser: 3,
+			chaptersPerUser: 10,
 			membersPerChapter: 25,
 			pendingInvitesPerChapter: 25,
 			photosPerBuild: 100,
 			kitCopiesPerWorkspace: 2,
 			customFilamentsPerWorkspace: 50,
 			savedDesignsPerUser: 50,
-			uploadBytesPerWorkspace: 2048 * 1024 * 1024,
+			uploadBytesPerWorkspace: 1024 * 1024 * 1024,
 			uploadBytesPerUser: 4096 * 1024 * 1024,
 			stepConversionsPerUser: 1,
 			sseConnectionsPerUser: 12,
@@ -464,14 +464,14 @@ describe('quotas', () => {
 			(await load({ TMT_MODE: 'public', QUOTA_UPLOAD_MB_PER_USER: 'off' })).quotas()
 				.uploadBytesPerUser
 		).toBeNull();
-		expect(self.buildsPerWorkspace).toBe(10);
+		expect(self.buildsPerWorkspace).toBe(50);
 	});
 
 	it('treats an empty variable as unset', async () => {
 		expect(
 			(await load({ TMT_MODE: 'public', QUOTA_BUILDS_PER_WORKSPACE: ' ' })).quotas()
 				.buildsPerWorkspace
-		).toBe(10);
+		).toBe(50);
 	});
 
 	it('rejects bad values, naming the variable', async () => {
@@ -537,8 +537,8 @@ describe('link printer totals and manual printer cap', () => {
 
 describe('maxThreeMfBytes', () => {
 	const MB = 1024 * 1024;
-	it('defaults to 256 MB; MAX_3MF_MB wins', async () => {
-		expect((await load()).maxThreeMfBytes()).toBe(256 * MB);
+	it('defaults to 95 MB; MAX_3MF_MB wins', async () => {
+		expect((await load()).maxThreeMfBytes()).toBe(95 * MB);
 		expect((await load({ TMT_MODE: 'public', MAX_3MF_MB: '600' })).maxThreeMfBytes()).toBe(
 			600 * MB
 		);
@@ -590,10 +590,10 @@ describe('bodyLimitWarning', () => {
 	});
 
 	it('warns when BODY_SIZE_LIMIT is unset or below MAX_3MF_MB', async () => {
-		expect((await load({ NODE_ENV: 'production' })).bodyLimitWarning()).toMatch(/not set.*257M/);
+		expect((await load({ NODE_ENV: 'production' })).bodyLimitWarning()).toMatch(/not set.*96M/);
 		expect(
 			(await load({ NODE_ENV: 'production', BODY_SIZE_LIMIT: '512K' })).bodyLimitWarning()
-		).toMatch(/at least 257M/);
+		).toMatch(/at least 96M/);
 		expect(
 			(
 				await load({ NODE_ENV: 'production', BODY_SIZE_LIMIT: '1100M', MAX_3MF_MB: '2048' })
@@ -602,6 +602,10 @@ describe('bodyLimitWarning', () => {
 	});
 
 	it('needs no warning for a lowered MAX_3MF_MB', async () => {
+		// the image sets BODY_SIZE_LIMIT=100M, which fits the 95 MB default
+		expect(
+			(await load({ NODE_ENV: 'production', BODY_SIZE_LIMIT: '100M' })).bodyLimitWarning()
+		).toBeNull();
 		expect(
 			(
 				await load({ NODE_ENV: 'production', BODY_SIZE_LIMIT: '400M', MAX_3MF_MB: '300' })

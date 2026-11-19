@@ -1,6 +1,6 @@
 # Site admin: 3D model and print geometry
 
-The kit admin (`/admin/templates`, visible to the first user and to the emails in `ADMIN_EMAILS`) is where a site admin manages the kit. You do not need any of this to use the standard kit: the MakeGood model and print geometry are installed from the kit pack on first start (see the README and [docs/kit-pack.md](../kit-pack.md)).
+The kit admin (`/admin/templates`, visible to site admins: the accounts whose verified email is in `ADMIN_EMAILS`, and people another site admin made admin) is where a site admin manages the kit. You do not need any of this to use the standard kit: the MakeGood model and print geometry are installed from the kit pack on first start (see the README and [docs/kit-pack.md](../kit-pack.md)).
 
 ## 3D model
 
@@ -20,9 +20,9 @@ The kit admin builds the chair's 3D model from **your own copy** of MakeGood's S
 
    then put `hardware.glb` into the kit pack (see [docs/kit-pack.md](../kit-pack.md)). There is no upload route.
 
-Uploads are sent as the raw file body (not multipart), so the server streams them to disk instead of holding hundreds of MB in memory. adapter-node rejects request bodies over `BODY_SIZE_LIMIT` (default 512 kB), so the image sets `BODY_SIZE_LIMIT=1100M`; if you run it another way, set that variable (it applies to every route; the app also caps each route on its own, see the [environment reference](environment.md#upload-and-body-limits)). `BODY_SIZE_LIMIT` must stay at least `MAX_3MF_MB` plus 1 MB; the server logs a warning at start if not. A reverse proxy needs the same: in Nginx Proxy Manager add `client_max_body_size 1100m;` under Advanced.
+Uploads are sent as the raw file body (not multipart), so the server streams them to disk instead of holding hundreds of MB in memory. The STEP zip route accepts up to 200 MB on its own, but every request body must also fit `BODY_SIZE_LIMIT` (the image sets `100M`, the most Cloudflare's free plan lets through) and whatever proxy is in front; to import a larger zip, raise both, or use a smaller zip with only the part files. See the [environment reference](environment.md#upload-and-body-limits).
 
-Developing without the zip: `node scripts/dev-register-model.mjs <db file> <template slug> <model.glb>` copies a GLB you built earlier into the data directory next to the database and registers it.
+Developing without the zip: `DATABASE_URL=... DATA_DIR=./data node scripts/dev-register-model.mjs <template slug> <model.glb>` copies a GLB you built earlier into the data directory and registers it.
 
 ## Importing print geometry without the browser
 
@@ -32,7 +32,7 @@ For the 88 MB MakeGood profile, the command line runs the same import as the kit
 docker cp profile.3mf <container>:/tmp/profile.3mf
 docker exec <container> node scripts/import-print-geometry.mjs --list
 docker exec <container> node scripts/import-print-geometry.mjs \
-  --db /data/tmt.db --template makegood-tmt-revb --file /tmp/profile.3mf [--file /tmp/harness.zip]
+  --template makegood-tmt-revb --file /tmp/profile.3mf [--file /tmp/harness.zip]
 ```
 
 `--file` may be repeated and may be a zip of 3MFs. `--init` migrates and seeds a brand new (scratch) database first.

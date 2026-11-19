@@ -1,4 +1,4 @@
-import { ApiError, buildAccess, requireEditor } from '#lib/server/access.ts';
+import { ApiError, buildAccess, requireEditor, requireNotDemo } from '#lib/server/access.ts';
 import { readJson, requireUserId, respond } from '#lib/server/api.ts';
 import { getDb } from '#lib/server/db/index.ts';
 import { checkPartSlugs, expectOnPrinterJob } from '#lib/server/printers/jobs.ts';
@@ -15,6 +15,7 @@ export const POST: RequestHandler = (event) =>
 	respond(async () => {
 		const db = getDb();
 		const userId = requireUserId(event);
+		requireNotDemo(event.locals.user);
 		const p = await getPrinter(db, event.params.id);
 		if (!p) throw new ApiError(404, 'Not found');
 		await requireEditor(db, p.organizationId, userId);

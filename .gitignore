@@ -50,3 +50,6 @@ blob-report/
 
 # Browser-tool output
 .playwright-mcp/
+
+# Agent worktrees
+/.claude/worktrees/

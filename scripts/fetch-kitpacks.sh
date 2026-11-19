@@ -53,7 +53,7 @@ if (a) console.log(a.id);
 		curl -fSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/octet-stream" \
 			-o "$DEST" "$API/releases/assets/$ASSET" || { rm -f "$DEST"; fail "download of $FILE failed"; continue; }
 	else
-		PATTERN=${KITPACK_URL:-https://github.com/$REPO/releases/download/kitpack-{slug}-{version}/{file}}
+		PATTERN=${KITPACK_URL:-"https://github.com/$REPO/releases/download/kitpack-{slug}-{version}/{file}"}
 		case $PATTERN in
 			*"{"*) URL=$(printf '%s' "$PATTERN" | sed "s|{slug}|$SLUG|g; s|{version}|$VERSION|g; s|{file}|$FILE|g") ;;
 			*) URL="${PATTERN%/}/$FILE" ;;

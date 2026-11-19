@@ -21,7 +21,6 @@ services:
     expose:
       - '3000'
     environment:
-      TMT_MODE: public
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in deploy/.env}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in deploy/.env}
       PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in deploy/.env}
@@ -42,6 +41,11 @@ services:
       UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
       UMAMI_SCRIPT_URL: ${UMAMI_SCRIPT_URL:-}
       CF_ANALYTICS_TOKEN: ${CF_ANALYTICS_TOKEN:-}
+      # Demo sandbox limits (empty = the defaults in docs/guides/hosting.md).
+      DEMO_MAX_LIVE: ${DEMO_MAX_LIVE:-}
+      DEMO_PER_IP_PER_HOUR: ${DEMO_PER_IP_PER_HOUR:-}
+      DEMO_TTL_HOURS: ${DEMO_TTL_HOURS:-}
+      DEMO_BUILDS: ${DEMO_BUILDS:-}
     volumes:
       # Uploads (photos, 3MF files, converted models). The kit pack is inside the image.
       - tmt-data:/data

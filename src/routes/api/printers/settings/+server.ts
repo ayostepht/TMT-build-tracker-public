@@ -1,4 +1,4 @@
-import { ApiError, requireMember, requireOwner } from '#lib/server/access.ts';
+import { ApiError, requireMember, requireNotDemo, requireOwner } from '#lib/server/access.ts';
 import { readJson, requireUserId, respond } from '#lib/server/api.ts';
 import { getDb } from '#lib/server/db/index.ts';
 import { getOrgSettings, setOrgSettings } from '#lib/server/org-settings.ts';
@@ -18,6 +18,7 @@ export const PUT: RequestHandler = (event) =>
 	respond(async () => {
 		const db = getDb();
 		const userId = requireUserId(event);
+		requireNotDemo(event.locals.user);
 		const body = (await readJson(event)) as Record<string, unknown>;
 		const org = typeof body?.organizationId === 'string' ? body.organizationId : '';
 		if (!org) throw new ApiError(400, 'organizationId is required');

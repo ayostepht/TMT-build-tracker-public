@@ -413,14 +413,17 @@ export function kitpackDownloadEnabled(): boolean {
 	return !/^(off|0|false|no)$/i.test((env.KITPACK_DOWNLOAD ?? '').trim());
 }
 
+/** Default `MAX_3MF_MB`: fits under the image's `BODY_SIZE_LIMIT=100M` with room for the request. */
+export const DEFAULT_MAX_3MF_MB = 95;
+
 /**
- * Largest 3MF upload in bytes: `MAX_3MF_MB` when set, otherwise 1024 (selfhost) or 256 (public mode,
- * where strangers upload). Sliced projects with G-code for every plate reach several hundred MB.
+ * Largest 3MF upload in bytes: `MAX_3MF_MB` when set, otherwise 95. A project 3MF without sliced
+ * G-code is a few MB; sliced projects with G-code for every plate can be larger, so a host that
+ * raises this also raises `BODY_SIZE_LIMIT` (the boot warning below says by how much).
  */
 export function maxThreeMfBytes(): number {
 	const mb = Number(process.env.MAX_3MF_MB);
-	const fallback = isPublicMode() ? 256 : 1024;
-	return (Number.isFinite(mb) && mb > 0 ? mb : fallback) * 1024 * 1024;
+	return (Number.isFinite(mb) && mb > 0 ? mb : DEFAULT_MAX_3MF_MB) * 1024 * 1024;
 }
 
 /** Largest request body adapter-node's `BODY_SIZE_LIMIT` allows, in bytes; `Infinity` when set to it, null when unset or unparsable. */
@@ -457,8 +460,9 @@ export function bodyLimitWarning(): string | null {
 
 /**
  * Limits per workspace, user, chapter or build. A field is a count (or bytes), or `null` for no limit.
- * Defaults depend on `TMT_MODE`: `selfhost` has no limits, `public` has finite ones sized for volunteer
- * makers who each build one or two chairs. Every field has a `QUOTA_*` variable (digits, or `off`).
+ * Defaults are finite, sized for volunteer makers who each build a few chairs (the hosted rules
+ * always apply; the self-host column below is kept only for the table's shape). Every field has a
+ * `QUOTA_*` variable (digits, or `off`).
  * This is only the configuration contract: whichever feature creates the thing reads its field here
  * and refuses with a clear message; a field nothing reads yet limits nothing.
  */
@@ -503,9 +507,9 @@ type CountKey = Exclude<keyof Quotas, 'uploadBytesPerWorkspace' | 'uploadBytesPe
 
 /** Variable name, selfhost default, public default. */
 const QUOTA_COUNTS: Record<CountKey, [string, number | null, number]> = {
-	buildsPerWorkspace: ['QUOTA_BUILDS_PER_WORKSPACE', null, 10],
+	buildsPerWorkspace: ['QUOTA_BUILDS_PER_WORKSPACE', null, 50],
 	draftsPerUser: ['QUOTA_DRAFTS_PER_USER', null, 20],
-	chaptersPerUser: ['QUOTA_CHAPTERS_PER_USER', null, 3],
+	chaptersPerUser: ['QUOTA_CHAPTERS_PER_USER', null, 10],
 	membersPerChapter: ['QUOTA_MEMBERS_PER_CHAPTER', null, 25],
 	pendingInvitesPerChapter: ['QUOTA_PENDING_INVITES_PER_CHAPTER', null, 25],
 	photosPerBuild: ['QUOTA_PHOTOS_PER_BUILD', null, 100],
@@ -520,7 +524,7 @@ const QUOTA_COUNTS: Record<CountKey, [string, number | null, number]> = {
 	concurrentUploadsPerUser: ['QUOTA_CONCURRENT_UPLOADS_PER_USER', null, 2]
 };
 const QUOTA_UPLOAD_VAR = 'QUOTA_UPLOAD_MB_PER_WORKSPACE';
-const QUOTA_UPLOAD_PUBLIC_MB = 2048;
+const QUOTA_UPLOAD_PUBLIC_MB = 1024;
 const QUOTA_UPLOAD_USER_VAR = 'QUOTA_UPLOAD_MB_PER_USER';
 const QUOTA_UPLOAD_USER_PUBLIC_MB = 4096;
 

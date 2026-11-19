@@ -117,6 +117,28 @@ describe('share and unshare', () => {
 		expect((await findSharedDesign(db, d.id)).sharedAt).toEqual(at);
 	});
 
+	it('a demo account may not share, but may copy from the gallery into its own account', async () => {
+		await db.insert(user).values({
+			id: 'demo1',
+			name: 'Demo',
+			email: 'demo1@example.test',
+			createdAt: new Date(),
+			isDemo: true
+		});
+		const own = await addDesign('demo1', 'Demo colors');
+		expect(await status(() => shareDesign(db, own.id, 'demo1'))).toBe(403);
+		expect((await findDesign(db, own.id, 'demo1')).sharedAt).toBeNull();
+		const d = await addDesign('alice', 'Shared');
+		await shareDesign(db, d.id, 'alice');
+		expect((await listGallery(db, 'demo1')).items.map((i) => i.name)).toEqual(['Shared']);
+		const c = await copyGalleryDesign(db, d.id, 'demo1');
+		expect(await findDesign(db, c.id, 'demo1')).toMatchObject({
+			authorUserId: 'demo1',
+			isPublic: false,
+			sharedAt: null
+		});
+	});
+
 	it('the author unshares; strangers cannot', async () => {
 		const d = await addDesign('alice');
 		await shareDesign(db, d.id, 'alice');

@@ -27,15 +27,15 @@ describe('bodyCapFor', () => {
 	});
 
 	it('follows MAX_3MF_MB for the 3MF upload routes, plus framing', () => {
-		expect(bodyCapFor('POST', '/api/builds/b1/plates/upload').cap).toBe(257 * MB);
+		expect(bodyCapFor('POST', '/api/builds/b1/plates/upload').cap).toBe(96 * MB);
 		process.env.MAX_3MF_MB = '300';
 		expect(bodyCapFor('POST', '/api/builds/b1/plates/upload').cap).toBe(301 * MB);
 		expect(bodyCapFor('POST', '/api/templates/t1/print-geometry').cap).toBe(301 * MB);
 	});
 
-	it('uses the 256 MB default, and an explicit MAX_3MF_MB still wins', () => {
-		expect(bodyCapFor('POST', '/api/builds/b1/plates/upload').cap).toBe(257 * MB);
-		expect(bodyCapFor('POST', '/api/templates/t1/print-geometry').cap).toBe(257 * MB);
+	it('uses the 95 MB default, and an explicit MAX_3MF_MB still wins', () => {
+		expect(bodyCapFor('POST', '/api/builds/b1/plates/upload').cap).toBe(96 * MB);
+		expect(bodyCapFor('POST', '/api/templates/t1/print-geometry').cap).toBe(96 * MB);
 		process.env.MAX_3MF_MB = '512';
 		expect(bodyCapFor('POST', '/api/builds/b1/plates/upload').cap).toBe(513 * MB);
 	});

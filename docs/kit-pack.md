@@ -119,7 +119,8 @@ In the app image or a checkout after `npm run build`, with MakeGood's files at h
 node --max-old-space-size=4096 scripts/step-to-glb.mjs "TMT 3D TOP ASSEMBLY - RENDERING ONLY.step" hardware.glb
 
 # scratch install + import, later --print files win; then write the pack
-node --max-old-space-size=4096 scripts/build-kit-pack.mjs --db data/kitpack-work/tmt.db --init \
+DATABASE_URL=postgres://tmt:tmt@localhost:5432/tmt_kitpack \
+  node --max-old-space-size=4096 scripts/build-kit-pack.mjs --data-dir data/kitpack-work --init \
   --model "STEP FILES.zip" --hardware hardware.glb \
   --print h-profile.3mf --print bucket-seat.3mf --print harness.zip --print xpa-project.3mf \
   --pack-version 1.0.1 --out data/kitpack
@@ -127,7 +128,7 @@ node --max-old-space-size=4096 scripts/build-kit-pack.mjs --db data/kitpack-work
 
 Pack 1.0.2 is the 1.0.1 install plus one community part, built from a scratch install of 1.0.1 ("only pack what an
 install already has"): migrate and seed, let the installer put 1.0.1 in, then
-`node scripts/build-kit-pack.mjs --db <scratch>/tmt.db --pack-version 1.0.2 --out <dir> --print <handle.3mf> --model-node push-handle-one-piece=<handle.3mf> --project-settings push-handle-one-piece=<handle.3mf> --origins-from <the 1.0.1 pack>`
+`node scripts/build-kit-pack.mjs --database-url <scratch database> --data-dir <scratch dir> --pack-version 1.0.2 --out <dir> --print <handle.3mf> --model-node push-handle-one-piece=<handle.3mf> --project-settings push-handle-one-piece=<handle.3mf> --origins-from <the 1.0.1 pack>`
 (`--origins-from` keeps each part's source file name in `geometry.json`, which an installed pack row no longer knows; `kitpacks/licenses.json` is picked up by default).
 
 It prints the size and sha256. Then: attach the file to a GitHub release tagged

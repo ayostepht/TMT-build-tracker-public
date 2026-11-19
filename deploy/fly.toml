@@ -15,7 +15,6 @@ primary_region = 'ams'
 dockerfile = '../Dockerfile'
 
 [env]
-TMT_MODE = 'public'
 PORT = '3000'
 # Set to your real address: https, no trailing slash. Needed for sign-in callbacks.
 PUBLIC_URL = 'https://tmt.example.com'

@@ -83,6 +83,12 @@ test('the server refuses uploads, printers, teams, invitations and export to a d
 	await post('printer', '/api/printers', { organizationId: 'x', name: 'p' });
 	await post('printer-test', '/api/printers/test', { organizationId: 'x' });
 	await post('camera-test', '/api/printers/camera-test', { organizationId: 'x' });
+	await post('printer-edit', '/api/printers/x', { name: 'p' }, 'patch');
+	await post('printer-delete', '/api/printers/x', {}, 'delete');
+	await post('printer-settings', '/api/printers/settings', { organizationId: 'x' }, 'put');
+	await post('printer-expect', '/api/printers/x/expect', {});
+	await post('printer-job', '/api/printers/jobs/x', { action: 'dismiss' });
+	await post('share', '/api/designs/x/share');
 	await post('guide', '/api/templates/x/guide/pages/1', 'x');
 	await post('model', '/api/templates/x/model', 'x');
 	await post('geometry', '/api/templates/x/print-geometry', 'x');
@@ -98,6 +104,12 @@ test('the server refuses uploads, printers, teams, invitations and export to a d
 		'printer',
 		'printer-test',
 		'camera-test',
+		'printer-edit',
+		'printer-delete',
+		'printer-settings',
+		'printer-expect',
+		'printer-job',
+		'share',
 		'snapshot',
 		'org',
 		'export'
@@ -141,4 +153,53 @@ test('a visitor with a demo can open the login page and sign in for real', async
 	await settled(page);
 	await expect(page.getByText(/You are in the demo/)).toBeVisible();
 	await expect(page.getByTestId('sign-in-google')).toBeVisible();
+});
+
+test('a demo may browse the gallery and copy a design, but never share one', async ({ page }) => {
+	const buildId = await startDemo(page);
+	const origin = new URL(page.url()).origin;
+	// the demo's own sample design (seeded with the build)
+	const [own] = await withE2eDb(
+		(sql) => sql<{ id: string; slug: string; author: string }[]>`
+			select d.id, d.slug, d.author_user_id as author from color_designs d
+			join member m on m.user_id = d.author_user_id
+			join builds b on b.organization_id = m.organization_id
+			where b.id = ${buildId} and d.name = 'Sample colors'`
+	);
+	expect(own).toBeTruthy();
+
+	const share = await page.request.post(`/api/designs/${own.id}/share`, { headers: { origin } });
+	expect(share.status()).toBe(403);
+	expect((await share.json()).error).toContain('not available in the demo');
+	await withE2eDb(async (sql) => {
+		const [r] = await sql<{ shared: boolean }[]>`
+			select shared_at is not null as shared from color_designs where id = ${own.id}`;
+		expect(r.shared).toBe(false);
+	});
+
+	// A design someone else shared (listed here directly): the demo sees it and may copy it.
+	const [other] = await withE2eDb(
+		(sql) => sql<{ id: string; slug: string }[]>`
+			insert into color_designs (id, template_id, slug, name, author_user_id, roles, part_roles,
+				shared_at, shared_by)
+			select gen_random_uuid()::text, template_id, ${'demo-gallery-' + Date.now().toString(36)}, 'Demo gallery pick',
+				null, roles, part_roles, now(), null
+			from color_designs where id = ${own.id}
+			returning id, slug`
+	);
+	try {
+		await page.goto('/gallery');
+		await expect(page.locator(`[data-gallery-design="${other.slug}"]`)).toBeVisible();
+		const copy = await page.request.post(`/api/designs/${other.id}/copy`, { headers: { origin } });
+		expect(copy.status()).toBe(200);
+		const { id } = (await copy.json()) as { id: string };
+		await withE2eDb(async (sql) => {
+			const [r] = await sql<{ author: string; shared: boolean }[]>`
+				select author_user_id as author, shared_at is not null as shared
+				from color_designs where id = ${id}`;
+			expect(r).toEqual({ author: own.author, shared: false });
+		});
+	} finally {
+		await withE2eDb((sql) => sql`delete from color_designs where id = ${other.id}`);
+	}
 });

@@ -1,4 +1,4 @@
-import { ApiError, requireEditor } from '#lib/server/access.ts';
+import { ApiError, requireEditor, requireNotDemo } from '#lib/server/access.ts';
 import { readJson, requireUserId, respond } from '#lib/server/api.ts';
 import { getDb } from '#lib/server/db/index.ts';
 import { deletePrinter, getPrinter, toPublic, updatePrinter } from '#lib/server/printers/store.ts';
@@ -16,6 +16,7 @@ async function orgOf(id: string, userId: string): Promise<string> {
 
 export const PATCH: RequestHandler = (event) =>
 	respond(async () => {
+		requireNotDemo(event.locals.user);
 		const org = await orgOf(event.params.id, requireUserId(event));
 		const row = await updatePrinter(getDb(), event.params.id, org, await readJson(event));
 		await getSupervisor()?.refresh(row.id);
@@ -25,6 +26,7 @@ export const PATCH: RequestHandler = (event) =>
 
 export const DELETE: RequestHandler = (event) =>
 	respond(async () => {
+		requireNotDemo(event.locals.user);
 		const org = await orgOf(event.params.id, requireUserId(event));
 		await deletePrinter(getDb(), event.params.id, org);
 		cameraChanged(event.params.id);

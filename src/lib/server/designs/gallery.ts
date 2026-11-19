@@ -10,7 +10,7 @@
  */
 import { and, asc, count, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 import { colorFamily, type FamilyId } from '#lib/domain/swatch-picker.ts';
-import { ApiError, requireSiteAdmin, type SiteAdminCandidate } from '../access';
+import { ApiError, requireNotDemoId, requireSiteAdmin, type SiteAdminCandidate } from '../access';
 import { advisoryLock, first, one, type DbOrTx } from '../db';
 import { colorDesigns, templates, user } from '../db/schema';
 import { assertUnder, countSavedDesigns } from '../quota';
@@ -236,9 +236,10 @@ export async function getGalleryItem(
 
 /**
  * Share a design you wrote. Idempotent. At most `SHARES_PER_DAY` shares per person per 24 hours.
- * TODO(wave 3 merge): requireNotDemo(user): demo accounts may browse the gallery but not share.
+ * Demo accounts may browse and copy from the gallery but never share (403), checked on the user row.
  */
 export async function shareDesign(db: DbOrTx, key: string, userId: string): Promise<void> {
+	await requireNotDemoId(db, userId);
 	const d = await findDesign(db, key, userId);
 	if (d.authorUserId !== userId) throw new ApiError(403, 'Only the author can share a design');
 	if (d.sharedAt) return;

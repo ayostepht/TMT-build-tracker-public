@@ -1,4 +1,4 @@
-import { ApiError, requireEditor } from '#lib/server/access.ts';
+import { ApiError, requireEditor, requireNotDemo } from '#lib/server/access.ts';
 import { readJson, requireUserId, respond } from '#lib/server/api.ts';
 import { first, getDb } from '#lib/server/db/index.ts';
 import { confirmJobRuns, dismissJob, linkJob, unlinkJob } from '#lib/server/printers/jobs.ts';
@@ -11,6 +11,7 @@ export const POST: RequestHandler = (event) =>
 	respond(async () => {
 		const db = getDb();
 		const userId = requireUserId(event);
+		requireNotDemo(event.locals.user);
 		const row = await first(
 			db
 				.select({ org: printers.organizationId, buildId: printerJobs.buildId })
