@@ -1,5 +1,5 @@
-name: Install or docs feedback
-description: A guide was unclear, or you got stuck installing.
+name: Hosting or docs feedback
+description: A guide was unclear, or you got stuck deploying the hosted edition.
 title: 'Docs: '
 labels: ['documentation']
 body:
@@ -7,7 +7,7 @@ body:
     id: guide
     attributes:
       label: Which guide
-      placeholder: README quick start, Unraid guide, Reverse proxy
+      placeholder: Hosting guide (Supabase, sign-in apps, Fly.io, Railway, Cloudflare Tunnel), Printers
     validations:
       required: true
   - type: textarea
@@ -24,5 +24,5 @@ body:
   - type: input
     id: setup
     attributes:
-      label: What you installed on
-      placeholder: Docker on Ubuntu, Unraid 7, Synology
+      label: Where you deployed
+      placeholder: Fly.io, Railway, Docker with a Cloudflare Tunnel, Unraid

@@ -1,11 +1,11 @@
 # Contributing
 
-Thanks for helping. TMT Build Tracker is a web app for makers 3D-printing the MakeGood 3D TMT chair. Read the rules below before you open a pull request: a few of them are hard limits of the project.
+Thanks for helping. TMT Build Tracker is a web app for makers 3D-printing the MakeGood 3D TMT chair. This repository is the **hosted edition** (Postgres, sign-in with Google, GitHub or Discord, demo, shared gallery, printers through OctoEverywhere links only). The self-hosted edition (SQLite, Docker/Unraid, LAN printers) is [ayostepht/TMT-Build-Tracker](https://github.com/ayostepht/TMT-Build-Tracker); much of the code is shared, so a fix to shared code is often welcome in both. Read the rules below before you open a pull request: a few of them are hard limits of the project.
 
 ## Rules that are not negotiable
 
-- **MakeGood files never go into git.** The MakeGood 3D TMT model and print files are CC0 (the one-piece push handle by jeepxj is the exception, CC BY-NC) and ship as a separate **kit pack** (a release asset baked into the Docker image, see [docs/kit-pack.md](docs/kit-pack.md)). The repository holds only data about the kit (part names, settings, plate groupings). `.gitignore` blocks `*.3mf`, `*.glb`, `*.step`, `*.kitpack` and `uploads/`; do not work around it. Always credit MakeGood, and jeepxj for the one-piece push handle. The maker guide PDF is not bundled: link it and refer to page numbers.
-- **Printers are read-only.** The app reads printer status and sends no write command at all: Elegoo SDCP requests are built only by `sdcpEnvelope`, which allows the two read commands (0 and 1, empty data). It never switches anything on, moves, heats, pauses, stops or starts a printer, and never sends a file. Do not add that.
+- **MakeGood files never go into git.** The MakeGood 3D TMT model and print files are CC0 (the one-piece push handle by jeepxj is the exception, CC BY-NC) and ship as a separate **kit pack** (a release asset of the self-hosted repository, baked into the Docker image, see [docs/kit-pack.md](docs/kit-pack.md)). The repository holds only data about the kit (part names, settings, plate groupings). `.gitignore` blocks `*.3mf`, `*.glb`, `*.step`, `*.kitpack` and `uploads/`; do not work around it. Always credit MakeGood, and jeepxj for the one-piece push handle. The maker guide PDF is not bundled: link it and refer to page numbers.
+- **Printers are read-only.** The app reads printer status and sends no write command at all: Elegoo SDCP requests are built only by `sdcpEnvelope`, which allows the two read commands (0 and 1, empty data). It never switches anything on, moves, heats, pauses, stops or starts a printer, and never sends a file. Do not add that. The server reaches printers only through OctoEverywhere shared links (`src/lib/server/printers/outbound.ts`); it never connects to a private address or a host a user typed.
 - **Never re-orient parts in 3D.** Parts keep the face-down orientation from their source file. The plate arranger and the 3MF export may only rotate a part flat about the Z axis (0/90 degrees or a free in-plane angle). Never change which face is down, stand a part on an edge or tilt it; a part that does not fit flat is reported as oversize, with advice. See the header of `src/lib/domain/arrange.ts`.
 - **No personal data in fixtures, seeds or tests:** no real build progress, recipient or hospital names, user slicer files, IP addresses, domains, emails or access codes. Tests that need a real 3MF skip when the file is absent. Use example values (`tmt.example.com`, `you@example.com`).
 - **A container started against an empty database and an empty `/data` must keep working:** migrations and seeding run on startup, are idempotent and are locked so two instances starting together do not collide.
@@ -18,8 +18,8 @@ Use **Node 22**: `.nvmrc` has `22` (with nvm run `nvm use`), and CI and the Dock
 You also need **Postgres 16**. On Debian or Ubuntu with the `postgresql-16` package, `scripts/dev-postgres.sh` starts the cluster and creates the role `tmt` (password `tmt`) with the databases `tmt_dev` and `tmt_test`. Elsewhere, any Postgres 16 works, for example `docker run -d --name tmt-postgres -p 5432:5432 -e POSTGRES_USER=tmt -e POSTGRES_PASSWORD=tmt -e POSTGRES_DB=tmt_dev postgres:16` and then `docker exec tmt-postgres createdb -U tmt tmt_test`; the role needs `CREATEDB`, because the unit tests create and drop their own databases.
 
 ```bash
-git clone https://github.com/ayostepht/TMT-Build-Tracker.git
-cd TMT-Build-Tracker
+git clone https://github.com/ayostepht/TMT-build-tracker-public.git
+cd TMT-build-tracker-public
 cp .env.example .env     # set DATABASE_URL=postgres://tmt:tmt@localhost:5432/tmt_dev
 npm ci
 npm run dev              # http://localhost:5173
@@ -40,18 +40,11 @@ npm run test:e2e     # Playwright, see below
 npm run format       # prettier --write .
 ```
 
-A change is done when `check`, `lint`, `test` and `build` pass, the end-to-end specs that cover what you touched pass, and, if you changed anything that happens at startup (migrations, seeding, the Dockerfile, the kit pack), `docker build -t tmt-build-tracker:dev .` plus a container started on an empty data directory works (`/api/health` answers and the kit pack installs). Do not weaken or skip a CI gate (check, lint, unit tests, route-folder guard, end-to-end suite).
+A change is done when `check`, `lint`, `test` and `build` pass, the end-to-end specs that cover what you touched pass, and, if you changed anything that happens at startup (migrations, seeding, the Dockerfile, the kit pack), `docker build -t tmt-build-tracker-public:dev .` plus a container started on an empty database and an empty data directory works (`/api/health` answers and the kit pack installs). Do not weaken or skip a CI gate (check, lint, unit tests, build, end-to-end suite, image build).
 
 ### How CI runs
 
-The workflow is `.github/workflows/docker.yml`:
-
-- A push to `main` or `edge`, or a pull request, runs the `test` job (check, lint, unit tests, route-folder guard). A push that changes only docs runs nothing.
-- A pull request that changes only docs (Markdown files in the repository root or under `.github/`, `docs/`, `.claude/`, `LICENSE`, `unraid/`; a `.md` file under `src/`, `e2e/` and the like counts as code) takes a fast path: `test` only runs `prettier --check` on the changed files and `e2e` is skipped, so a docs-only pull request finishes in about a minute. Formatting still has to pass. One non-docs file in the pull request runs everything. The jobs keep the names `test` and `e2e` and still report a result.
-- The `e2e` job and the Docker image build run on `v*` tags and on manual runs (Actions, then docker, then Run workflow). When the repository variable `CI_FULL=true` is set (Settings, Secrets and variables, Actions, Variables), every push and pull request also runs the end-to-end suite, and every push to `main` or `edge` builds the image.
-- Image tags: a release tag `vX.Y.Z` publishes `latest`, `X.Y.Z` and `X.Y`; a pre-release tag (with a `-`) publishes only its full version; a push to the `edge` branch publishes `edge`; a push to `main` publishes only `sha-<short commit>`; every `edge` build also gets `sha-<short commit>`. Pull requests never publish an image.
-
-On the hosted-site branch, `.github/workflows/public-ci.yml` runs check, lint, unit tests and build, the full end-to-end suite against Postgres 16, and a Docker build without pushing.
+The workflow is `.github/workflows/public-ci.yml`. Every pull request into `main` and every push to `main` runs three jobs against Postgres 16: `test` (check, lint, unit tests, build), `e2e` (the full end-to-end suite) and `image` (a Docker build that pushes nothing). A push to `main` that passes all three also runs `publish`, which pushes `ghcr.io/ayostepht/tmt-build-tracker-public:latest` and `:sha-<short commit>`; that image is what the public site runs. Pull requests never publish. Workflow runs for a first-time contributor wait for a maintainer's approval.
 
 Run the end-to-end specs you touched locally before you open a pull request.
 
@@ -73,11 +66,11 @@ docker run --rm --network host -v "$PWD":/app -w /app mcr.microsoft.com/playwrig
 
 ## Conventions you need
 
-- **Stack:** SvelteKit (Svelte 5, TypeScript, `adapter-node`), Postgres via `postgres` (postgres-js) and Drizzle, Better Auth (Google, GitHub and Discord sign-in, organization plugin for teams and roles), three.js, fflate and fast-xml-parser for 3MF, Server-Sent Events, Vitest and Playwright. The code map is in [docs/architecture.md](https://github.com/ayostepht/TMT-Build-Tracker/blob/edge/docs/architecture.md) (on the `edge` branch).
+- **Stack:** SvelteKit (Svelte 5, TypeScript, `adapter-node`), Postgres via `postgres` (postgres-js) and Drizzle, Better Auth (Google, GitHub and Discord sign-in, organization plugin for teams and roles), three.js, fflate and fast-xml-parser for 3MF, Server-Sent Events, Vitest and Playwright. The code map is in [docs/architecture.md](docs/architecture.md).
 - **Imports:** there is no `$lib` alias. Import through the package.json subpath imports with explicit extensions (`#lib/server/db/index.ts`). Route ids include the `(app)` group: `resolve('/(app)/builds/[id]')`.
 - **Layering:** state rules live in `src/lib/domain/actions.ts` only, and `src/lib/domain/` has no database, Svelte or Node imports. Every build mutation goes through `mutateBuild` in `src/lib/server/builds/actions.ts`: it writes an `activity` row and emits an SSE event, and a new activity kind needs a sentence in the activity formatter. Client fetches go through `src/lib/client/api.ts`.
 - **Permissions are checked on the server** for every mutation (owner, editor, viewer; `src/lib/server/access.ts`). Hiding a button is not access control.
-- **Database changes:** edit `src/lib/server/db/app.schema.ts` (or `auth.schema.ts`), run `npm run db:generate` and commit the new files in `drizzle/` with the code that uses them. Migrations are applied on start; `db:push` is never used. The server must start from the app root because migrations load from `./drizzle`.
+- **Database:** every database call is async (`await`), and a "count, then insert" check runs inside a transaction behind an advisory lock (`advisoryLock` in `src/lib/server/db/index.ts`). Tests get their own database from `createTestDb()`. For a schema change, edit `src/lib/server/db/app.schema.ts` (or `auth.schema.ts`), run `npm run db:generate` and commit the new files in `drizzle/` with the code that uses them; never edit a migration that has been deployed. Migrations are applied on start; `db:push` is never used. The server must start from the app root because migrations load from `./drizzle`.
 - **Secrets** (OctoEverywhere links, printer API keys, OAuth client secrets) stay out of logs and API responses; printer credentials are stored encrypted.
 - **User interface:** mobile first (makers update status from a phone at the printer). Design tokens and the shared component classes are in `src/app.css` (Barlow Condensed, IBM Plex Sans, IBM Plex Mono; light and dark through `prefers-color-scheme` and `data-theme`). Actions are buttons (`.btn`, `.btn.primary`, `.btn.go`, `.btn.ghost`) or clickable badges; text links only inside sentences. Form fields are 16 px on touch devices (iOS zooms on focus otherwise). Check layout changes at 390 px wide (phone) and at desktop widths in light and dark.
 - **Formatting:** Prettier and ESLint decide; `npm run format` fixes the rest. Markdown is checked by `npm run lint` too.
@@ -88,23 +81,16 @@ docker run --rm --network host -v "$PWD":/app -w /app mcr.microsoft.com/playwrig
 Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 - Open an issue first for anything beyond a small fix, so the idea can be discussed before you spend time on it (the issue forms include a feature request).
-- Changes come as pull requests against `edge`, where changes are reviewed before they reach `main` and a release. CI must pass: `test` and `e2e`. Workflow runs for a first-time contributor wait for a maintainer's approval.
-- Do not open pull requests against `main`: it only receives promotions from `edge` (see below).
+- Changes come as pull requests against `main`, from a topic branch (`feat/…`, `fix/…`, `docs/…`; one subject per pull request). CI must pass: `test`, `e2e` and `image`.
+- `main` is deployed: once merged, a change reaches the public site with the next image. Pull requests are merged only when they are ready for users.
 - A database schema change comes with its generated migration in `drizzle/`.
 - Do not commit MakeGood's files (the kit pack ships separately), personal data or secrets.
 - Security problems go through [SECURITY.md](SECURITY.md), not an issue or pull request.
 
-## Branches: how a change reaches `main`
-
-- `edge` is where work lands. Every pull request targets `edge`, and the `edge` image is built from it.
-- `main` is what users and contributors need: the app, its tests, the install and operator docs. The files the maintainer's Claude Code sessions use (`CLAUDE.md`, `CLAUDE.local.example.md`, `.claude/`, `docs/dev/`, `docs/architecture.md`) live on `edge` only; the list is `.github/main-exclude.txt`. To read them, switch to the `edge` branch on GitHub.
-- The maintainer promotes `edge` by running the **promote** workflow (Actions, then promote, then Run workflow with "Use workflow from" set to `edge`; it refuses to run from any other branch). It opens a pull request into `main` whose tree is `edge` minus the excluded files, and starts the `test` and `e2e` checks on its branch. The maintainer merges that pull request with **Create a merge commit** (not squash), so the `Promoted-From:` line in its message stays in `main`'s history and the next promotion lists only new commits.
-- Never commit to `main` directly: the next promotion makes `main` equal to `edge` again, so anything only on `main` would be overwritten.
-
 ## Pull requests
 
-Describe what changed and why, and say which checks you ran. Keep a pull request to one subject, include tests for behaviour changes, and update the docs (README, `docs/guides/`, and `docs/architecture.md` on `edge`) when what a user or contributor sees changes. By contributing you agree your work is released under the project's [MIT license](LICENSE).
+Describe what changed and why, and say which checks you ran. Keep a pull request to one subject, include tests for behaviour changes, and update the docs (README, `docs/guides/`, `docs/architecture.md`) when what a user or contributor sees changes. By contributing you agree your work is released under the project's [MIT license](LICENSE).
 
-User-visible changes add a line under `Unreleased` in [CHANGELOG.md](CHANGELOG.md) (Added, Changed, Fixed or Security, in plain language); the release step moves those lines under the new version.
+User-visible changes add a line under `Unreleased` in [CHANGELOG.md](CHANGELOG.md) (Added, Changed, Fixed or Security, in plain language). If the change also applies to the self-hosted edition, say so in the pull request.
 
 Security problems are not reported as issues or pull requests: see [SECURITY.md](SECURITY.md).

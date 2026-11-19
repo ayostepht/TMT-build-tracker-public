@@ -18,7 +18,7 @@ Bambu Lab printers in LAN mode need a direct connection on your own network, so 
 - **In regular use on a real printer:** Elegoo through an OctoEverywhere link (Centauri Carbon).
 - **Not yet run against real printers by the project:** Klipper and OctoPrint through an OctoEverywhere link. That the link carries everything they need (Moonraker's WebSocket, OctoPrint's status requests and the camera) is expected from OctoEverywhere's documentation but has not been checked.
 
-If you try one of these, please report what worked and what did not in the [issue tracker](https://github.com/ayostepht/TMT-Build-Tracker/issues).
+If you try one of these, please report what worked and what did not in the [issue tracker](https://github.com/ayostepht/TMT-build-tracker-public/issues).
 
 ## The app is read-only towards your printers
 

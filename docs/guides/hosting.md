@@ -203,8 +203,8 @@ A tunnel makes your server connect **out** to Cloudflare, so you open no port on
 3. On the server:
 
    ```bash
-   git clone https://github.com/ayostepht/TMT-Build-Tracker.git
-   cd TMT-Build-Tracker
+   git clone https://github.com/ayostepht/TMT-build-tracker-public.git
+   cd TMT-build-tracker-public
    cp .env.example deploy/.env
    nano deploy/.env        # uncomment and fill in the settings from step 3, plus TUNNEL_TOKEN and TRUST_CLOUDFLARE=1
    chmod 600 deploy/.env
@@ -212,7 +212,7 @@ A tunnel makes your server connect **out** to Cloudflare, so you open no port on
    docker compose -f deploy/docker-compose.yml logs -f app
    ```
 
-   The compose file has no published port: only the tunnel can reach the app. Data is in the `tmt-data` volume. If you prefer not to build locally, use a published image where the compose file has the `image:` line.
+   The compose file has no published port: only the tunnel can reach the app. Data is in the `tmt-data` volume. If you prefer not to build locally, use the published image `ghcr.io/ayostepht/tmt-build-tracker-public:latest` (the compose file has the `image:` line, commented out).
 
 4. Open `https://tmt.example.com`. Update with `git pull && docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build`.
 

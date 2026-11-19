@@ -1,52 +1,39 @@
 # Orchestrator handoff
 
-_Updated 2026-11-16, 04:50 UTC. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable facts go to
+_Updated 2026-11-19. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable facts go to
 `docs/dev/STATUS.md`._
 
 ## Rules in force right now
 
-- **Merging** (maintainer, 2026-11-16): the orchestrator may merge its own pull requests
-  into `edge` once the routine was followed and CI is green. Promotions to `main` and tags
-  follow STATUS item 0's release routine; cloud sessions can't push tags, so the maintainer
-  creates the tag from the release form (Target `main`).
-- Pull request and issue text: no internal process notes; footer on GitHub comments.
-- Run `npx prettier --write` on edited docs before committing. Docs-only pull requests take
-  the CI fast path (~35 s).
-- Ask questions in-session with a recommended option first; show screenshots before a UI
-  pull request.
+- This repository was split from the self-hosted project on 2026-11-19. `main` is the live
+  branch: every green push publishes the image the site pulls, so merging is deploying.
+- **The site is live (first deploy 2026-11-19, image `sha-8eb3f1e`).** The baseline migration
+  `drizzle/0000_baseline.sql` is applied to the live database and frozen: schema changes add
+  `0001_…` and later.
+- Pull request and issue text: no internal process notes. Run `npx prettier --write` on edited
+  docs before committing.
 
 ## State
 
-- **0.9.2 released** 2026-11-16: `main` 48c9649, tag `v0.9.2`, images `latest`/`0.9.2`/`0.9`
-  (STATUS item 0).
-- **Test copy:** r59 = `edge` ce8afce (header Stats cards), signed off by the maintainer.
-- **Spoolman (#59) part 1 merged** as #71 (`edge` a501e5e, 2026-11-16 04:44 UTC; CI test +
-  e2e green; verifier green apart from one stale test fixed before merge; security review: no
-  high/medium, four lows fixed). It brings **migration 0003** → the next deploy, **r60 =
-  `edge` a501e5e image, needs a backup, a migration rehearsal on a copy and the maintainer's
-  OK**. Plan, decisions and progress: `docs/dev/plans/issue59-spoolman.md`.
-- **Next for #59:** part 2 (adding a spool also creates the Spoolman spool, archive on
-  remove), part 3 (create vendor/filament in Spoolman). Small follow-ups: `RoleSpoolman`
-  editor refresh has no throttle (maintainer may want one); 1440 header detail lines
-  truncate ("…") [app-shell].
-- Leftover worktrees (harmless, deleting is the maintainer's call): `TMT-wt-stats-header`,
-  `TMT-wt-verify`, `TMT-wt-verify-base` (Spoolman), `TMT-wt-verify-spm`, `TMT-wt-docs`.
-  This environment now allows donkie.github.io (catalog updates need
-  `NODE_USE_ENV_PROXY=1` here).
+- `main` 8eb3f1e: live. `public-ci` green, image published, running on the maintainer's server
+  behind a Cloudflare Tunnel against Supabase; Google sign-in, home page and demo verified;
+  Supabase lockdown verified on the real project.
+- Pull request #1 `docs/hosted-repo`: rewrites the repository docs, agent files and package
+  metadata for the hosted edition (this file included), plus the first-deploy record.
+- Pull request #2 `fix/repo-links`: site links point at this repository, accurate comments,
+  `preview:demo` works again on the guarded test sign-in.
+- Both wait for the maintainer's review; merging either republishes the image.
 
-## Notes for the next orchestrator and its agents
+## Next step
 
-- Agents in a worktree with a symlinked `node_modules` filter the pre-existing `./$types`
-  errors from `npm run check`; the verifier uses a fresh worktree and `npm ci`.
-- E2E: take the lock from `docs/dev/dev-environments.md`, `--reporter=line`. Builds in a
-  shared worktree collide too: tell parallel agents to rerun on a build collision.
-- Repeated identical handback messages from agents are duplicates; ignore them.
+1. After #1 merges: one line in `docs/dev/dev-environments.md` for the new preview sign-in
+   (port + 1 helper on 127.0.0.1, database `tmt_preview_test`), from #2.
+2. STATUS open items: duplicate `organization.slug` index (new migration), team slug race
+   (advisory lock like design slugs), `printers.host` placeholder column (decide; any change
+   is a new migration now).
+3. With the maintainer: analytics provider, backup schedule, repository settings.
 
-## Follow-ups
+## Questions waiting for the maintainer
 
-- STATUS open items: BuildHeader missing-weight hint; twin plates file grams; wizard "Skip
-  setup" clipped at 390 px; the workspace Stats page loads every build view (cache later);
-  a part printing by hand with no arranged plate doesn't block a full design replace.
-- Release suggestion given to the maintainer: release pull request (version, CHANGELOG,
-  `fixtures/v0.9.2/`) → Promote edge to main → tag; release notes: back up `/data`
-  (migrations 0001/0002).
+- See STATUS "Waiting on the maintainer" (analytics choice, backups, repository settings,
+  gallery and demo choices, the sibling back-port).

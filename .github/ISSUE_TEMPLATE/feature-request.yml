@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        This is a volunteer project for makers printing MakeGood TMT chairs. Requests that help more makers or chapters get further are the easiest to take on. Please keep it to one request per issue.
+        This is a volunteer project for makers printing MakeGood TMT chairs. Requests that help more makers or teams get further are the easiest to take on. Please keep it to one request per issue.
 
         Do not paste OctoEverywhere links, API keys, access codes or serial numbers.
   - type: textarea
@@ -33,7 +33,7 @@ body:
       label: Who is it for?
       options:
         - A single maker
-        - A chapter or team
+        - A team
         - Someone running a hosted site
         - Other
   - type: textarea

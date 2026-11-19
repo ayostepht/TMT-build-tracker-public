@@ -1,10 +1,9 @@
 version: 2
 updates:
-  # Version updates target `edge` like every other pull request (maintainer, 2026-11-13).
-  # Security updates always target the default branch; GitHub ignores target-branch for them.
+  # Pull requests target `main` (the deployed branch), like every other pull request; they are
+  # merged only after review because a merge into `main` publishes the image the site runs.
   - package-ecosystem: npm
     directory: /
-    target-branch: edge
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -12,8 +11,8 @@ updates:
       # The project runs Node 22; the types must match the runtime major.
       - dependency-name: '@types/node'
         update-types: ['version-update:semver-major']
-      # TypeScript 7 upgrade is deferred until after 1.0 (maintainer, 2026-11-11;
-      # PR #11 closed). Remove this entry when the upgrade is scheduled.
+      # TypeScript 7 upgrade is deferred until after 1.0. Remove this entry when the upgrade
+      # is scheduled.
       - dependency-name: 'typescript'
         update-types: ['version-update:semver-major']
     groups:
@@ -23,7 +22,6 @@ updates:
         update-types: [major]
   - package-ecosystem: github-actions
     directory: /
-    target-branch: edge
     schedule:
       interval: monthly
     open-pull-requests-limit: 2

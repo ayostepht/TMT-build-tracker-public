@@ -1,5 +1,10 @@
 # Design studio UX audit (TMT Build Tracker)
 
+> **Historical, from the self-hosted project.** This file was carried over when the hosted
+> edition was split into its own repository (2026-11-19). It describes the self-hosted
+> edition (SQLite, Unraid, LAN printers, Spoolman, `edge`/`main`) and is kept for reference
+> only; nothing in it is a rule or an open item here. Current state: `docs/dev/STATUS.md`.
+
 > **Archived 2026-11-10.** Historical record of the r31-r33 redesign. Approved decisions are in `docs/dev/STATUS.md` (Decisions); open findings (M6, L1-L4) are listed there. The screenshots referenced below are gone.
 
 > Snapshot of the 2026-11-09 audit (before r31). Line numbers and screenshots refer to that state; most findings

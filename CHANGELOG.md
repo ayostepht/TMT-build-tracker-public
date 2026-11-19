@@ -1,20 +1,48 @@
 # Changelog
 
-All notable changes to TMT Build Tracker are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project aims to follow [Semantic Versioning](https://semver.org/) once 1.0.0 is out.
+All notable changes to the hosted edition of TMT Build Tracker are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project aims to follow [Semantic Versioning](https://semver.org/) once 1.0.0 is out.
 
-To update an install, see [Backup and upgrade](docs/guides/backup-and-upgrade.md). Take a backup first: database migrations run automatically at start and cannot be undone.
+The hosted site updates from `main`: database migrations run automatically when the new image starts. Operators: back up the database and `/data` before updating (see [Backups](docs/guides/hosting.md#backups)).
 
-## [Unreleased]
+## [Unreleased] - hosted edition
+
+The hosted edition starts from the self-hosted 0.9.2 release and turns it into a public website that makers sign up for instead of running their own container. Everything for building, tracking and designing a chair works as in 0.9.2; what follows is what differs.
 
 ### Added
 
-- Spoolman filaments: link each color of a build to its filament in Spoolman, from the Overview filaments, a new Spoolman step in the build setup, or a color slot on the Design tab. Matching filaments are suggested. While a color is linked, Spare uses what Spoolman says is left, and the build's own spools are hidden until you unlink (their history is kept).
-- Choose who keeps Spoolman up to date (chapter Settings, Integrations): "This app" takes each logged print's grams off the linked spool and moves on to the next spool of that filament when one runs out; "Something else" only reads Spoolman. A chapter that sets up Spoolman for the first time starts with "This app"; chapters that already use Spoolman keep their setting.
-- Prints logged before a color was linked are never taken off Spoolman. When you link, the app says how many grams were already logged and offers to subtract them once (with a way to give them back).
+- Public home page: what the tracker is and who it is for, with the real MakeGood chair model you can turn, MakeGood credit, sign-in and a link to the demo.
+- Demo: try the app without an account. Each visitor gets a private, throwaway workspace with a sample build, deleted after 24 hours (or at once when you sign out). Uploads, printers, teams, invitations, sharing and export are off in a demo.
+- Shared design gallery: share a color design with every signed-in maker, browse what others shared, and copy a design into your own team with "Use this design". The gallery shows the design on the chair and the sharer's name, never an email or a team. Site admins can hide a design.
+- Sign in with Google, GitHub or Discord.
+- Delete your account yourself from the Account page, after typing your email to confirm.
+- Per-account limits so one account cannot use up the site (by default 10 teams per person, 50 active builds per team, 1 GB of uploads per team, 95 MB per 3MF file), all configurable.
+- Optional cookieless analytics (Plausible, Umami or Cloudflare Web Analytics): page views only, with ids removed, and nothing at all for browsers that send Do Not Track or Global Privacy Control.
+- Hosting guide and deploy files for Fly.io, Railway and your own server behind a Cloudflare Tunnel, with a Supabase database.
+
+### Changed
+
+- Data is stored in Postgres (Supabase in production) instead of SQLite. A 0.9.x database cannot be moved over automatically.
+- Printers connect only through OctoEverywhere shared links (Elegoo, Klipper with Moonraker, OctoPrint), or are added as "not connected" to log prints by hand. The server never connects to your home network.
+- Chapters are called teams everywhere.
+- A new look: warm paper and ink colors with one brick accent, in light and dark.
+- The signed-in start page moved to `/workspace`; `/` is the public home page.
+- Kit admin and print-geometry import are for site admins only.
+- The client address used for rate limits comes from Cloudflare (`TRUST_CLOUDFLARE=1`) or from a header your own proxy sets; the server refuses to start in production without one.
+
+### Removed
+
+- Email and password sign-in, password reset and generic OIDC sign-in.
+- Printers on your local network (Elegoo, Klipper, OctoPrint and Bambu Lab LAN connections), printer discovery, custom camera addresses and the command that switched an Elegoo camera on: the app now sends no printer command that changes anything.
+- Spoolman.
+- The Unraid template and the self-hosted install guides. To run the tracker on your own server, use the [self-hosted edition](https://github.com/ayostepht/TMT-Build-Tracker).
+
+## Self-hosted history
+
+The releases below are from the self-hosted project, [ayostepht/TMT-Build-Tracker](https://github.com/ayostepht/TMT-Build-Tracker), which this repository was split from. They describe the self-hosted edition (SQLite, Docker/Unraid, LAN printers, Spoolman) and are kept here for reference; their upgrade notes and links apply to that edition.
 
 ## [0.9.2] - 2026-11-16
 
-**Upgrading:** back up your `/data` folder first. This release adds two database migrations (0001 and 0002, both additive: new columns for entered weights and spool adds). They run automatically when the container starts and cannot be undone, so to go back to 0.9.1 you restore the backup. See [Backup and upgrade](docs/guides/backup-and-upgrade.md).
+**Upgrading:** back up your `/data` folder first. This release adds two database migrations (0001 and 0002, both additive: new columns for entered weights and spool adds). They run automatically when the container starts and cannot be undone, so to go back to 0.9.1 you restore the backup. See [Backup and upgrade](https://github.com/ayostepht/TMT-Build-Tracker/blob/main/docs/guides/backup-and-upgrade.md).
 
 ### Added
 
@@ -108,7 +136,7 @@ The first public version: a pre-release for public testing; 1.0.0 will follow. D
 - Elegoo, Klipper (Moonraker) and OctoPrint printers can connect through an OctoEverywhere shared link instead of a local address (for Elegoo this also spares the printer's few direct connections). Elegoo, on your network or through a link, is the one in regular use; Klipper and OctoPrint through a link are expected to work from OctoEverywhere's documentation but have not been confirmed against real printers.
 - A **Not connected** printer: a name only, for logging prints by hand. The app never contacts it.
 - A plate is started and logged from its status badge: **Where is it printing?** picks the printer (or none), and **Printed** logs the result.
-- The app never moves, heats, pauses, stops or starts a printer and never sends it a file. The one command it sends is Elegoo's "camera on". See [Printers](docs/guides/printers.md).
+- The app never moves, heats, pauses, stops or starts a printer and never sends it a file. The one command it sends is Elegoo's "camera on". See [Printers](https://github.com/ayostepht/TMT-Build-Tracker/blob/main/docs/guides/printers.md).
 - Optional Spoolman link to show spool weight remaining and deduct filament. The Spoolman link is new and not yet proven against a real Spoolman install.
 
 **Assembly and handoff**
@@ -117,7 +145,7 @@ The first public version: a pre-release for public testing; 1.0.0 will follow. D
 
 **Installable phone app**
 
-- Add it to your home screen on iPhone, Android or desktop. It opens full screen with its own icon, supports light and dark mode and phone safe areas, and shows an offline page and an "update available" message on https addresses. Builds, plates and progress are never stored or edited offline. See [Install on your phone](docs/guides/phone-install.md).
+- Add it to your home screen on iPhone, Android or desktop. It opens full screen with its own icon, supports light and dark mode and phone safe areas, and shows an offline page and an "update available" message on https addresses. Builds, plates and progress are never stored or edited offline. See [Install on your phone](https://github.com/ayostepht/TMT-Build-Tracker/blob/main/docs/guides/phone-install.md).
 - Pages are designed for a phone at the printer: large tap targets, form fields that do not make iOS zoom, and fresh data when you return to the app.
 
 **Self-hosting and sign-in**
@@ -138,9 +166,9 @@ The first public version: a pre-release for public testing; 1.0.0 will follow. D
 
 ### Known limits
 
-- Sign-up is open by default on a self-hosted install, and the app sends no email, so email addresses are unverified. Keep it on your LAN or set `SIGNUP=invite` or `SIGNUP=closed` (see [Environment reference](docs/guides/environment.md)).
+- Sign-up is open by default on a self-hosted install, and the app sends no email, so email addresses are unverified. Keep it on your LAN or set `SIGNUP=invite` or `SIGNUP=closed` (see [Environment reference](https://github.com/ayostepht/TMT-Build-Tracker/blob/main/docs/guides/environment.md)).
 - Live printer status over a full multi-day print is not yet proven: for a long print, check the printer itself.
-- Behind a reverse proxy the sign-in rate limit relies on a client-address header; a client that can reach the container port directly could fake its address. See [Reverse proxy](docs/guides/reverse-proxy.md#client-address-and-rate-limits).
+- Behind a reverse proxy the sign-in rate limit relies on a client-address header; a client that can reach the container port directly could fake its address. See [Reverse proxy](https://github.com/ayostepht/TMT-Build-Tracker/blob/main/docs/guides/reverse-proxy.md#client-address-and-rate-limits).
 
 ## Before 1.0
 

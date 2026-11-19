@@ -1,16 +1,16 @@
 {
-	"name": "tmt-build-tracker",
+	"name": "tmt-build-tracker-public",
 	"private": true,
 	"version": "0.9.2",
-	"description": "Self-hosted build tracker for makers 3D-printing the MakeGood 3D TMT chair",
+	"description": "Hosted edition of the build tracker for makers 3D-printing the MakeGood 3D TMT chair",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/ayostepht/TMT-Build-Tracker.git"
+		"url": "git+https://github.com/ayostepht/TMT-build-tracker-public.git"
 	},
-	"homepage": "https://github.com/ayostepht/TMT-Build-Tracker#readme",
+	"homepage": "https://github.com/ayostepht/TMT-build-tracker-public#readme",
 	"bugs": {
-		"url": "https://github.com/ayostepht/TMT-Build-Tracker/issues"
+		"url": "https://github.com/ayostepht/TMT-build-tracker-public/issues"
 	},
 	"engines": {
 		"node": ">=22.12.0"
