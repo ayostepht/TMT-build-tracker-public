@@ -69,4 +69,16 @@ verifier close each wave.
 
 ## Progress
 
-- 2026-11-19: plan written; wave 1 dispatched.
+- 2026-11-19: plan written.
+- Wave 1 merged (`cdc6a9a`):
+  - Postgres foundation: pg-core schema, postgres-js driver, fresh baseline, async startup/seed/kit pack, template-database test harness, `scripts/dev-postgres.sh`, porting guide `docs/dev/plans/public-site-db-port.md`. Spoolman schema dropped; shared-gallery columns added on `color_designs`.
+  - Printers through OctoEverywhere links only; LAN connections, discovery, custom camera URLs, the SDCP camera-on command and all Spoolman removed. Live-mock printer e2e specs were removed (logic stays covered by unit tests); a safe e2e seam is a follow-up.
+  - Public home at `/` (`(site)` group), warm paper/ink visual language with a brick accent (AA-checked by `design-tokens.test.ts`), signed-in root at `/workspace`.
+- Wave 2 (async port, six agents in the shared checkout) running.
+
+### Follow-ups noted
+
+- 390 px site header: "Try the demo" wraps to two lines.
+- Privacy page: update printer/Spoolman sentences (OctoEverywhere links only) and name Discord as a sign-in provider.
+- `manifest.webmanifest` `start_url` is `/` (redirects signed-in users to `/workspace`; fine).
+- Agents in worktrees: a whole-folder `node_modules` symlink breaks `svelte-check`; use per-package symlinks.
