@@ -45,6 +45,8 @@ test('Files: printed plates collapse behind a remembered toggle; per-plate expor
 	await expect(toggle).toHaveText(/^Show \d+ printed plates$/);
 	const n = Number(/\d+/.exec((await toggle.textContent()) ?? '')![0]);
 	expect(n).toBeGreaterThan(10);
+	const v2 = await (await page.request.get(`/api/builds/${buildId}/view`)).json();
+	console.log('DBG', plates.length, v2.plates.length, n, await allCards.count(), total, JSON.stringify(v2.plates.map((p:any)=>[p.number,p.parts.length,p.parts.filter((x:any)=>x.status==='Printed').length])));
 	await expect(allCards).toHaveCount(plates.length - n);
 	await expect(page.getByTestId('plate-row')).toHaveCount(0);
 	const heightAfter = await page.evaluate(() => document.documentElement.scrollHeight);

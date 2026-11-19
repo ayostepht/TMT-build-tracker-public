@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { effectivePartRoles } from '#lib/domain/design.ts';
 import { ApiError } from '../access';
 import { diskHasRoom } from '../config';
@@ -21,7 +21,8 @@ import {
 	snapshotWorkspace
 } from '../quota';
 import { listTeams } from '../teams';
-import { canSeeDesign, canSeeDesignWith, coworkerIds, type DesignRow } from './access';
+import { canSeeDesign, coworkerIds, type DesignRow } from './access';
+import { publicSharerName } from './gallery';
 import {
 	hasSnapshot,
 	isPng,
@@ -32,6 +33,9 @@ import {
 } from './files';
 import type { DesignRole } from './mutate';
 import { isObj } from '#lib/domain/guards.ts';
+
+/** Most designs one list call returns. */
+const LIST_LIMIT = 500;
 
 export interface DesignSummary {
 	id: string;
@@ -139,6 +143,9 @@ async function summarize(db: DbOrTx, rows: DesignRow[], userId: string): Promise
 				).map((u) => [u.id, u.name])
 			: []
 	);
+	const coworkers = await coworkerIds(db, userId);
+	const close = (d: DesignRow) =>
+		!d.authorUserId || d.authorUserId === userId || coworkers.has(d.authorUserId);
 	return Promise.all(
 		rows.map(async (d) => {
 			const counts: Record<string, number> = {};
@@ -152,8 +159,13 @@ async function summarize(db: DbOrTx, rows: DesignRow[], userId: string): Promise
 				name: d.name,
 				templateId: d.templateId,
 				templateName: tplNames.get(d.templateId) ?? '',
-				authorUserId: d.authorUserId,
-				authorName: d.authorUserId ? (authors.get(d.authorUserId) ?? null) : null,
+				// Strangers (viewing a shared design) get the public sharer name, never the user id.
+				authorUserId: close(d) ? d.authorUserId : null,
+				authorName: close(d)
+					? d.authorUserId
+						? (authors.get(d.authorUserId) ?? null)
+						: null
+					: publicSharerName(d.authorUserId ? authors.get(d.authorUserId) : null),
 				shared: d.sharedAt !== null,
 				copiedFromId: d.copiedFromDesignId,
 				mine: d.authorUserId === userId,
@@ -172,16 +184,22 @@ export async function listDesigns(
 	userId: string,
 	opts: { templateId?: string } = {}
 ): Promise<DesignSummary[]> {
-	const all = await db
+	const coworkers = await coworkerIds(db, userId);
+	// Own, co-members' and seeded designs only, filtered in SQL.
+	const rows = await db
 		.select()
 		.from(colorDesigns)
-		.orderBy(desc(colorDesigns.createdAt), asc(colorDesigns.name));
-	const coworkers = await coworkerIds(db, userId);
-	const rows = all.filter(
-		(d) =>
-			(!opts.templateId || d.templateId === opts.templateId) &&
-			canSeeDesignWith(d, userId, coworkers)
-	);
+		.where(
+			and(
+				opts.templateId ? eq(colorDesigns.templateId, opts.templateId) : undefined,
+				or(
+					isNull(colorDesigns.authorUserId),
+					inArray(colorDesigns.authorUserId, [userId, ...coworkers])
+				)
+			)
+		)
+		.orderBy(desc(colorDesigns.createdAt), asc(colorDesigns.name))
+		.limit(LIST_LIMIT);
 	return summarize(db, rows, userId);
 }
 
