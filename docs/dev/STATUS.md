@@ -27,8 +27,9 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   first start: 37 app tables, RLS on everywhere with no policies (the intended lockdown);
   security advisor shows only that informational notice.
 - **Migrations:** one baseline, `drizzle/0000_baseline.sql`, applied to the live database on
-  2026-11-19. **Frozen from now on:** schema changes add `0001_…` and later; never edit or
-  regenerate the baseline.
+  2026-11-19. **Frozen from now on:** schema changes add new migrations; never edit or
+  regenerate the baseline. `0001_drop_duplicate_org_slug_index` merged 2026-11-19 (#3); it runs
+  on the next container start. Team creation now retries on a slug conflict.
 
 ## Waiting on the maintainer
 
@@ -45,13 +46,8 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 
 ## Open items
 
-- Supabase performance advisor (informational, fine at launch scale): duplicate unique index on
-  `organization.slug` (`organization_slug_uidx` and `organization_slug_unique`, drop one in a
-  new migration); about 20 foreign keys to `user` without a covering index (add when user
+- Supabase performance advisor (informational, fine at launch scale): about 20 foreign keys to `user` without a covering index (add when user
   deletion or those joins get slow).
-- Team slugs (`teams.ts` `uniqueSlug`) have the same check-then-insert race the design slugs
-  had; give it the same advisory lock.
-
 - README screenshots predate the new visual language, and the Integrations screenshot shows
   LAN options; the screenshot script was removed with the mock LAN printer [release-pwa].
 - No e2e seam for link printers: the live-mock printer specs were removed; logic is covered
