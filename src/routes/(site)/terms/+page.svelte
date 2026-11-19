@@ -20,7 +20,7 @@
 	<h2>Who it is for</h2>
 	<p>
 		Adult makers who 3D-print the MakeGood 3D TMT (toddler mobility trainer) chair, alone or with a
-		chapter, and want to plan, print, assemble and hand off builds.
+		team, and want to plan, print, assemble and hand off builds.
 	</p>
 
 	<h2>The software</h2>

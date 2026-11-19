@@ -63,7 +63,7 @@ for (const [width, height] of [
 			// One <main> and one <h1> on every main route, with a distinct title.
 			const titles = new Map<string, string>();
 			for (const path of [
-				'/',
+				'/workspace',
 				`/builds/${buildId}`,
 				`/builds/${buildId}/design`,
 				`/builds/${buildId}/print`,

@@ -18,7 +18,7 @@
 		{#if data.publicMode}
 			You are using the public instance, which the TMT Build Tracker project runs (the "operator").
 		{:else}
-			Whoever runs this server is the "operator", for example a chapter lead or the maker who set it
+			Whoever runs this server is the "operator", for example a team lead or the maker who set it
 			up. The project that wrote the software does not run your server and cannot see what is on it.
 		{/if}
 		The operator can reach everything stored on the server and any backups of it.
@@ -78,14 +78,14 @@
 	<ul>
 		<li>"My builds" is yours alone. It cannot be shared or take invitations.</li>
 		<li>
-			People in a chapter can see each other's name and email address, and the chapter's builds,
-			photos and activity. Their role (owner, editor or viewer) decides who can change things.
+			People in a team can see each other's name and email address, and the team's builds, photos
+			and activity. Their role (owner, editor or viewer) decides who can change things.
 		</li>
 		<li>
 			Invitations are links you copy and send yourself. The app sends no email. The invited person's
 			email address is stored with the invitation. Cancelled, declined and expired invitations
-			beyond the newest 50 in a chapter are deleted when a new one is created; accepted ones are
-			kept, and deleting an account removes invitations sent by or addressed to it.
+			beyond the newest 50 in a team are deleted when a new one is created; accepted ones are kept,
+			and deleting an account removes invitations sent by or addressed to it.
 		</li>
 	</ul>
 
@@ -147,13 +147,13 @@
 		{:else}
 			On the account page, once you are signed in,
 		{/if}
-		you can download your data as one JSON file (your profile, chapters, saved designs and the builds
-		in My builds; photos by file name only; chapter builds are not included) and delete your account.
-		Deleting removes your sign-in and everything in My builds, including photos, drafts, saved designs
-		and custom filaments, and your drafts in chapters. Builds you made in a chapter stay with the chapter,
-		and their activity shows "Someone" instead of your name. A chapter where you are the only member is
-		deleted with you. You cannot delete your account while you are the only owner of a chapter that has
-		other members, or if you are the last site admin or the only account on the server.
+		you can download your data as one JSON file (your profile, teams, saved designs and the builds in
+		My builds; photos by file name only; team builds are not included) and delete your account. Deleting
+		removes your sign-in and everything in My builds, including photos, drafts, saved designs and custom
+		filaments, and your drafts in teams. Builds you made in a team stay with the team, and their activity
+		shows "Someone" instead of your name. A team where you are the only member is deleted with you. You
+		cannot delete your account while you are the only owner of a team that has other members, or if you
+		are the last site admin or the only account on the server.
 	</p>
 	<p>
 		Backups are made and kept by the operator, not by the app, so a deleted account can still be in

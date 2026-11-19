@@ -36,7 +36,7 @@
 	</form>
 
 	<p>
-		<a class="btn ghost sm back" href={resolve('/(app)')}
+		<a class="btn ghost sm back" href={resolve('/(app)/workspace')}
 			><span class="btn-arrow" aria-hidden="true">←</span> Back to my builds</a
 		>
 	</p>

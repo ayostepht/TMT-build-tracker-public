@@ -58,23 +58,24 @@
      wide    min-width: 1440px                      (extra-wide viewer / galleries)
    Do not add other widths. */
 :root {
-	--paper: #f4f5f8;
-	--card: #ffffff;
-	--ink: #161a2b;
-	--muted: #5b6276;
-	--line: #dde0e8;
+	--paper: #f6f1e7; /* warm neutrals: a cream shop-notebook page, brown-black ink, not blue-grey */
+	--card: #fdfaf3;
+	--ink: #231f1a;
+	--muted: #645c50;
+	--line: #e2d9c8;
 	/* border of a text field, select or other control whose edge is the only cue (3:1 on paper and card) */
-	--field-line: #7a8196;
-	--accent: #2b3f9e;
-	--accent-soft: #e7eafb;
-	--ok: #1e764b;
-	--ok-soft: #e1f3e9;
-	--warn: #9c5600;
-	--warn-soft: #fbeedb;
-	--bad: #b3261e;
-	--bad-soft: #fbe5e3;
-	--run: #196cab;
-	--run-soft: #e0eefa;
+	--field-line: #857a68;
+	/* the one warm accent: burnt orange ("brick"). Links, primary buttons, selected states, focus ring. */
+	--accent: #a1420f;
+	--accent-soft: #f4e2d0;
+	--ok: #2d6a3e;
+	--ok-soft: #e3efdf;
+	--warn: #80510a;
+	--warn-soft: #f6e8cc;
+	--bad: #a52a35;
+	--bad-soft: #f7e1de;
+	--run: #1f5f8f;
+	--run-soft: #dfeaf2;
 	/* text/icons on a solid accent, ok, bad or run fill */
 	--on-fill: #ffffff;
 	--bed: #e6e2da;
@@ -82,12 +83,12 @@
 	--bed-line: #6f695d;
 	--bed-edge: #aaa498;
 	--bed-text: #655f55;
-	--scrim: rgb(0 0 0 / 0.5);
-	--scrim-strong: rgb(10 12 24 / 0.72);
+	--scrim: rgb(20 14 6 / 0.5);
+	--scrim-strong: rgb(20 14 6 / 0.72);
 	--chart-good: #1a6fb5;
 	--chart-bad: #c0334a;
-	--chart-todo: #8790ab;
-	--chart-grid: #d3d7e2;
+	--chart-todo: #8f8676;
+	--chart-grid: #ddd3c1;
 	--f-display: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
 	--f-body: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
 	--f-mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
@@ -95,71 +96,73 @@
 }
 @media (prefers-color-scheme: dark) {
 	:root:not([data-theme='light']) {
-		--paper: #0f1220;
-		--card: #181c2e;
-		--ink: #e8eaf3;
-		--muted: #9aa1b8;
-		--line: #2a3047;
-		--field-line: #6c748f;
-		--accent: #8ea0ff;
-		--accent-soft: #232a4d;
-		--ok: #5fd39a;
-		--ok-soft: #173327;
-		--warn: #f0b05a;
-		--warn-soft: #3a2c15;
-		--bad: #ff8a80;
-		--bad-soft: #3d1c1a;
-		--run: #6cb8f5;
-		--run-soft: #16304a;
-		--on-fill: #0f1220;
-		--bed: #5c616a;
-		--bed-dot: #8b919b;
-		--bed-line: #d4d8df;
-		--bed-edge: #838995;
-		--bed-text: #e4e7ec;
+		--paper: #171410;
+		--card: #211d18;
+		--ink: #f0e9dc;
+		--muted: #b3a999;
+		--line: #3a342b;
+		--field-line: #7e7565;
+		--accent: #f08d57;
+		--accent-soft: #3b2619;
+		--ok: #6fd091;
+		--ok-soft: #18301f;
+		--warn: #e8b25a;
+		--warn-soft: #38290f;
+		--bad: #ff8f8a;
+		--bad-soft: #3e1d1c;
+		--run: #74b8ec;
+		--run-soft: #16293b;
+		--on-fill: #171410;
+		--bed: #5a554d;
+		--bed-dot: #8d867a;
+		--bed-line: #d8d2c6;
+		--bed-edge: #857e72;
+		--bed-text: #e8e3da;
 		--scrim: rgb(0 0 0 / 0.5);
-		--scrim-strong: rgb(10 12 24 / 0.72);
+		--scrim-strong: rgb(8 6 3 / 0.72);
 		--chart-good: #55aef0;
 		--chart-bad: #ff7d8f;
-		--chart-todo: #6f7898;
-		--chart-grid: #333a56;
+		--chart-todo: #7a7261;
+		--chart-grid: #3a342b;
 		color-scheme: dark;
 	}
 }
 :root[data-theme='dark'] {
-	--paper: #0f1220;
-	--card: #181c2e;
-	--ink: #e8eaf3;
-	--muted: #9aa1b8;
-	--line: #2a3047;
-	--field-line: #6c748f;
-	--accent: #8ea0ff;
-	--accent-soft: #232a4d;
-	--ok: #5fd39a;
-	--ok-soft: #173327;
-	--warn: #f0b05a;
-	--warn-soft: #3a2c15;
-	--bad: #ff8a80;
-	--bad-soft: #3d1c1a;
-	--run: #6cb8f5;
-	--run-soft: #16304a;
-	--on-fill: #0f1220;
-	--bed: #5c616a;
-	--bed-dot: #8b919b;
-	--bed-line: #d4d8df;
-	--bed-edge: #838995;
-	--bed-text: #e4e7ec;
+	--paper: #171410;
+	--card: #211d18;
+	--ink: #f0e9dc;
+	--muted: #b3a999;
+	--line: #3a342b;
+	--field-line: #7e7565;
+	--accent: #f08d57;
+	--accent-soft: #3b2619;
+	--ok: #6fd091;
+	--ok-soft: #18301f;
+	--warn: #e8b25a;
+	--warn-soft: #38290f;
+	--bad: #ff8f8a;
+	--bad-soft: #3e1d1c;
+	--run: #74b8ec;
+	--run-soft: #16293b;
+	--on-fill: #171410;
+	--bed: #5a554d;
+	--bed-dot: #8d867a;
+	--bed-line: #d8d2c6;
+	--bed-edge: #857e72;
+	--bed-text: #e8e3da;
 	--scrim: rgb(0 0 0 / 0.5);
-	--scrim-strong: rgb(10 12 24 / 0.72);
+	--scrim-strong: rgb(8 6 3 / 0.72);
 	--chart-good: #55aef0;
 	--chart-bad: #ff7d8f;
-	--chart-todo: #6f7898;
-	--chart-grid: #333a56;
+	--chart-todo: #7a7261;
+	--chart-grid: #3a342b;
 	color-scheme: dark;
 }
 :root {
-	/* type scale (px): 12 13 14 15 18 22 28 34. --fs-field is not a step: the 16px floor for form
-	   fields on touch screens (iOS zooms on focus below it). */
+	/* type scale (px): 12 13 14 15 18 22 28 34, then 46 and 64 for display headings on the public
+	   site only. --fs-field is not a step: the 16px floor for form fields on touch screens (iOS
+	   zooms on focus below it). Display type is Barlow Condensed (headings, numerals, wordmark),
+	   reading text is IBM Plex Sans, labels, part numbers and codes are IBM Plex Mono. */
 	--fs-xs: 12px;
 	--fs-sm: 13px;
 	--fs-md: 14px;
@@ -168,6 +171,10 @@
 	--fs-xl: 22px;
 	--fs-2xl: 28px;
 	--fs-3xl: 34px;
+	--fs-4xl: 46px;
+	--fs-5xl: 64px;
+	/* comfortable reading line length (about 66 characters) */
+	--measure: 66ch;
 	--fs-field: 16px;
 	/* spacing scale (px): --sp-1 2, --sp-2 4, --sp-3 6, --sp-4 8, --sp-5 10, --sp-6 12, --sp-7 14,
 	   --sp-8 16, --sp-9 18, --sp-10 24 (hairlines of 1px and layout sizes above 24px stay literal) */
@@ -182,18 +189,18 @@
 	--sp-9: 18px;
 	--sp-10: 24px;
 	/* radius scale: chips/inputs sm, buttons md, cards lg, sheets/dialogs xl; pill and 50% (dots) are shapes */
-	--r-sm: 4px;
-	--r-md: 6px;
-	--r-lg: 9px;
-	--r-xl: 14px;
+	--r-sm: 3px;
+	--r-md: 5px;
+	--r-lg: 8px;
+	--r-xl: 12px;
 	--r-pill: 999px;
 	/* elevation: 1 floating chip/toggle, 2 menus and sticky bars, 3 modal dialogs, sheet = bottom-anchored */
-	--shadow-1: 0 2px 8px rgb(0 0 0 / 0.2);
-	--shadow-2: 0 8px 24px rgb(0 0 0 / 0.2);
-	--shadow-3: 0 20px 60px rgb(0 0 0 / 0.35);
-	--shadow-sheet: 0 -6px 30px rgb(0 0 0 / 0.3);
+	--shadow-1: 0 1px 2px rgb(40 28 10 / 0.16);
+	--shadow-2: 0 4px 14px rgb(40 28 10 / 0.16);
+	--shadow-3: 0 16px 48px rgb(40 28 10 / 0.32);
+	--shadow-sheet: 0 -4px 24px rgb(40 28 10 / 0.26);
 	/* 1px inner outline that keeps a pale swatch visible on a pale card */
-	--ring-swatch: inset 0 0 0 1px rgb(0 0 0 / 0.12);
+	--ring-swatch: inset 0 0 0 1px rgb(40 28 10 / 0.14);
 	--tpu-stripe: rgb(255 255 255 / 0.28);
 }
 * {
@@ -206,7 +213,9 @@ body {
 body {
 	background: var(--paper);
 	color: var(--ink);
-	font: var(--fs-base)/1.45 var(--f-body);
+	font: var(--fs-base)/1.5 var(--f-body);
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
 }
 .wrap {
 	max-width: 1080px;
@@ -221,9 +230,12 @@ h2,
 h3 {
 	font-family: var(--f-display);
 	font-weight: 600;
-	letter-spacing: 0.01em;
+	letter-spacing: 0.005em;
 	margin: 0;
 	text-wrap: balance;
+}
+p {
+	text-wrap: pretty;
 }
 h1 {
 	font-size: var(--fs-3xl);
@@ -567,8 +579,8 @@ button.ds-badge[aria-pressed='true']:hover:not(:disabled) {
 	color: var(--muted);
 }
 .kicker {
-	font: 600 var(--fs-xs)/1 var(--f-body);
-	letter-spacing: 0.08em;
+	font: 500 var(--fs-xs)/1 var(--f-mono);
+	letter-spacing: 0.07em;
 	text-transform: uppercase;
 	color: var(--muted);
 	margin-bottom: var(--sp-3);

@@ -28,7 +28,7 @@
 		}
 		// Read the target before invalidating: the reload re-runs this page's load, which
 		// redirects (signed in) and replaces `data`, so reading it afterwards gave undefined.
-		const dest = data.redirectTo ?? resolve('/(app)');
+		const dest = data.redirectTo ?? resolve('/(app)/workspace');
 		await invalidateAll();
 		// redirectTo is validated server-side (same-origin relative path only)
 		// eslint-disable-next-line svelte/no-navigation-without-resolve
@@ -38,7 +38,7 @@
 	async function sso() {
 		await authClient.signIn.social({
 			provider: 'oidc',
-			callbackURL: data.redirectTo ?? '/',
+			callbackURL: data.redirectTo ?? '/workspace',
 			errorCallbackURL: errorBack
 		});
 	}
@@ -46,7 +46,7 @@
 	async function social(provider: 'google' | 'github') {
 		await authClient.signIn.social({
 			provider,
-			callbackURL: data.redirectTo ?? '/',
+			callbackURL: data.redirectTo ?? '/workspace',
 			errorCallbackURL: errorBack
 		});
 	}
@@ -119,11 +119,11 @@
 		{/if}
 		<p class="muted auth-legal">
 			By signing in or creating an account you agree to the <a
-				href={resolve('/terms')}
+				href={resolve('/(site)/terms')}
 				data-testid="terms-link">Terms</a
 			>
 			and
-			<a href={resolve('/privacy')} data-testid="privacy-link">Privacy</a> notes.
+			<a href={resolve('/(site)/privacy')} data-testid="privacy-link">Privacy</a> notes.
 		</p>
 	</div>
 </main>

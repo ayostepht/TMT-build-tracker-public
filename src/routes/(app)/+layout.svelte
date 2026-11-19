@@ -175,7 +175,7 @@
 
 <div class="wrap shell" class:has-tabs={!!current && !onSetup}>
 	<header class="topbar" bind:this={topbar} onfocusout={onTopbarFocusOut}>
-		<a class="brand shell-brand" href={resolve('/(app)')}
+		<a class="brand shell-brand" href={resolve('/(app)/workspace')}
 			><AppMark /><span class="brand-text">TMT Build Tracker</span></a
 		>
 		<div class="chapter-slot">
@@ -371,8 +371,8 @@
 		<nav aria-label="Site">
 			<a href={resolve('/(app)/help')} data-testid="footer-help">Help</a>
 			<a href={resolve('/(app)/about')} data-testid="footer-about">About</a>
-			<a href={resolve('/privacy')} data-testid="footer-privacy">Privacy</a>
-			<a href={resolve('/terms')} data-testid="footer-terms">Terms</a>
+			<a href={resolve('/(site)/privacy')} data-testid="footer-privacy">Privacy</a>
+			<a href={resolve('/(site)/terms')} data-testid="footer-terms">Terms</a>
 		</nav>
 	</footer>
 </div>

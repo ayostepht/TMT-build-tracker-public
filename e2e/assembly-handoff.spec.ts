@@ -81,7 +81,7 @@ test('a site admin imports a guide PDF in the browser (Print settings) and maps 
 	await page.waitForLoadState('networkidle');
 	const href = (await page.locator('a[href^="/admin/templates/"]').first().getAttribute('href'))!;
 	const templateId = href.split('/').pop()!;
-	await page.goto('/');
+	await page.goto('/workspace');
 	await page.waitForLoadState('networkidle');
 	const adminBuild = await startBuild(page, 'Guide import build');
 	await page.waitForLoadState('networkidle');
