@@ -74,9 +74,15 @@ verifier close each wave.
   - Postgres foundation: pg-core schema, postgres-js driver, fresh baseline, async startup/seed/kit pack, template-database test harness, `scripts/dev-postgres.sh`, porting guide `docs/dev/plans/public-site-db-port.md`. Spoolman schema dropped; shared-gallery columns added on `color_designs`.
   - Printers through OctoEverywhere links only; LAN connections, discovery, custom camera URLs, the SDCP camera-on command and all Spoolman removed. Live-mock printer e2e specs were removed (logic stays covered by unit tests); a safe e2e seam is a follow-up.
   - Public home at `/` (`(site)` group), warm paper/ink visual language with a brick accent (AA-checked by `design-tokens.test.ts`), signed-in root at `/workspace`.
-- Wave 2 (async port, six agents in the shared checkout) running.
+- Wave 2 merged (`83a330c`): every DB call is async Postgres (six area agents + one integration pass). Check, lint (typed `no-floating-promises`/`no-misused-promises` on server code), 1824 unit tests and build green; e2e runs on a Postgres `tmt_e2e` database reset by the webServer command (smoke specs green). Check-then-insert paths use advisory locks (per-build mutation lock, quota locks per scope, personal workspace, site admins, printer caps, org settings). Password reset (CLI and page) removed. Template filament roles now `ORDER BY key` (SQLite returned index order).
+- Wave 3a running in three worktrees: SSO (Google/GitHub/Discord) + demo sandbox + account (`app-shell`), shared design gallery (`design-studio-ui`), Dockerfile/deploy/CI/analytics/hosting guide (`release-pwa`). Then 3b: carry the visual language through the signed-in app. Then wave 4: full e2e, verifier, security review.
 
 ### Follow-ups noted
+
+- Team quotas (`membersPerChapter`, `pendingInvitesPerChapter`, teams per user) run inside Better Auth hooks outside our transactions, so they are best-effort under concurrency. Acceptable for launch; atomic version would wrap Better Auth's inserts.
+- Audit other unordered selects on composite-key tables for SQLite-index-order assumptions.
+- Docs outside `docs/guides/` still describe the removed password-reset CLI (`docs/password-reset.md`, `docs/architecture.md`, STATUS).
+- `README` screenshot script (`scripts/preview/readme-shots.mjs`) was removed with the mock LAN printer; rewrite against the new UI.
 
 - 390 px site header: "Try the demo" wraps to two lines.
 - Privacy page: update printer/Spoolman sentences (OctoEverywhere links only) and name Discord as a sign-in provider.
