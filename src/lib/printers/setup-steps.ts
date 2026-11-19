@@ -6,10 +6,10 @@
  * look for instead of naming a menu.
  */
 import type { ConnectionKey } from './connection-options.ts';
+import { REPO_URL } from '../repo.ts';
 
 /** The printers guide in the public repository (a section is reached with `#<anchor>`). */
-export const PRINTER_GUIDE_URL =
-	'https://github.com/ayostepht/TMT-Build-Tracker/blob/main/docs/guides/printers.md';
+export const PRINTER_GUIDE_URL = `${REPO_URL}/blob/main/docs/guides/printers.md`;
 
 export interface SetupText {
 	/** One line for the option card. */
@@ -75,7 +75,6 @@ export const SETUP_TEXT: Record<ConnectionKey, SetupText> = {
 export const LINK_GROUP_DESCRIPTION = 'For Elegoo, Klipper or OctoPrint, from anywhere';
 
 /** The printer connection report form: where makers report how an experimental option went. */
-export const ISSUES_URL =
-	'https://github.com/ayostepht/TMT-Build-Tracker/issues/new?template=printer-report.yml';
+export const ISSUES_URL = `${REPO_URL}/issues/new?template=printer-report.yml`;
 
 export const guideUrl = (anchor: string) => `${PRINTER_GUIDE_URL}#${anchor}`;

@@ -21,7 +21,7 @@ export class MockCamera {
 	withLength = true;
 	fps = 20;
 	frames: Buffer[] = [fakeJpeg('frame-0')];
-	/** When set, `/video` answers 500 "camera not ready" until this returns true (like the printer's camera before SDCP Cmd 386); a stream stops sending when it turns false. */
+	/** When set, `/video` answers 500 "camera not ready" until this returns true (like an Elegoo printer's camera that has not been switched on; the app never switches it on); a stream stops sending when it turns false. */
 	readyWhen: (() => boolean) | null = null;
 	active = 0;
 	maxActive = 0;

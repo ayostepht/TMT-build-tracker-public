@@ -11,9 +11,8 @@ import { installKitPacks } from './kitpack/install';
 import { cleanupAuthDataAtStartup } from './auth-cleanup';
 import { startDemoCleanup } from './demo/cleanup';
 
-// The helpers imported from outside the db/seed/kit-pack area (backfill, twin repair, auth cleanup,
-// imports sweep, printer supervisor) are still synchronous until the async port lands; every call
-// below is `await`ed so it keeps working once they return promises.
+// The database helpers below (backfill, twin repair, auth cleanup, stale-job sweep, imports sweep,
+// printer supervisor) are async (Postgres); `run` awaits them in order (the imports sweep runs in the background).
 
 let started: Promise<void> | null = null;
 

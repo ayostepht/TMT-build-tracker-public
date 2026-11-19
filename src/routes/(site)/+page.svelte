@@ -4,11 +4,10 @@
 	import StatusBadge from '#lib/components/StatusBadge.svelte';
 	import KitCredit from '#lib/components/kit/KitCredit.svelte';
 	import { MAKEGOOD_GUIDE_URL, MAKEGOOD_MODEL_URL } from '#lib/makegood.ts';
+	import { REPO_URL } from '#lib/repo.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
-
-	const REPO_URL = 'https://github.com/ayostepht/TMT-Build-Tracker';
 
 	/** The two sample palettes the still images and the live hero were rendered with. */
 	const teal = { primary: '#2f5d62', accent: '#e0a458', soft: '#efe6d2', tire: '#3a3631' };

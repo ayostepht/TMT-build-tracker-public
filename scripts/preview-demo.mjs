@@ -1,6 +1,6 @@
 // One-command local preview with invented sample data, for reviewing changes on a Mac and a
 // phone before anything is deployed. Review only: a throwaway secret, a throwaway data folder
-// (data/preview/data) and database (`tmt_preview`), a manual printer. Never point it at real data.
+// (data/preview/data) and database (`tmt_preview_test`), a manual printer. Never point it at real data.
 //
 //   npm run preview:demo [-- --fresh] [-- --port 5200] [-- --no-build]
 //
@@ -8,10 +8,11 @@
 // Playwright runs do not disturb it), serves that copy, and seeds through the app's HTTP API.
 //
 // Needs a local Postgres (`scripts/dev-postgres.sh`). The preview uses its own database,
-// `tmt_preview`, on the server DATABASE_URL points at (default: the dev Postgres); it is created
+// `tmt_preview_test`, on the server DATABASE_URL points at (default: the dev Postgres); it is created
 // when missing, and `--fresh` drops and recreates it.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { createServer as createHttpServer } from 'node:http';
 import { createServer } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -70,7 +71,7 @@ if (portErr)
 
 // ---- the preview database (its own database on the dev Postgres; never the dev or real one)
 const serverUrl = new URL(process.env.DATABASE_URL || 'postgres://tmt:tmt@localhost:5432/tmt_dev');
-const previewDbName = 'tmt_preview';
+const previewDbName = 'tmt_preview_test';
 const adminUrl = new URL(serverUrl);
 adminUrl.pathname = '/postgres';
 const previewUrl = new URL(serverUrl);
@@ -147,14 +148,16 @@ const server = spawn(process.execPath, ['--import', './scripts/proxy-origin.mjs'
 	stdio: ['ignore', 'inherit', 'inherit'],
 	env: {
 		...process.env,
-		NODE_ENV: 'production',
+		// The preview signs in through the test-only sign-in route (there is no email/password
+		// sign-up any more). The server's own guard allows that only with NODE_ENV=test and a database
+		// named *_test or *_e2e, which is why the preview database is `tmt_preview_test`.
+		NODE_ENV: 'test',
+		E2E_AUTH: '1',
 		HOST: '0.0.0.0',
 		PORT: String(port),
 		DATABASE_URL: previewDbUrl,
 		DATA_DIR: dataDir,
 		BETTER_AUTH_SECRET: DEMO.secret,
-		TMT_MODE: 'selfhost',
-		SIGNUP: 'open',
 		PUBLIC_URL: '',
 		BETTER_AUTH_URL: '',
 		ORIGIN: '',
@@ -167,10 +170,12 @@ const server = spawn(process.execPath, ['--import', './scripts/proxy-origin.mjs'
 });
 
 let stopping = false;
+let signinServer = null;
 async function shutdown(code = 0) {
 	if (stopping) return;
 	stopping = true;
 	say('stopping...');
+	signinServer?.close();
 	server.kill('SIGTERM');
 	await new Promise((ok) => {
 		if (server.exitCode !== null) return ok();
@@ -215,6 +220,36 @@ try {
 	await shutdown(1);
 }
 
+// ---- sign-in helper: the app has no password sign-in, so a browser gets its session cookie here.
+// Cookies are shared across ports of one host, so a sign-in on port+1 signs the browser in on `port`. Bound to 127.0.0.1 only: it signs in anyone who can reach it.
+const signinPort = port + 1;
+signinServer = createHttpServer(async (req, res) => {
+	const url = new URL(req.url ?? '/', 'http://x');
+	const who = url.searchParams.get('as') === 'editor' ? 'editor' : 'owner';
+	const [name, email] =
+		who === 'editor' ? [DEMO.editor, DEMO.editorEmail] : [DEMO.owner, DEMO.email];
+	try {
+		const r = await fetch(`${base}/api/auth/test/sign-in`, {
+			method: 'POST',
+			headers: { origin: base, 'content-type': 'application/json' },
+			body: JSON.stringify({ name, email })
+		});
+		if (!r.ok) throw new Error(`sign-in answered ${r.status}`);
+		const host = (req.headers.host ?? 'localhost').replace(/:\d+$/, '');
+		res.writeHead(302, {
+			'set-cookie': r.headers.getSetCookie(),
+			location: `http://${host}:${port}/`
+		});
+		res.end();
+	} catch (e) {
+		res.writeHead(500, { 'content-type': 'text/plain' }).end(String(e.message ?? e));
+	}
+});
+signinServer.on('error', (e) =>
+	say(`sign-in helper not started on port ${signinPort}: ${e.message}`)
+);
+signinServer.listen(signinPort, '127.0.0.1');
+
 // ---- summary
 const lan = Object.values(networkInterfaces())
 	.flat()
@@ -225,8 +260,10 @@ const lines = [
 	'Preview with sample data (review only, invented data)',
 	`  Local:    http://localhost:${port}`,
 	`  Network:  ${lan ? `http://${lan}:${port}` : '(no LAN address found)'}   (phone on the same Wi-Fi)`,
-	`  Sign in:  ${DEMO.email} / ${DEMO.password}`,
-	`  Second member (editor): ${DEMO.editorEmail} / ${DEMO.password}`,
+	`  Sign in:  http://localhost:${signinPort}/  (owner, ${DEMO.email})`,
+	`            http://localhost:${signinPort}/?as=editor  (editor, ${DEMO.editorEmail})`,
+	`            (the sign-in helper listens on 127.0.0.1 only, so it works from this computer, not from a phone;`,
+	`            there is no password. To use a phone, sign in here first, or sign in on the phone via an SSH tunnel to port ${signinPort}.)`,
 	`  Data:     data/preview/data + database ${previewDbName}${fresh ? ' (fresh)' : ''}`,
 	...seeded.summary.map((s) => `  ${s}`),
 	kit.ok
