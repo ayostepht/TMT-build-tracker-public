@@ -14,6 +14,9 @@ test('Files: printed plates collapse behind a remembered toggle; per-plate expor
 	await page.waitForLoadState('networkidle');
 	await arrangeForCentauri(page);
 	await expect(page.getByTestId('bed-compact')).toBeVisible();
+	// The arranged layout is written a moment after the picker closes; wait for it, or the plate count
+	// read below is still the kit's built-in layout.
+	await expect(page.getByTestId('layout-name')).toContainText('Arranged for');
 
 	// Nothing printed yet: no toggle, per-plate export is there.
 	await expect(page.getByTestId('printed-plates-toggle')).toHaveCount(0);
@@ -45,8 +48,6 @@ test('Files: printed plates collapse behind a remembered toggle; per-plate expor
 	await expect(toggle).toHaveText(/^Show \d+ printed plates$/);
 	const n = Number(/\d+/.exec((await toggle.textContent()) ?? '')![0]);
 	expect(n).toBeGreaterThan(10);
-	const v2 = await (await page.request.get(`/api/builds/${buildId}/view`)).json();
-	console.log('DBG', plates.length, v2.plates.length, n, await allCards.count(), total, JSON.stringify(v2.plates.map((p:any)=>[p.number,p.parts.length,p.parts.filter((x:any)=>x.status==='Printed').length])));
 	await expect(allCards).toHaveCount(plates.length - n);
 	await expect(page.getByTestId('plate-row')).toHaveCount(0);
 	const heightAfter = await page.evaluate(() => document.documentElement.scrollHeight);
