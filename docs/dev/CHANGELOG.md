@@ -14,6 +14,9 @@ repository was split off on 2026-11-19) is in the sibling repository,
 
 ## 2026-11
 
+- **2026-11-19, fourth deploy.** Image from `main` f55391d (#6: the 3MF export follows the
+  chosen MakeGood plate layout when its bed matches the printer; the fresh-arrangement note
+  only when it can't). No migration. Maintainer checked an X1 / P1 / A1 export: looks right.
 - **2026-11-19, third deploy.** Image from `main` 25a4000 (#5: color picker scrolls as one
   container; hover no longer shifts the swatch list). No migration. Maintainer confirmed the
   picker scrolls smoothly in a short window.

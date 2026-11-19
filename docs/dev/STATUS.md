@@ -45,6 +45,13 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 
 ## Open items
 
+- Sibling repository (self-hosted): carry over by hand when convenient (not security fixes):
+  the color picker scroll fix (#5, `SwatchPicker.svelte` + `e2e/picker-scroll.spec.ts`), the
+  export following the chosen layout (#6, `threemf-export/index.ts`, `builds/arrange-plan.ts`),
+  and `maxlength="200"` on the build recipient/hospital fields.
+- Color picker on short windows: the controls (search, filters, brand chips) take most of the
+  height before the swatches; a more compact control row is a possible design follow-up.
+
 - Supabase performance advisor (informational, fine at launch scale): about 20 foreign keys to `user` without a covering index (add when user
   deletion or those joins get slow).
 - README screenshots predate the new visual language, and the Integrations screenshot shows
