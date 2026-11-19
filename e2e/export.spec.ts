@@ -140,3 +140,46 @@ test('export for a slicer: no geometry, then a project 3MF per color and a plain
 		await page.screenshot({ path: `${SHOTS}/${name}.png` });
 	}
 });
+
+test('a chosen MakeGood layout is followed by the export: same plates as the Print tab, no fresh-arrangement note', async ({
+	page
+}) => {
+	test.setTimeout(120_000);
+	await page.setViewportSize({ width: 1440, height: 900 });
+	const { buildId } = await ownerWithBuild(page, 'export-layout');
+	await registerSyntheticGeometry();
+	await page.getByRole('link', { name: 'Files', exact: true }).click();
+	await expect(page).toHaveURL(/\/files$/);
+	await page.waitForLoadState('networkidle');
+
+	// Choosing the profile is enough: no "Arrange for my bed" step.
+	await page.getByTestId('plate-layout').selectOption({ label: 'Bambu X1 / P1 / A1 (24 plates)' });
+	await expect(page.getByTestId('layout-name')).toContainText('Bambu X1 / P1 / A1');
+	await expect(page.getByTestId('export-count')).toBeVisible();
+
+	const view = (await (await page.request.get(`/api/builds/${buildId}/view`)).json()) as {
+		plates: { number: number; name: string; parts: string[] }[];
+	};
+	const onTab = new Map(view.plates.map((p) => [p.number, p]));
+	expect(view.plates).toHaveLength(24);
+
+	const preview = await (await page.request.get(`/api/builds/${buildId}/export/preview`)).json();
+	expect(preview.ready).toBe(true);
+	const notes = (preview.warnings as { message: string }[]).map((w) => w.message);
+	expect(notes.filter((m) => /fresh arrangement/.test(m))).toEqual([]);
+	for (const pl of preview.plates as {
+		number: number;
+		name: string;
+		objects: { slug: string }[];
+	}[]) {
+		const tab = onTab.get(pl.number);
+		expect(tab, `plate ${pl.number} exists on the Print tab`).toBeTruthy();
+		expect(pl.name.startsWith(tab!.name)).toBe(true);
+		for (const o of pl.objects) expect(tab!.parts).toContain(o.slug);
+	}
+	await expect(page.getByTestId('export-card')).not.toContainText('fresh arrangement');
+	await page.getByTestId('export-card').scrollIntoViewIfNeeded();
+	await page.getByTestId('export-card').screenshot({ path: `${SHOTS}/export-kit-layout-1440.png` });
+	const res = await page.request.get(`/api/builds/${buildId}/export.3mf?flavor=orca`);
+	expect(res.status()).toBe(200);
+});

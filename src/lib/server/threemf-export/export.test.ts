@@ -12,7 +12,7 @@ import { ApiError } from '../access';
 import { planArrangement } from '../builds/arrange-plan';
 import { createBuild } from '../builds/create';
 import { setPrinter } from '../builds/actions';
-import { arrangeForPrinter, buildArrangement } from '../builds/plates';
+import { arrangeForPrinter, buildArrangement, setPlateLayout } from '../builds/plates';
 import { loadBuildView } from '../builds/view';
 import { first, type Db } from '../db';
 import { createTestDb, dropTestDb } from '../db/testing';
@@ -691,8 +691,10 @@ describe('exportBuild3mf with a database', () => {
 		expect(pre.plates.length).toBe(sum.plates.length);
 		expect(pre.missing.length).toBeGreaterThan(0); // the other kit parts have seed numbers only
 		expect(pre.filaments).toHaveLength(4);
-		// not arranged yet: a note says the export used a fresh arrangement
-		expect(pre.warnings.some((w) => w.code === 'arrangement')).toBe(true);
+		// the default MakeGood layout is for this 256 x 256 bed: the file follows the Print tab's plates
+		expect(pre.warnings.some((w) => /fresh arrangement/.test(w.message))).toBe(false);
+		const printTab = new Set((await loadBuildView(db, id, 'owner'))!.plates.map((p) => p.number));
+		expect(pre.plates.every((p) => printTab.has(p.number))).toBe(true);
 		expect(
 			(await prepareExport(db, id, 'owner', { flavor: 'orca', plates: [pre.plates[0].number] }))
 				.plan.plates
@@ -702,6 +704,65 @@ describe('exportBuild3mf with a database', () => {
 		);
 		const v = (await loadBuildView(db, id, 'owner'))!;
 		expect(v.printer?.name).toBe('Elegoo Centauri Carbon');
+	});
+
+	describe('a chosen MakeGood layout', () => {
+		it('is followed: same plate numbers, names and parts as the Print tab, no fresh-arrangement note', async () => {
+			const id = await mk(); // no printer of its own: the layout's 256 x 256 bed stands for it
+			await setPlateLayout(db, id, 'owner', { key: 'xpa' });
+			await importSynthetic();
+			const view = (await loadBuildView(db, id, 'owner'))!;
+			const { plan: p } = await prepareExport(db, id, 'owner', { flavor: 'orca' });
+			expect(p.printer.name).toBe('Bambu X1 / P1 / A1');
+			// seed footprints are the H-series orientation: some plates overflow one 256 mm bed (noted, extra plates);
+			// none may fall back to a fresh arrangement
+			expect(p.warnings.some((w) => /fresh arrangement/.test(w.message))).toBe(false);
+			const byNumber = new Map(view.plates.map((pl) => [pl.number, pl]));
+			expect(p.plates.length).toBeGreaterThan(0);
+			const original = p.plates.filter((pl) => byNumber.has(pl.number));
+			expect(original.length).toBeGreaterThan(0);
+			for (const pl of original) {
+				const src = byNumber.get(pl.number)!;
+				expect(pl.name.startsWith(src.name)).toBe(true);
+				expect(pl.runs).toBe(src.runs);
+				const slugs = new Set(
+					pl.items.map((i) => p.objects.find((o) => o.id === i.objectId)!.slug)
+				);
+				for (const s of slugs) expect(src.parts).toContain(s);
+			}
+			for (const pl of p.plates)
+				for (const i of pl.items) {
+					expect(i.x - i.w / 2).toBeGreaterThanOrEqual(-1e-6);
+					expect(i.x + i.w / 2).toBeLessThanOrEqual(256 + 1e-6);
+				}
+		});
+		it('another bed than the layout is for: a fresh arrangement, and the note says what to do', async () => {
+			const id = await mk();
+			await setPrinter(db, id, 'owner', { printer: cc });
+			await setPlateLayout(db, id, 'owner', { key: 'h2d' });
+			await importSynthetic();
+			const { plan: p } = await prepareExport(db, id, 'owner', { flavor: 'orca' });
+			const note = p.warnings.find((w) => w.code === 'arrangement');
+			expect(note?.message).toMatch(/layout, made for a 350 × 320 mm bed/);
+			expect(note?.message).toMatch(/Arrange for my bed/);
+		});
+		it('a plate whose parts do not fit one bed gets extra plates after the last, named in a note', async () => {
+			const id = await mk();
+			await setPrinter(db, id, 'owner', { printer: cc });
+			await setPlateLayout(db, id, 'owner', { key: 'xpa' });
+			await db
+				.update(buildPlates)
+				.set({ parts: ['wing-left', 'wing-right', 'footrest'] })
+				.where(and(eq(buildPlates.buildId, id), eq(buildPlates.number, 1)));
+			await importSynthetic();
+			const view = (await loadBuildView(db, id, 'owner'))!;
+			const last = Math.max(...view.plates.map((p) => p.number));
+			const { plan: p } = await prepareExport(db, id, 'owner', { flavor: 'orca' });
+			const note = p.warnings.find((w) => w.code === 'arrangement');
+			expect(note?.message).toMatch(/Plate 1 \(/);
+			expect(p.plates.some((pl) => pl.number > last)).toBe(true);
+			expect(p.plates.some((pl) => pl.number === 1)).toBe(true);
+		});
 	});
 
 	describe('a corrupt stored arrangement', () => {
