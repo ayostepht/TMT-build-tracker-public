@@ -19,7 +19,7 @@
 		<div class="kicker">Help</div>
 		<h1>How the Build Tracker works</h1>
 		<p class="muted">
-			Plan, print, assemble and hand off a MakeGood 3D TMT chair with your chapter. For the printing
+			Plan, print, assemble and hand off a MakeGood 3D TMT chair with your team. For the printing
 			steps, the chair guide from MakeGood is still the reference.
 		</p>
 		<nav class="help-jump" aria-label="On this page" data-testid="help-nav">
@@ -35,8 +35,8 @@
 		<ol class="help-steps">
 			<li>
 				<b>Pick where the build lives.</b> You always have <b>My builds</b>, a personal workspace
-				for you alone. To build with others, press <b>Create a chapter</b> in the top bar or accept an
-				invitation. A chapter shares its builds, members and printers.
+				for you alone. To build with others, press <b>Create a team</b> in the top bar or accept an invitation.
+				A team shares its builds, members and printers.
 			</li>
 			<li>
 				<b>Start a new build.</b> Choose <b>New build</b> in the Builds menu, give it a name
@@ -81,8 +81,7 @@
 		<h2 id="h-day">Printing day</h2>
 		<ol class="help-steps">
 			<li>
-				<b>Pick the next plate.</b> Open the build's <b>Print</b> tab (or the chapter page, which
-				shows
+				<b>Pick the next plate.</b> Open the build's <b>Print</b> tab (or the team page, which shows
 				<b>Now printing</b> and <b>Next up</b>). A plate is one print job on your bed.
 			</li>
 			<li>
@@ -130,7 +129,7 @@
 				is skipped, and the printer's own time left is shown in its live panel under the card.
 			</li>
 			<li>
-				On the chapter page, <b>Details</b> on a Now printing card opens that build's Print tab.
+				On the team page, <b>Details</b> on a Now printing card opens that build's Print tab.
 			</li>
 		</ul>
 		<h3>Printer badges</h3>
@@ -191,11 +190,11 @@
 			<dd>A mapping of roles to filaments, and of parts to roles. Designs can be shared.</dd>
 			<dt>Build</dt>
 			<dd>
-				One chair a chapter (or you) is making: it snapshots a design and holds all the progress.
+				One chair a team (or you) is making: it snapshots a design and holds all the progress.
 			</dd>
-			<dt>Chapter</dt>
+			<dt>Team</dt>
 			<dd>
-				A team: members, builds and printers. Your own <b>My builds</b> workspace is a chapter of one.
+				A team: members, builds and printers. Your own <b>My builds</b> workspace is a team of one.
 			</dd>
 			<dt>Plate</dt>
 			<dd>The parts that print together in one job on your bed.</dd>
@@ -220,8 +219,8 @@
 			</dd>
 			<dt>Viewer, editor, owner</dt>
 			<dd>
-				Roles in a chapter. A <b>viewer</b> can look. An <b>editor</b> can also create and update
-				builds and log prints. An <b>owner</b> also manages members, invitations and the chapter.
+				Roles in a team. A <b>viewer</b> can look. An <b>editor</b> can also create and update
+				builds and log prints. An <b>owner</b> also manages members, invitations and the team.
 			</dd>
 		</dl>
 	</section>
@@ -256,18 +255,18 @@
 				</p>
 			</details>
 			<details>
-				<summary>Can I use it without a chapter?</summary>
+				<summary>Can I use it without a team?</summary>
 				<p>
-					Yes. <b>My builds</b> is yours from the day you sign up. You can move a build into a chapter
-					later. A personal workspace cannot take invitations: create a chapter to build with others.
+					Yes. <b>My builds</b> is yours from the day you sign up. You can move a build into a team later.
+					A personal workspace cannot take invitations: create a team to build with others.
 				</p>
 			</details>
 			<details>
 				<summary>How do invitations work without email?</summary>
 				<p>
-					The app does not send email. A chapter owner opens the chapter's <b>Members</b>, enters
-					the person's email and a role (editor or viewer) and presses <b>Create invite link</b>.
-					Copy the link with <b>Copy link</b> and send it yourself. The person opens it, signs in or
+					The app does not send email. A team owner opens the team's <b>Members</b>, enters the
+					person's email and a role (editor or viewer) and presses <b>Create invite link</b>. Copy
+					the link with <b>Copy link</b> and send it yourself. The person opens it, signs in or
 					creates an account and presses <b>Accept</b>.
 				</p>
 			</details>

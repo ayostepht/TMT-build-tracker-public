@@ -14,7 +14,7 @@
 	 * The landing's "Now printing" and "Next up" across the builds it was given. One `BuildCtx` per
 	 * build (the same class the build layout uses) is shared by both sections. The server caps how
 	 * many builds it hands us (LANDING_BUILD_CAP) because each build is polled and fetches its
-	 * printer jobs; all builds of a chapter share one printer stream. Build state itself is polled,
+	 * printer jobs; all builds of a team share one printer stream. Build state itself is polled,
 	 * not streamed (see below).
 	 */
 	let { views, more = 0 }: { views: BuildView[]; more?: number } = $props();

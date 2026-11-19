@@ -11,7 +11,7 @@
 <section class="stack" data-testid="all-builds-page">
 	<div class="head-row">
 		<div>
-			<div class="kicker">Every chapter and My builds</div>
+			<div class="kicker">Every team and My builds</div>
 			<h1>All builds</h1>
 		</div>
 		<a class="btn primary" href={resolve('/(app)/builds/new')} data-testid="new-build">New build</a>

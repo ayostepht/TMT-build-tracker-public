@@ -8,8 +8,7 @@
 		deleteDesign,
 		previewApplyDesign,
 		shareDesign,
-		unshareDesign,
-		updateDesignMeta
+		unshareDesign
 	} from '#lib/client/api.ts';
 	import { offerDesignUndo, snapshotBuild } from '#lib/client/design-undo.ts';
 	import type { ApplyMode } from '#lib/domain/design-apply.ts';
@@ -148,13 +147,6 @@
 			await goto(resolve('/(app)/builds/[id]/design', { id: b.id }));
 		});
 
-	const togglePublic = () =>
-		run(async () => {
-			await updateDesignMeta(d.id, { isPublic: !d.isPublic });
-			await invalidateAll();
-			note = d.isPublic ? 'Now private.' : 'Now public.';
-		});
-
 	const shareToGallery = () =>
 		run(async () => {
 			await shareDesign(d.id);
@@ -191,9 +183,7 @@
 			<p class="muted">
 				{d.authorName ? `By ${d.authorName}` : 'Included with the kit'} · {d.shared
 					? 'in the gallery'
-					: d.isPublic
-						? 'public'
-						: 'private'}
+					: 'private'}
 			</p>
 			{#if data.credit}
 				<p class="muted" data-testid="copied-from">
@@ -256,7 +246,7 @@
 					<h3>Start a new build</h3>
 					{#if data.targets.workspaces.length}
 						<label class="field">
-							Chapter or My builds
+							Team or My builds
 							<select bind:value={workspace}>
 								{#each data.targets.workspaces as w (w.id)}<option value={w.id}>{w.name}</option
 									>{/each}
@@ -269,7 +259,7 @@
 						<button class="btn primary" disabled={busy} onclick={start}>Start a build</button>
 					{:else}
 						<p class="muted">
-							You need to be an editor in a chapter (or have My builds) to start a build.
+							You need to be an editor in a team (or have My builds) to start a build.
 						</p>
 					{/if}
 				</div>
@@ -321,11 +311,11 @@
 					{/if}
 				</section>
 				<section class="ds-card">
-					<h2>Sharing</h2>
+					<h2>Link</h2>
 					<p class="muted small">
-						{d.isPublic || d.shared
+						{d.shared
 							? 'Anyone signed in with this link can see and use this design.'
-							: 'Only you can see this design. Share it publicly to give others the link.'}
+							: 'Only you and people in your teams can open this link. Share it to the gallery to open it up.'}
 					</p>
 					<label class="field">
 						Link
@@ -336,9 +326,6 @@
 						/>
 					</label>
 					<div class="acts">
-						<button class="btn" disabled={busy} onclick={togglePublic}>
-							{d.isPublic ? 'Make private' : 'Share publicly'}
-						</button>
 						<button class="btn danger" disabled={busy} onclick={() => (asking = 'delete')}
 							>Delete design</button
 						>

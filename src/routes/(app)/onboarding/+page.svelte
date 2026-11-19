@@ -6,14 +6,14 @@
 	let { data, form }: PageProps = $props();
 </script>
 
-<svelte:head><title>Chapters · TMT Build Tracker</title></svelte:head>
+<svelte:head><title>Teams · TMT Build Tracker</title></svelte:head>
 
 <section class="stack narrow">
-	<div class="kicker">Chapters</div>
+	<div class="kicker">Teams</div>
 	<h1>Build with others</h1>
 	<p class="muted">
-		A chapter is a group of makers who share builds, progress and filament. Your own builds stay in
-		My builds until you move them to a chapter.
+		A team is a group of makers who share builds, progress and filament. Your own builds stay in My
+		builds until you move them to a team.
 	</p>
 
 	{#if data.invitations.length}
@@ -29,10 +29,10 @@
 	{/if}
 
 	<form class="card stack" method="post" action="?/create" use:enhance>
-		<h2>Create a chapter</h2>
+		<h2>Create a team</h2>
 		{#if form?.error}<div class="error" role="alert">{form.error}</div>{/if}
-		<label class="field">Chapter name<input name="name" required maxlength="80" /></label>
-		<button class="btn primary">Create chapter</button>
+		<label class="field">Team name<input name="name" required maxlength="80" /></label>
+		<button class="btn primary">Create team</button>
 	</form>
 
 	<p>

@@ -35,8 +35,8 @@ export async function signUp(page: Page, name: string, email: string, redirect?:
 export async function createChapter(page: Page, name: string) {
 	if (!/\/onboarding/.test(page.url())) await page.goto('/onboarding');
 	await settled(page);
-	await page.getByLabel('Chapter name').fill(name);
-	await page.getByRole('button', { name: 'Create chapter' }).click();
+	await page.getByLabel('Team name').fill(name);
+	await page.getByRole('button', { name: 'Create team' }).click();
 	await expect(page).toHaveURL(/\/teams\//);
 	await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
 }

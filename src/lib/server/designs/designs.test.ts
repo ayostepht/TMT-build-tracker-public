@@ -30,6 +30,7 @@ import {
 	updateDesignMeta
 } from './designs';
 import { applyDesignToBuild, updateBuildDesign } from './mutate';
+import { shareDesign } from './gallery';
 
 let db: Db;
 let templateId: string;
@@ -185,8 +186,10 @@ describe('designs', () => {
 			addRole: { key: 'red', name: 'Red', material: 'PETG', hex: '#aa0000' },
 			partRoles: { 'wing-left': 'red', 'wing-right': 'red' }
 		});
-		const made = await createDesign(db, 'owner', { buildId: id, name: 'My Reds!', isPublic: true });
+		const made = await createDesign(db, 'owner', { buildId: id, name: 'My Reds!' });
 		expect(made.slug).toBe('my-reds');
+		// the outsider (another team) can use it once it is shared to the gallery
+		await shareDesign(db, made.id, 'owner');
 		const d = await findDesign(db, made.slug, 'outsider');
 		expect(d.roles.map((r) => r.key)).toContain('red');
 		expect(d.partRoles['wing-left']).toBe('red');
@@ -211,41 +214,38 @@ describe('designs', () => {
 		expect(a.slug).not.toBe(b.slug);
 	});
 
-	it('visibility: public, author, and people who share a workspace with the author', async () => {
+	it('visibility: author, people who share a workspace with the author, and the seeded examples', async () => {
 		const id = await mk();
 		const priv = await createDesign(db, 'owner', { buildId: id, name: 'Private one' });
-		const pub = await createDesign(db, 'owner', {
-			buildId: id,
-			name: 'Public one',
-			isPublic: true
-		});
+		const pub = await createDesign(db, 'owner', { buildId: id, name: 'Public one' });
+		// the retired isPublic column grants nothing
+		await db.update(colorDesigns).set({ isPublic: true }).where(eq(colorDesigns.id, pub.id));
 		const names = async (u: string) => (await listDesigns(db, u)).map((d) => d.name);
 		expect(await names('owner')).toEqual(expect.arrayContaining(['Private one', 'Public one']));
-		// editor shares the chapter with the author
+		// editor shares the team with the author
 		expect(await names('editor')).toEqual(expect.arrayContaining(['Private one', 'Public one']));
 		const out = await names('outsider');
-		expect(out).toContain('Public one');
+		expect(out).not.toContain('Public one');
 		expect(out).not.toContain('Private one');
 		expect(await code(() => findDesign(db, priv.id, 'outsider'))).toBe(404);
-		expect(await code(() => findDesign(db, pub.slug, 'outsider'))).toBe(0);
-		// seeded design is public and has no author
+		expect(await code(() => findDesign(db, pub.slug, 'outsider'))).toBe(404);
+		// seeded example designs have no author and are open to every signed-in user
 		expect(out).toContain('Columbus #4691 Blues');
-		const detail = await getDesignDetail(db, pub.slug, 'outsider');
+		const detail = await getDesignDetail(db, pub.slug, 'editor');
 		expect(detail.parts.length).toBe((await view(id)).allParts.length);
 		expect(detail.authorName).toBe('User owner');
 		expect(Object.values(detail.partCounts).reduce((a, b) => a + b, 0)).toBe(detail.parts.length);
 	});
 
-	it('only the author edits, unpublishes or deletes', async () => {
+	it('only the author renames or deletes', async () => {
 		const id = await mk();
-		const d = await createDesign(db, 'owner', { buildId: id, name: 'Mine', isPublic: true });
-		expect(await code(() => updateDesignMeta(db, d.id, 'editor', { isPublic: false }))).toBe(403);
-		await updateDesignMeta(db, d.id, 'owner', { name: 'Renamed', isPublic: false });
+		const d = await createDesign(db, 'owner', { buildId: id, name: 'Mine' });
+		expect(await code(() => updateDesignMeta(db, d.id, 'editor', { name: 'Hijack' }))).toBe(403);
+		await updateDesignMeta(db, d.id, 'owner', { name: 'Renamed' });
 		expect(
 			await first(db.select().from(colorDesigns).where(eq(colorDesigns.id, d.id)))
 		).toMatchObject({
-			name: 'Renamed',
-			isPublic: false
+			name: 'Renamed'
 		});
 		expect(
 			await deleteDesign(db, d.id, 'editor').then(
@@ -288,7 +288,7 @@ describe('applyDesignToBuild', () => {
 			.update(buildFilaments)
 			.set({ name: 'Custom Primary', hex: '#123456' })
 			.where(and(eq(buildFilaments.buildId, src), eq(buildFilaments.roleKey, 'primary')));
-		const d = await createDesign(db, 'owner', { buildId: src, name: 'Source', isPublic: true });
+		const d = await createDesign(db, 'owner', { buildId: src, name: 'Source' });
 
 		const target = await mk();
 		await db.update(buildFilaments).set({ spools: 7 }).where(eq(buildFilaments.buildId, target));

@@ -82,7 +82,7 @@
 					<h3><a href={resolve('/(app)/designs/[slug]', { slug: d.slug })}>{d.name}</a></h3>
 					<div class="muted">
 						{d.authorName ?? 'Included with the kit'} · {d.templateName}
-						{#if !d.isPublic}<span class="ds-badge ds-badge--sm">private</span>{/if}
+						{#if d.authorUserId && !d.shared}<span class="ds-badge ds-badge--sm">private</span>{/if}
 					</div>
 				</div>
 				<ul class="fils">

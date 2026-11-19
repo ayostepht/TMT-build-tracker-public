@@ -34,7 +34,7 @@ test('share a design to the gallery, another user uses it, unsharing keeps their
 	await expect(dlg).toContainText('Olive Owner');
 	await expect(dlg).toContainText('never shown');
 	await expect(dlg).not.toContainText(email);
-	await expect(dlg).not.toContainText('Chapter');
+	await expect(dlg).not.toContainText('Team name');
 	await dlg.getByRole('button', { name: 'Share to the gallery' }).click();
 	await expect(page.getByTestId('gallery-card')).toContainText('In the shared gallery');
 

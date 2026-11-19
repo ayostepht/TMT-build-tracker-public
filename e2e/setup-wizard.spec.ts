@@ -295,7 +295,7 @@ test('navigation: Builds menu, back to the build on phones, chapter tabs', async
 
 	// Chapter page tabs.
 	await page.goto(chapterUrl);
-	const ct = page.getByRole('navigation', { name: 'Chapter sections' });
+	const ct = page.getByRole('navigation', { name: 'Team sections' });
 	for (const t of ['Builds', 'Members', 'Printers', 'Integrations'])
 		await expect(ct.getByRole('link', { name: t, exact: true })).toBeVisible();
 	await ct.getByRole('link', { name: 'Integrations' }).click();

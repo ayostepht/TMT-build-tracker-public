@@ -247,10 +247,10 @@ export const setBuildDesign = (
 	}
 ) => call('PATCH', `${b(id)}/design`, patch);
 
-export const createDesign = (input: { buildId: string; name: string; isPublic: boolean }) =>
+export const createDesign = (input: { buildId: string; name: string }) =>
 	call<{ id: string; slug: string }>('POST', '/api/designs', input);
 
-export const updateDesignMeta = (id: string, patch: { name?: string; isPublic?: boolean }) =>
+export const updateDesignMeta = (id: string, patch: { name?: string }) =>
 	call('PATCH', `/api/designs/${encodeURIComponent(id)}`, patch);
 
 export const deleteDesign = (id: string) =>

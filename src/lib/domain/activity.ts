@@ -115,7 +115,7 @@ function describeMarked(a: ActivityItem, view: Names): string {
 		case 'build.move':
 			return str(p.toName)
 				? `${who} moved this build to ${str(p.toName)}`
-				: `${who} moved this build to a chapter`;
+				: `${who} moved this build to a team`;
 		case 'build.variant': {
 			const g = view.variantGroups?.find((x) => x.key === p.group);
 			const o = g?.options.find((x) => x.key === p.to);

@@ -83,7 +83,7 @@
 	{#if g.items.length}
 		<ul class="gal-grid">
 			{#each g.items as item (item.id)}
-				<GalleryCard {item} />
+				<GalleryCard {item} model={data.models[item.templateId] ?? null} />
 			{/each}
 		</ul>
 		{#if g.pages > 1}

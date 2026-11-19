@@ -63,12 +63,11 @@ test('design tab: move parts between slots, add a color, share a design and star
 	).not.toContainText('E2E Red');
 	await expect(slot).toContainText('1 parts');
 
-	// Save as a public design.
+	// Save as a design.
 	await expect(page.getByTestId('autosave-status')).toContainText('Saved automatically');
 	await page.getByTestId('open-share').click();
 	const dlg = page.getByTestId('share-dialog');
 	await dlg.getByLabel('Design name').fill('E2E Blues');
-	await dlg.getByLabel(/Share publicly/).check();
 	await dlg.getByRole('button', { name: 'Save design' }).click();
 	await expect(page.getByTestId('design-saved')).toContainText('Saved "E2E Blues"');
 	await page.keyboard.press('Escape');
