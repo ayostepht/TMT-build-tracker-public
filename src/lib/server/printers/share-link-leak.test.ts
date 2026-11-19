@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type Db } from '../db';
-import { createTestDb, dropTestDb } from '../db/testing';
+import { createTestDb } from '../db/testing';
 import { member, organization, user } from '../db/schema';
 import { getCameraHub } from './camera';
 import { cameraChanged } from './camera-access';

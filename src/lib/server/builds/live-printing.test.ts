@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, afterEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { first, type Db } from '../db';
 import { createTestDb, dropTestDb } from '../db/testing';
@@ -36,6 +36,8 @@ async function liveJob(status = 'printing') {
 		startedAt: T0
 	});
 }
+
+afterEach(() => dropTestDb(db));
 
 beforeEach(async () => {
 	db = await createTestDb();

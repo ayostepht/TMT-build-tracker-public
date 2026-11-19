@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, afterEach } from 'vitest';
 import { count, eq } from 'drizzle-orm';
 import { describeActivity } from '#lib/domain/activity.ts';
 import { ApiError, isSiteAdmin, requireSiteAdmin } from '../access';
@@ -33,6 +33,8 @@ const orgId = 'org1';
 async function addUser(id: string, createdAt = new Date()) {
 	await db.insert(user).values({ id, name: `User ${id}`, email: `${id}@Example.test`, createdAt });
 }
+
+afterEach(() => dropTestDb(db));
 
 beforeEach(async () => {
 	db = await createTestDb();

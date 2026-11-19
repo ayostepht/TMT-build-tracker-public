@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, afterEach } from 'vitest';
 import { count, eq } from 'drizzle-orm';
 import { ApiError, buildAccess } from '../access';
 import { first, type Db } from '../db';
@@ -43,6 +43,8 @@ async function addMember(userId: string, role: string) {
 		.insert(member)
 		.values({ id: `m-${userId}`, organizationId: orgId, userId, role, createdAt: new Date() });
 }
+
+afterEach(() => dropTestDb(db));
 
 beforeEach(async () => {
 	db = await createTestDb();

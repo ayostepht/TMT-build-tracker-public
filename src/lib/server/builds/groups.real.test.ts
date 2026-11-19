@@ -4,7 +4,7 @@
 // plates, every multi-piece part's outcome, the export guard. TMT_GROUPS_DB (a Postgres URL) keeps
 // the database; without it a throwaway test database is used.
 import { existsSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 const dir = process.env.TMT_PACK_DIR;

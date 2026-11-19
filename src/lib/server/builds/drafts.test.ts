@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, afterEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { ApiError, buildAccess } from '../access';
 import { first, type Db } from '../db';
@@ -26,6 +26,8 @@ import { loadBuildView } from './view';
 let db: Db;
 let templateId: string;
 const orgId = 'org1';
+
+afterEach(() => dropTestDb(db));
 
 beforeEach(async () => {
 	db = await createTestDb();

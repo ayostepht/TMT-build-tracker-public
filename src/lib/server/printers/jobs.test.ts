@@ -1,5 +1,5 @@
 import { ApiError } from '../access';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { printerFromCatalog } from '#lib/printers/printer.ts';
 import { catalogPrinter } from '#lib/printers/catalog.ts';
@@ -69,6 +69,8 @@ const printing = (
 const jobs = async () => await db.select().from(printerJobs);
 const partStatus = async (slug: string) =>
 	(await first(db.select().from(buildParts).where(eq(buildParts.partSlug, slug))))!.status;
+
+afterEach(() => dropTestDb(db));
 
 beforeEach(async () => {
 	db = await createTestDb();

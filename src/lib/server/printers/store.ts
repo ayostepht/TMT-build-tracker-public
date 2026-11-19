@@ -16,7 +16,7 @@ import {
 	SHARE_LINK_KEY
 } from '#lib/printers/share-link.ts';
 import { ApiError } from '../access';
-import { advisoryLock, first, one, type Db, type DbOrTx, type Tx } from '../db';
+import { advisoryLock, first, type Db, type DbOrTx, type Tx } from '../db';
 import { linkPrintersPerWorkspace, linkPrintersTotal, manualPrintersPerWorkspace } from '../config';
 import { QuotaError } from '../quota';
 import { printers } from '../db/schema';

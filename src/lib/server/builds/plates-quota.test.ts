@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { first, type Db } from '../db';
-import { createTestDb, dropTestDb } from '../db/testing';
+import { createTestDb } from '../db/testing';
 import { buildPlates, buildUploads, member, organization, templates, user } from '../db/schema';
 import { templateSeeds } from '../seed';
 import { seedTemplates } from '../seed/run';

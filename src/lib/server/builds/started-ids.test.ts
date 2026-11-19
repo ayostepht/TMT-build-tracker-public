@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, afterEach } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { first, type Db } from '../db';
 import { createTestDb, dropTestDb } from '../db/testing';
@@ -29,6 +29,8 @@ const setStatus = async (buildId: string, status: string) =>
 		.update(buildParts)
 		.set({ status })
 		.where(and(eq(buildParts.buildId, buildId), eq(buildParts.partSlug, 'handle-left')));
+
+afterEach(() => dropTestDb(db));
 
 beforeEach(async () => {
 	db = await createTestDb();

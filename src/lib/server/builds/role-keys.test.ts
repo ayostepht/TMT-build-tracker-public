@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, afterEach } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { first, type Db } from '../db';
 import { createTestDb, dropTestDb } from '../db/testing';
@@ -22,6 +22,8 @@ import { updateBuildDesign } from '../designs/mutate';
 let db: Db;
 let id: string;
 let other: string;
+
+afterEach(() => dropTestDb(db));
 
 beforeEach(async () => {
 	db = await createTestDb();

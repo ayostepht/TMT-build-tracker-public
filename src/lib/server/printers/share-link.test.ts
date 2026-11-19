@@ -9,7 +9,7 @@ import { setResolver } from './outbound';
 import { resolveCameraSource, type CameraTarget } from './camera-source';
 import { MockSdcp } from './mock-sdcp';
 import { decryptSecrets } from './secrets';
-import { createTestDb, dropTestDb } from '../db/testing';
+import { createTestDb } from '../db/testing';
 import { organization, printers, user } from '../db/schema';
 import { configFromInput, createPrinter, toConfig, toPublic, updatePrinter } from './store';
 import type { PrinterConfig } from './types';

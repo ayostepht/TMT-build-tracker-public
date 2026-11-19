@@ -2,8 +2,8 @@
 // with G-code for every plate; never in git). Parses it with the plate parser, prints a report
 // (app, printer, per-plate time and grams, thumbnails, matching, parse time, peak memory) and, with
 // KITPACK_DIR set, runs the whole upload -> review -> apply flow against a scratch database under data/.
-import { existsSync, mkdirSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 import { parseThreeMfFile } from './index';
 

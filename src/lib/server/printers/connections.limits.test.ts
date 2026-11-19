@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { ApiError } from '../access';
 import { first } from '#lib/server/db/index.ts';
-import { createTestDb, dropTestDb } from '../db/testing';
+import { createTestDb } from '../db/testing';
 import { organization, printers, user } from '../db/schema';
 import { adapters } from './adapters';
 import { resolveCameraSource, MAX_CAMERA_URLS, type CameraTarget } from './camera-source';
@@ -335,6 +335,15 @@ describe('caps (public quota defaults)', () => {
 		await expect(createPrinter(db, 'o1', 'u1', link(5))).resolves.not.toThrow();
 	});
 
+	it('concurrent adds cannot pass the per-workspace cap together', async () => {
+		const db = await setup();
+		const results = await Promise.allSettled(
+			[1, 2, 3, 4, 5, 6].map((n) => createPrinter(db, 'o1', 'u1', link(n)))
+		);
+		expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(3);
+		expect(await db.select().from(printers)).toHaveLength(3);
+	});
+
 	it('the instance-wide default is 200 in public mode', async () => {
 		const db = await setup();
 		vi.stubEnv('QUOTA_LINK_PRINTERS_PER_WORKSPACE', 'off');
@@ -350,7 +359,7 @@ describe('caps (public quota defaults)', () => {
 		);
 	});
 
-	it('manual printers: 10 per workspace by default in public mode, configurable, not on self-hosted', async () => {
+	it('manual printers: 10 per workspace by default, configurable, in any mode', async () => {
 		const db = await setup();
 		for (let i = 0; i < 10; i++)
 			await createPrinter(db, 'o1', 'u1', { name: `m${i}`, kind: 'manual' });
@@ -375,12 +384,15 @@ describe('caps (public quota defaults)', () => {
 		vi.stubEnv('QUOTA_MANUAL_PRINTERS_PER_WORKSPACE', 'off');
 		expect((await updatePrinter(db, l.id, 'o3', { kind: 'manual' })).kind).toBe('manual');
 		vi.unstubAllEnvs();
+		// the caps do not depend on TMT_MODE: the same default applies without it
 		const sh = await createTestDb();
 		await sh.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' });
 		await sh.insert(organization).values({ id: 'o1', name: 'o', slug: 'o', createdAt: new Date() });
-		vi.stubEnv('BETTER_AUTH_SECRET', 'unit-test-secret-not-for-production-0123456789abcdef');
-		for (let i = 0; i < 12; i++)
+		for (let i = 0; i < 10; i++)
 			await createPrinter(sh, 'o1', 'u1', { name: `m${i}`, kind: 'manual' });
+		await expect(createPrinter(sh, 'o1', 'u1', { name: 'm10', kind: 'manual' })).rejects.toThrow(
+			/not connected/
+		);
 	});
 });
 

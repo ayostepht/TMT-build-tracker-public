@@ -1,7 +1,7 @@
 // Runs only when TMT_REAL_DB points at a scratch database whose print geometry was imported with
 // scripts/import-print-geometry.mjs (never the user's data, never in CI). Creates a build with the
 // Elegoo Centauri Carbon, arranges it, writes the three flavors to TMT_REAL_OUT and reports stats.
-import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { createWriteStream, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';

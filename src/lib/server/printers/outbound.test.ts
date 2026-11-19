@@ -17,7 +17,7 @@ import {
 	setResolver,
 	type ResolvedTarget
 } from './outbound';
-import { createTestDb, dropTestDb } from '../db/testing';
+import { createTestDb } from '../db/testing';
 import { organization, user } from '../db/schema';
 import { createPrinter, toPublic, updatePrinter } from './store';
 import { testConnection } from './supervisor';

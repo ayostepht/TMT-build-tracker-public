@@ -46,6 +46,8 @@ let templateId: string;
 let dir: string;
 const orgId = 'org1';
 
+afterEach(() => dropTestDb(db));
+
 beforeEach(async () => {
 	dir = mkdtempSync(join(tmpdir(), 'tmt-quota-'));
 	vi.stubEnv('DATA_DIR', dir);

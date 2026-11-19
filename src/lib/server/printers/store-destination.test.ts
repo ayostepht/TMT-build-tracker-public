@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestDb, dropTestDb } from '../db/testing';
+import { createTestDb } from '../db/testing';
 import { organization, user } from '../db/schema';
 import { ApiError } from '../access';
 import { configFromInput, createPrinter, updatePrinter } from './store';

@@ -1,13 +1,12 @@
-import { existsSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
+
+import { beforeEach, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { recomputeParts } from '#lib/domain/recompute.ts';
 import { describeActivity } from '#lib/domain/activity.ts';
 import { ApiError } from '../access';
 import { first, type Db } from '../db';
-import { createTestDb, dropTestDb } from '../db/testing';
+import { createTestDb } from '../db/testing';
 import {
 	activity,
 	buildUploads,

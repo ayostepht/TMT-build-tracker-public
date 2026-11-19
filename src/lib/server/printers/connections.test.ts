@@ -9,7 +9,7 @@ import https from 'node:https';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrinterStatus } from '#lib/printers/status.ts';
-import { createTestDb, dropTestDb } from '../db/testing';
+import { createTestDb } from '../db/testing';
 import { organization, printers, user } from '../db/schema';
 import { adapters } from './adapters';
 import { LINK_POLL_ACTIVE_MS, LINK_POLL_IDLE_MS } from './adapters/octoprint';

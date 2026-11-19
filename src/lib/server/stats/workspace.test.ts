@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, afterEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { ApiError } from '../access';
 import { first, type Db } from '../db';
@@ -67,6 +67,8 @@ async function addRuns(
 		}))
 	);
 }
+
+afterEach(() => dropTestDb(db));
 
 beforeEach(async () => {
 	db = await createTestDb();

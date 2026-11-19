@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createTestDb, dropTestDb } from '../db/testing';
+import { createTestDb } from '../db/testing';
 import { organization, user } from '../db/schema';
 import { CameraHub, CameraError, grabFrame, streamResponse } from './camera';
 import { resolveCameraSource, type CameraSource, type CameraTarget } from './camera-source';

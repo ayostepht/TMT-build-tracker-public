@@ -1,5 +1,3 @@
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { strFromU8, unzipSync } from 'fflate';
@@ -637,14 +635,14 @@ describe('exportBuild3mf with a database', () => {
 				]
 			};
 		});
-		storeExtractedParts(db, templateId, parts, 'synthetic.3mf');
+		await storeExtractedParts(db, templateId, parts, 'synthetic.3mf');
 	}
 
 	it('400 without a printer, 404 for outsiders, 409 without geometry, then a zip for viewers', async () => {
 		const id = await mk();
-		const err = (f: () => unknown) => {
+		const err = async (f: () => Promise<unknown>) => {
 			try {
-				f();
+				await f();
 			} catch (e) {
 				return e as ApiError;
 			}
@@ -652,20 +650,22 @@ describe('exportBuild3mf with a database', () => {
 		};
 		// the template's default MakeGood layout counts as the bed; an uploaded 3MF has none
 		expect((await loadBuildView(db, id, 'owner'))!.layoutPrinter?.name).toBe('Bambu X1 / P1 / A1');
-		expect(err(() => exportBuild3mf(db, id, 'owner', { flavor: 'orca' })).status).toBe(409);
+		expect((await err(() => exportBuild3mf(db, id, 'owner', { flavor: 'orca' }))).status).toBe(409);
 		await db.update(builds).set({ plateLayout: 'upload' }).where(eq(builds.id, id));
 		expect((await loadBuildView(db, id, 'owner'))!.layoutPrinter).toBeNull();
-		expect(err(() => exportBuild3mf(db, id, 'owner', { flavor: 'orca' })).status).toBe(400);
+		expect((await err(() => exportBuild3mf(db, id, 'owner', { flavor: 'orca' }))).status).toBe(400);
 		await db.update(builds).set({ plateLayout: null }).where(eq(builds.id, id));
 		await setPrinter(db, id, 'owner', { printer: cc });
-		expect(err(() => exportBuild3mf(db, id, 'outsider', { flavor: 'orca' })).status).toBe(404);
-		expect(err(() => exportBuild3mf(db, id, 'owner', { flavor: 'orca' })).status).toBe(409);
-		const pre0 = previewExport(db, id, 'owner', { flavor: 'orca' });
+		expect((await err(() => exportBuild3mf(db, id, 'outsider', { flavor: 'orca' }))).status).toBe(
+			404
+		);
+		expect((await err(() => exportBuild3mf(db, id, 'owner', { flavor: 'orca' }))).status).toBe(409);
+		const pre0 = await previewExport(db, id, 'owner', { flavor: 'orca' });
 		expect(pre0.ready).toBe(false);
 		expect(pre0.reason).toBe('no-geometry');
 
 		await importSynthetic();
-		const out = exportBuild3mf(db, id, 'viewer', { flavor: 'orca' });
+		const out = await exportBuild3mf(db, id, 'viewer', { flavor: 'orca' });
 		expect(out.filename).toBe('TMT-Chair-Elegoo-Centauri-Carbon-orca.3mf');
 		expect(out.contentType).toBe('model/3mf');
 		const chunks: Uint8Array[] = [];
@@ -686,7 +686,7 @@ describe('exportBuild3mf with a database', () => {
 		const names = sum.plates.flatMap((p) => p.objects.map((x) => x.name));
 		expect(names).toEqual(expect.arrayContaining(['Wing Left', 'Wing Right', 'Footrest']));
 
-		const pre = previewExport(db, id, 'viewer', { flavor: 'orca' });
+		const pre = await previewExport(db, id, 'viewer', { flavor: 'orca' });
 		expect(pre.ready).toBe(true);
 		expect(pre.plates.length).toBe(sum.plates.length);
 		expect(pre.missing.length).toBeGreaterThan(0); // the other kit parts have seed numbers only
@@ -694,9 +694,10 @@ describe('exportBuild3mf with a database', () => {
 		// not arranged yet: a note says the export used a fresh arrangement
 		expect(pre.warnings.some((w) => w.code === 'arrangement')).toBe(true);
 		expect(
-			prepareExport(db, id, 'owner', { flavor: 'orca', plates: [pre.plates[0].number] }).plan.plates
+			(await prepareExport(db, id, 'owner', { flavor: 'orca', plates: [pre.plates[0].number] }))
+				.plan.plates
 		).toHaveLength(1);
-		expect(() => prepareExport(db, id, 'owner', { flavor: 'orca', plates: [999] })).toThrow(
+		await expect(prepareExport(db, id, 'owner', { flavor: 'orca', plates: [999] })).rejects.toThrow(
 			/plate 999/
 		);
 		const v = (await loadBuildView(db, id, 'owner'))!;
@@ -705,7 +706,7 @@ describe('exportBuild3mf with a database', () => {
 
 	describe('a corrupt stored arrangement', () => {
 		/** Arrange for the printer, then damage the stored items of the first arranged plate. */
-		function corrupt(damage: (items: unknown[]) => unknown) {
+		async function corrupt(damage: (items: unknown[]) => unknown) {
 			const id = await mk();
 			await setPrinter(db, id, 'owner', { printer: cc });
 			await importSynthetic();
@@ -729,11 +730,11 @@ describe('exportBuild3mf with a database', () => {
 		];
 		for (const [name, damage] of damages) {
 			it(`${name}: the build page shows stale and the export re-arranges`, async () => {
-				const id = corrupt(damage);
+				const id = await corrupt(damage);
 				const clean = await mk();
 				expect((await buildArrangement(db, id, 'owner')).stale).toBe(true);
 				expect((await buildArrangement(db, clean, 'owner')).stale).toBe(false);
-				const prepared = prepareExport(db, id, 'owner', { flavor: 'orca' });
+				const prepared = await prepareExport(db, id, 'owner', { flavor: 'orca' });
 				expect(prepared.plan.plates.length).toBeGreaterThan(0);
 				expect(prepared.plan.warnings.some((w) => w.code === 'arrangement')).toBe(true);
 			});

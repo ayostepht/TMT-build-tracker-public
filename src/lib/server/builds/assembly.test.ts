@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, afterEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { describeActivity } from '#lib/domain/activity.ts';
 import {
@@ -39,6 +39,8 @@ process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'tmt-asm-'));
 let db: Db;
 let templateId: string;
 let buildId: string;
+
+afterEach(() => dropTestDb(db));
 
 beforeEach(async () => {
 	db = await createTestDb();

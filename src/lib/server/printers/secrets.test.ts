@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decryptSecrets, encryptSecrets } from './secrets';
-import { createTestDb, dropTestDb } from '../db/testing';
+import { createTestDb } from '../db/testing';
 import { organization, printers, user } from '../db/schema';
 import { createPrinter, toPublic } from './store';
 
