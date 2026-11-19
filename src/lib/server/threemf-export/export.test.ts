@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { strFromU8, unzipSync } from 'fflate';
 import { makeView } from '#lib/domain/fixtures.ts';
 import type { ArrangedPlate } from '#lib/domain/arrange.ts';
@@ -16,7 +16,8 @@ import { createBuild } from '../builds/create';
 import { setPrinter } from '../builds/actions';
 import { arrangeForPrinter, buildArrangement } from '../builds/plates';
 import { loadBuildView } from '../builds/view';
-import { openDb, runMigrations, type Db } from '../db';
+import { first, type Db } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import { buildPlates, builds, member, organization, templates, user } from '../db/schema';
 import { and, eq } from 'drizzle-orm';
 import type { ExtractedPart } from '../print-geometry/extract';
@@ -38,8 +39,6 @@ import {
 } from './index';
 import { checkPlacement } from './check';
 import { itemTransform, writePlainZip, writeThreeMf, type WriterIo } from './writer';
-
-process.env.DATABASE_URL = join(mkdtempSync(join(tmpdir(), 'tmt-exp-')), 'unused.db');
 
 // ---- synthetic meshes (no MakeGood data)
 
@@ -183,12 +182,12 @@ const text = (z: Record<string, Uint8Array>, name: string) => strFromU8(z[name])
 // ---- plate offsets (values derived from OrcaSlicer PartPlate.cpp, see plate-grid.ts)
 
 describe('plate grid (OrcaSlicer PartPlateList)', () => {
-	it('column count follows compute_colum_count', () => {
+	it('column count follows compute_colum_count', async () => {
 		expect([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 17, 25, 26].map(plateColumns)).toEqual([
 			1, 2, 2, 2, 3, 3, 3, 3, 3, 4, 5, 5, 6
 		]);
 	});
-	it('origins use a 1.2x stride, plates go right then down (negative y)', () => {
+	it('origins use a 1.2x stride, plates go right then down (negative y)', async () => {
 		const o = (i: number, n: number) => plateOrigin(i, n, 256, 256);
 		expect(o(0, 1)).toEqual({ x: 0, y: 0 });
 		expect(o(1, 2)).toEqual({ x: 307.2, y: 0 });
@@ -201,7 +200,7 @@ describe('plate grid (OrcaSlicer PartPlateList)', () => {
 		expect(plateOrigin(1, 2, 220, 200)).toEqual({ x: 264, y: 0 });
 		expect(plateOrigin(2, 4, 220, 200).y).toBeCloseTo(-240);
 	});
-	it('the item transform is a row-vector Rz plus translation', () => {
+	it('the item transform is a row-vector Rz plus translation', async () => {
 		const t = itemTransform(
 			{ objectId: 1, instanceId: 0, x: 10, y: 20, w: 1, d: 1, rotation: 90 },
 			300,
@@ -213,7 +212,7 @@ describe('plate grid (OrcaSlicer PartPlateList)', () => {
 });
 
 describe('plan', () => {
-	it('maps roles to slots in the build filament order', () => {
+	it('maps roles to slots in the build filament order', async () => {
 		const p = plan();
 		const view = viewFor();
 		expect(p.filaments.map((f) => f.key)).toEqual(view.filaments.map((f) => f.key));
@@ -224,7 +223,7 @@ describe('plan', () => {
 		expect(p.filaments.filter((f) => f.used).length).toBeGreaterThan(0);
 	});
 
-	it('recoloring a part moves it to another plate and another slot', () => {
+	it('recoloring a part moves it to another plate and another slot', async () => {
 		const before = plan();
 		const view = viewFor();
 		const wing = view.parts.find((p) => p.slug === 'wing-left')!;
@@ -242,7 +241,7 @@ describe('plan', () => {
 		expect(plateOf(after, 'wing-left').roles).toContain(other.key);
 	});
 
-	it('warns when a plate needs more filaments than the printer has slots', () => {
+	it('warns when a plate needs more filaments than the printer has slots', async () => {
 		const view = viewFor();
 		view.printer = { ...cc, mmSlots: 1 };
 		const plates = planArrangement({ ...view, printer: { ...cc, mmSlots: 4 } }, footprints())!
@@ -258,7 +257,7 @@ describe('plan', () => {
 		expect(w?.message).toMatch(/needs 2 filaments/);
 	});
 
-	it('skips parts without geometry, with a warning, and reports them', () => {
+	it('skips parts without geometry, with a warning, and reports them', async () => {
 		const fps = footprints();
 		fps.set('footrest', {
 			...fps.get('footrest')!,
@@ -272,7 +271,7 @@ describe('plan', () => {
 		expect(p.objects.some((o) => o.slug === 'footrest')).toBe(false);
 	});
 
-	it('exports only the selected plates and rejects unknown ones', () => {
+	it('exports only the selected plates and rejects unknown ones', async () => {
 		const all = plan();
 		const second = all.plates[1].number;
 		const one = plan({ selected: [second] });
@@ -282,13 +281,13 @@ describe('plan', () => {
 		expect(() => plan({ selected: [999] })).toThrow(/no plate 999/);
 	});
 
-	it('needs a printer', () => {
+	it('needs a printer', async () => {
 		const view = viewFor();
 		view.printer = null;
 		expect(() => plan({ view, plates: [] })).toThrow(/printer/i);
 	});
 
-	it('a built-in layout stands for its bed when there is no printer', () => {
+	it('a built-in layout stands for its bed when there is no printer', async () => {
 		const view = viewFor();
 		const bed = layoutBed('xpa')!;
 		const plates = planArrangement({ ...view, printer: bed }, footprints())!.result.plates;
@@ -572,31 +571,35 @@ describe('exportBuild3mf with a database', () => {
 	let db: Db;
 	let templateId: string;
 	const orgId = 'org1';
-	beforeEach(() => {
-		db = openDb(':memory:');
-		runMigrations(db);
-		seedTemplates(db, templateSeeds);
-		templateId = db.select({ id: templates.id }).from(templates).get()!.id;
-		db.insert(organization)
-			.values({ id: orgId, name: 'Chapter', slug: 'chapter', createdAt: new Date() })
-			.run();
+	beforeEach(async () => {
+		db = await createTestDb();
+		await seedTemplates(db, templateSeeds);
+		templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
+		await db
+			.insert(organization)
+			.values({ id: orgId, name: 'Chapter', slug: 'chapter', createdAt: new Date() });
 		for (const [u, role] of [
 			['owner', 'owner'],
 			['viewer', 'viewer'],
 			['outsider', '']
 		]) {
-			db.insert(user)
-				.values({ id: u, name: u, email: `${u}@example.test`, createdAt: new Date() })
-				.run();
+			await db
+				.insert(user)
+				.values({ id: u, name: u, email: `${u}@example.test`, createdAt: new Date() });
 			if (role)
-				db.insert(member)
-					.values({ id: `m-${u}`, organizationId: orgId, userId: u, role, createdAt: new Date() })
-					.run();
+				await db
+					.insert(member)
+					.values({ id: `m-${u}`, organizationId: orgId, userId: u, role, createdAt: new Date() });
 		}
 	});
-	const mk = () =>
-		createBuild(db, { organizationId: orgId, templateId, designId: null, name: 'Chair' }, 'owner');
-	function importSynthetic() {
+	afterEach(async () => dropTestDb(db));
+	const mk = async () =>
+		await createBuild(
+			db,
+			{ organizationId: orgId, templateId, designId: null, name: 'Chair' },
+			'owner'
+		);
+	async function importSynthetic() {
 		const parts: ExtractedPart[] = Object.entries(SHAPES).map(([slug, s]) => {
 			const b = bbox(s.mesh);
 			return {
@@ -638,7 +641,7 @@ describe('exportBuild3mf with a database', () => {
 	}
 
 	it('400 without a printer, 404 for outsiders, 409 without geometry, then a zip for viewers', async () => {
-		const id = mk();
+		const id = await mk();
 		const err = (f: () => unknown) => {
 			try {
 				f();
@@ -648,20 +651,20 @@ describe('exportBuild3mf with a database', () => {
 			throw new Error('did not throw');
 		};
 		// the template's default MakeGood layout counts as the bed; an uploaded 3MF has none
-		expect(loadBuildView(db, id, 'owner')!.layoutPrinter?.name).toBe('Bambu X1 / P1 / A1');
+		expect((await loadBuildView(db, id, 'owner'))!.layoutPrinter?.name).toBe('Bambu X1 / P1 / A1');
 		expect(err(() => exportBuild3mf(db, id, 'owner', { flavor: 'orca' })).status).toBe(409);
-		db.update(builds).set({ plateLayout: 'upload' }).where(eq(builds.id, id)).run();
-		expect(loadBuildView(db, id, 'owner')!.layoutPrinter).toBeNull();
+		await db.update(builds).set({ plateLayout: 'upload' }).where(eq(builds.id, id));
+		expect((await loadBuildView(db, id, 'owner'))!.layoutPrinter).toBeNull();
 		expect(err(() => exportBuild3mf(db, id, 'owner', { flavor: 'orca' })).status).toBe(400);
-		db.update(builds).set({ plateLayout: null }).where(eq(builds.id, id)).run();
-		setPrinter(db, id, 'owner', { printer: cc });
+		await db.update(builds).set({ plateLayout: null }).where(eq(builds.id, id));
+		await setPrinter(db, id, 'owner', { printer: cc });
 		expect(err(() => exportBuild3mf(db, id, 'outsider', { flavor: 'orca' })).status).toBe(404);
 		expect(err(() => exportBuild3mf(db, id, 'owner', { flavor: 'orca' })).status).toBe(409);
 		const pre0 = previewExport(db, id, 'owner', { flavor: 'orca' });
 		expect(pre0.ready).toBe(false);
 		expect(pre0.reason).toBe('no-geometry');
 
-		importSynthetic();
+		await importSynthetic();
 		const out = exportBuild3mf(db, id, 'viewer', { flavor: 'orca' });
 		expect(out.filename).toBe('TMT-Chair-Elegoo-Centauri-Carbon-orca.3mf');
 		expect(out.contentType).toBe('model/3mf');
@@ -696,30 +699,27 @@ describe('exportBuild3mf with a database', () => {
 		expect(() => prepareExport(db, id, 'owner', { flavor: 'orca', plates: [999] })).toThrow(
 			/plate 999/
 		);
-		const v = loadBuildView(db, id, 'owner')!;
+		const v = (await loadBuildView(db, id, 'owner'))!;
 		expect(v.printer?.name).toBe('Elegoo Centauri Carbon');
 	});
 
 	describe('a corrupt stored arrangement', () => {
 		/** Arrange for the printer, then damage the stored items of the first arranged plate. */
 		function corrupt(damage: (items: unknown[]) => unknown) {
-			const id = mk();
-			setPrinter(db, id, 'owner', { printer: cc });
-			importSynthetic();
-			arrangeForPrinter(db, id, 'owner');
-			const row = db
-				.select()
-				.from(buildPlates)
-				.where(eq(buildPlates.buildId, id))
-				.all()
-				.find((r) => r.arrangement)!;
+			const id = await mk();
+			await setPrinter(db, id, 'owner', { printer: cc });
+			await importSynthetic();
+			await arrangeForPrinter(db, id, 'owner');
+			const row = (await db.select().from(buildPlates).where(eq(buildPlates.buildId, id))).find(
+				(r) => r.arrangement
+			)!;
 			expect(row.arrangement!.items.length).toBeGreaterThan(0);
-			db.update(buildPlates)
+			await db
+				.update(buildPlates)
 				.set({
 					arrangement: { ...row.arrangement!, items: damage(row.arrangement!.items) } as never
 				})
-				.where(and(eq(buildPlates.buildId, id), eq(buildPlates.number, row.number)))
-				.run();
+				.where(and(eq(buildPlates.buildId, id), eq(buildPlates.number, row.number)));
 			return id;
 		}
 		const damages: [string, (items: unknown[]) => unknown][] = [
@@ -728,24 +728,24 @@ describe('exportBuild3mf with a database', () => {
 			['an item without a slug', (items) => [{ x: 1, y: 2 }, ...items]]
 		];
 		for (const [name, damage] of damages) {
-			it(`${name}: the build page shows stale and the export re-arranges`, () => {
+			it(`${name}: the build page shows stale and the export re-arranges`, async () => {
 				const id = corrupt(damage);
-				const clean = mk();
-				expect(buildArrangement(db, id, 'owner').stale).toBe(true);
-				expect(buildArrangement(db, clean, 'owner').stale).toBe(false);
+				const clean = await mk();
+				expect((await buildArrangement(db, id, 'owner')).stale).toBe(true);
+				expect((await buildArrangement(db, clean, 'owner')).stale).toBe(false);
 				const prepared = prepareExport(db, id, 'owner', { flavor: 'orca' });
 				expect(prepared.plan.plates.length).toBeGreaterThan(0);
 				expect(prepared.plan.warnings.some((w) => w.code === 'arrangement')).toBe(true);
 			});
 		}
-		it('a healthy arrangement is not stale', () => {
-			const id = mk();
-			setPrinter(db, id, 'owner', { printer: cc });
-			importSynthetic();
-			arrangeForPrinter(db, id, 'owner');
-			expect(buildArrangement(db, id, 'owner').stale).toBe(false);
+		it('a healthy arrangement is not stale', async () => {
+			const id = await mk();
+			await setPrinter(db, id, 'owner', { printer: cc });
+			await importSynthetic();
+			await arrangeForPrinter(db, id, 'owner');
+			expect((await buildArrangement(db, id, 'owner')).stale).toBe(false);
 		});
-		it('buildExportPlan fails cleanly (PlanError, never a TypeError) on a bad item', () => {
+		it('buildExportPlan fails cleanly (PlanError, never a TypeError) on a bad item', async () => {
 			const view = viewFor(['wing-left']);
 			const plates = [
 				{
@@ -831,7 +831,7 @@ describe('placement guard with an asymmetric tilted part', () => {
 		[150, -10],
 		[-150, 10]
 	];
-	it('keeps the real mesh on the plate (pivot is the box centre, not the mesh origin)', () => {
+	it('keeps the real mesh on the plate (pivot is the box centre, not the mesh origin)', async () => {
 		const p = plan({ view: viewFor(['wing-left']), footprints: fps });
 		const item = p.plates[0].items[0];
 		expect(item.rotation % 90).not.toBe(0);
@@ -844,7 +844,7 @@ describe('placement guard with an asymmetric tilted part', () => {
 		expect(b.y1).toBeLessThanOrEqual(256.3);
 		expect(b.z0).toBeCloseTo(0, 6);
 	});
-	it('the guard reports an item that leaves the bed', () => {
+	it('the guard reports an item that leaves the bed', async () => {
 		const p = plan({ view: viewFor(['wing-left']), footprints: fps });
 		p.plates[0].items[0].x += 40;
 		const g = checkPlacement(p, (f) => shapes[f.replace(/\.bin$/, '') as 'wing-left'].mesh);
@@ -921,7 +921,7 @@ describe('keep-out areas in the export', () => {
 		const { bytes } = await collect(writeThreeMf(p, p.plates, io()));
 		expect(text(unzipSync(bytes), 'Metadata/tmt_export_notes.txt')).toMatch(/one excluded area/);
 	});
-	it('the guard accepts arranged items and flags a mesh inside the zone', () => {
+	it('the guard accepts arranged items and flags a mesh inside the zone', async () => {
 		const readMesh = (f: string) => SHAPES[f.replace(/\.bin$/, '')].mesh;
 		const p = plan({ view: viewFor(['push-pin', 'wing-left']) });
 		expect(checkPlacement(p, readMesh).warnings).toEqual([]);
