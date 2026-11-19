@@ -1,4 +1,4 @@
-// Seeds the preview through the app's own HTTP API (sign-up, chapter, builds, runs, printer),
+// Seeds the preview through the app's own HTTP API (test-only sign-in, chapter, builds, runs, printer),
 // the way the e2e helpers do it, with invented people and data only (one manual printer, no live
 // printer connection). Safe to call on every
 // start: it does nothing when the demo account already exists.
@@ -11,7 +11,6 @@ export const DEMO = {
 	email: 'demo.owner@example.com',
 	editor: 'Alex Sample',
 	editorEmail: 'demo.editor@example.com',
-	password: 'preview-demo-pass',
 	chapter: 'Demo Chapter',
 	printerName: 'Demo printer'
 };
@@ -103,6 +102,25 @@ const today = (daysAgo = 0) => {
 	return d.toISOString().slice(0, 10);
 };
 
+/**
+ * Signs `client` in through the test-only route (`POST /api/auth/test/sign-in`), which creates the
+ * account on first use. The server allows it only with NODE_ENV=test, E2E_AUTH=1 and a database
+ * named *_test or *_e2e (the preview server is started that way); the guard is never relaxed.
+ */
+export async function testSignIn(client, name, email) {
+	await client.ok('POST', '/api/auth/test/sign-in', { name, email });
+}
+
+async function demoUserExists(databaseUrl) {
+	const sql = postgres(databaseUrl, { prepare: false, max: 1 });
+	try {
+		const [row] = await sql`select 1 as ok from "user" where email = ${DEMO.email}`;
+		return !!row;
+	} finally {
+		await sql.end({ timeout: 5 });
+	}
+}
+
 async function templateIdFromDb(databaseUrl) {
 	const sql = postgres(databaseUrl, { prepare: false, max: 1 });
 	try {
@@ -130,11 +148,7 @@ async function until(what, fn, ms = 40_000) {
  */
 export async function seedDemo({ base, kitExpected, databaseUrl, catalogLib, log }) {
 	const owner = new Client(base);
-	const existing = await owner.req('POST', '/api/auth/sign-in/email', {
-		email: DEMO.email,
-		password: DEMO.password
-	});
-	if (existing.status === 200) {
+	if (await demoUserExists(databaseUrl)) {
 		log('demo account exists: keeping the data, no seeding.');
 		return { seeded: false, summary: [] };
 	}
@@ -144,11 +158,7 @@ export async function seedDemo({ base, kitExpected, databaseUrl, catalogLib, log
 
 	// ---- people, workspaces
 	log('creating the demo account and chapter...');
-	await owner.ok('POST', '/api/auth/sign-up/email', {
-		name: DEMO.owner,
-		email: DEMO.email,
-		password: DEMO.password
-	});
+	await testSignIn(owner, DEMO.owner, DEMO.email);
 	await owner
 		.ok('POST', '/onboarding?/create', { name: DEMO.chapter }, { form: true })
 		.catch(async () => {
@@ -160,11 +170,7 @@ export async function seedDemo({ base, kitExpected, databaseUrl, catalogLib, log
 	if (!chapter || !personal) throw new Error('Could not find the chapter and personal workspace.');
 
 	const editor = new Client(base);
-	await editor.ok('POST', '/api/auth/sign-up/email', {
-		name: DEMO.editor,
-		email: DEMO.editorEmail,
-		password: DEMO.password
-	});
+	await testSignIn(editor, DEMO.editor, DEMO.editorEmail);
 	const inv = await owner.ok('POST', '/api/auth/organization/invite-member', {
 		email: DEMO.editorEmail,
 		role: 'editor',

@@ -21,10 +21,10 @@ export interface MockStatus {
 
 export class MockSdcp extends MiniWsServer {
 	received: { cmd: number; data?: unknown }[] = [];
-	/** Camera state: off until Cmd 386 {Enable:1}; falls back to off `cameraTimeoutMs` later (0 = never). */
+	/** Camera state of the mock printer: off until Cmd 386 {Enable:1}; falls back to off `cameraTimeoutMs` later (0 = never). The app itself never sends Cmd 386 (it sends no write command), so tests assert `cameraEnables` stays 0. */
 	cameraTimeoutMs = 0;
 	private cameraAt = 0;
-	/** Number of Cmd 386 requests received. */
+	/** Number of Cmd 386 requests received (the app sends none; only a test may send one). */
 	cameraEnables = 0;
 	/** Push a status to every new client without being asked (what OctoEverywhere's relay does). */
 	pushOnConnect = false;

@@ -2,10 +2,10 @@
 	import { resolve } from '$app/paths';
 	import LegalPage from '#lib/components/LegalPage.svelte';
 	import { MAKEGOOD_GUIDE_URL } from '#lib/makegood.ts';
+	import { ISSUES_URL } from '#lib/repo.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
-	const ISSUES_URL = 'https://github.com/ayostepht/TMT-Build-Tracker/issues';
 </script>
 
 <svelte:head><title>Terms · TMT Build Tracker</title></svelte:head>

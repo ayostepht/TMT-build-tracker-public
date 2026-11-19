@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import LegalPage from '#lib/components/LegalPage.svelte';
+	import { ISSUES_URL } from '#lib/repo.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
-	const ISSUES_URL = 'https://github.com/ayostepht/TMT-Build-Tracker/issues';
 </script>
 
 <svelte:head><title>Privacy · TMT Build Tracker</title></svelte:head>

@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { MAKEGOOD_MODEL_URL } from '#lib/makegood.ts';
-
-	const REPO_URL = 'https://github.com/ayostepht/TMT-Build-Tracker';
+	import { REPO_URL } from '#lib/repo.ts';
 </script>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -->

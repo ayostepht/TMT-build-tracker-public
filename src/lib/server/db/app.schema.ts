@@ -678,7 +678,7 @@ export const printers = pgTable(
 			.notNull()
 			.references(() => organization.id, { onDelete: 'cascade' }),
 		name: text('name').notNull(),
-		/** elegoo-sdcp | moonraker | octoprint | bambu-lan | (share-link kinds added by the printers agent) */
+		/** elegoo-sdcp | moonraker | octoprint | manual (see PRINTER_KINDS in src/lib/printers/status.ts) */
 		kind: text('kind').notNull(),
 		host: text('host').notNull(),
 		/** printer catalog id (src/lib/printers/catalog.ts) */
