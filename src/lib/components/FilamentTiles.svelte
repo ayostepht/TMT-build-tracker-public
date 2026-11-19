@@ -11,10 +11,7 @@
 	import { addSpool, removeSpoolAdd } from '#lib/client/api.ts';
 	import { getBuildCtx, filLabel } from './build-context.svelte.ts';
 	import { resolve } from '$app/paths';
-	import { page } from '$app/state';
 	import Swatch from './Swatch.svelte';
-	import SpoolRemaining from './SpoolRemaining.svelte';
-	import SpoolmanSlotLine from './SpoolmanSlotLine.svelte';
 
 	const ctx = getBuildCtx();
 	const stats = $derived(filamentStats(ctx.view));
@@ -33,14 +30,6 @@
 		const on = () => (wide = mq.matches);
 		mq.addEventListener('change', on);
 		return () => mq.removeEventListener('change', on);
-	});
-	// Spoolman (#59): each colour gets a line; "Connect Spoolman" only for editors of a workspace without it.
-	const spoolmanOn = $derived(ctx.view.spoolman?.configured ?? false);
-	const integrationsHref = $derived.by(() => {
-		const slug = (page.data as { teams?: { id: string; slug: string }[] }).teams?.find(
-			(t) => t.id === ctx.view.build.organizationId
-		)?.slug;
-		return ctx.canEdit && slug ? resolve('/(app)/teams/[slug]/integrations', { slug }) : null;
 	});
 	const printUrl = $derived(resolve('/(app)/builds/[id]/print', { id: ctx.id }));
 	const settingsUrl = $derived(resolve('/(app)/builds/[id]/settings', { id: ctx.id }));
@@ -99,8 +88,6 @@
 		{#each stats as s (s.role)}
 			{@const f = ctx.filament(s.role)}
 			{@const spare = s.spareG}
-			{@const linked = s.haveSource !== 'app'}
-			{@const unknownStock = s.haveSource === 'unknown'}
 			{@const scale = Math.max(s.haveGrams, s.used + s.need, 1)}
 			{@const isOpen = openRole === s.role}
 			{@const more = Math.ceil(-spare / 1000)}
@@ -122,13 +109,12 @@
 					<span
 						class="ds-badge ft-verdict"
 						data-testid="filament-spare"
-						class:ds-badge--ok={!unknownStock && spare >= 0}
-						class:ds-badge--bad={!unknownStock && spare < 0}
-						>{#if unknownStock}spare unknown{:else if spare >= 0}{s.unknownParts.length
-								? '≤ '
-								: ''}{fmt(spare)} g spare{:else}short {s.unknownParts.length ? '≥ ' : ''}{fmt(
-								-spare
-							)} g{/if}</span
+						class:ds-badge--ok={spare >= 0}
+						class:ds-badge--bad={spare < 0}
+						>{#if spare >= 0}{s.unknownParts.length ? '≤ ' : ''}{fmt(spare)} g spare{:else}short {s
+								.unknownParts.length
+								? '≥ '
+								: ''}{fmt(-spare)} g{/if}</span
 					>
 				{/snippet}
 				{#snippet gap()}
@@ -164,20 +150,6 @@
 							></span>{/if}
 					</span>
 				{/snippet}
-				{#snippet spoolmanLine()}
-					{#if spoolmanOn}
-						<div class="ft-sm" data-testid="filament-spoolman">
-							<SpoolmanSlotLine
-								buildId={ctx.id}
-								slot={{ key: s.role, name: filLabel(f, s.role), spoolman: f?.spoolman }}
-								workspaceConfigured={spoolmanOn}
-								canEdit={canAdd}
-								{integrationsHref}
-								onchange={() => ctx.refresh()}
-							/>
-						</div>
-					{/if}
-				{/snippet}
 				{#snippet stock()}
 					<span class="ft-stock">
 						<button
@@ -188,19 +160,11 @@
 							aria-controls="ft-hist-{s.role}"
 							onclick={() => (histOpen[s.role] = !hist)}
 						>
-							<span class="ft-total-n"
-								>{#if linked}{unknownStock ? '? g' : `${fmt(s.haveGrams)} g`}{:else}{fmtSpools(
-										stockKg(f ?? { spools: 0 })
-									)} kg{/if}</span
-							>
-							<span class="sr-only">
-								{linked
-									? 'in Spoolman, show the earlier spool history'
-									: 'of spools, show history'}</span
-							>
+							<span class="ft-total-n">{fmtSpools(stockKg(f ?? { spools: 0 }))} kg</span>
+							<span class="sr-only"> of spools, show history</span>
 							<span class="ft-caret" aria-hidden="true">{hist ? '▴' : '▾'}</span>
 						</button>
-						{#if canAdd && !linked}
+						{#if canAdd}
 							<button
 								type="button"
 								class="btn sm ft-plus"
@@ -214,7 +178,7 @@
 					</span>
 				{/snippet}
 				{#snippet panel()}
-					{#if formRole === s.role && canAdd && !linked}
+					{#if formRole === s.role && canAdd}
 						<form
 							class="ft-form"
 							data-testid="spool-form"
@@ -264,12 +228,6 @@
 					{/if}
 					{#if hist}
 						<ul class="ft-hist" id="ft-hist-{s.role}" data-testid="spool-history">
-							{#if linked}
-								<li class="ft-h-note" data-testid="spool-hidden-note">
-									Linked to Spoolman: these spools are not counted while the link is on. Unlink to
-									use them again.
-								</li>
-							{/if}
 							<li data-testid="spool-start">
 								<span class="ft-h-main">Starting spools <b>{fmtSpools(f?.spools ?? 0)} kg</b></span>
 								{#if ctx.canEdit}<a class="ft-h-link" href={settingsUrl}>Change in Settings</a>{/if}
@@ -284,7 +242,7 @@
 												: ''}</span
 										></span
 									>
-									{#if canAdd && !linked}
+									{#if canAdd}
 										{#if confirmId === a.id}
 											<span class="ft-h-confirm" role="group" aria-label="Remove this spool?">
 												<span>Remove?</span>
@@ -331,14 +289,9 @@
 					</div>
 					<div class="ft-sub">
 						{@render gap()}
-						{#if !f?.spoolman?.filamentId}<SpoolRemaining role={s.role} />{/if}
-						{#if spare < 0 && !unknownStock}<span class="ft-more"
-								>{linked
-									? 'Short of filament.'
-									: `Get ${more} more spool${more > 1 ? 's' : ''}.`}</span
+						{#if spare < 0}<span class="ft-more">Get {more} more spool{more > 1 ? 's' : ''}.</span
 							>{/if}
 					</div>
-					{@render spoolmanLine()}
 					{#if formRole === s.role || hist}<div class="ft-panel">{@render panel()}</div>{/if}
 				{:else}
 					<button
@@ -383,28 +336,14 @@
 						<div class="ft-edit" id="ft-edit-{s.role}">
 							{@render gap()}
 							{@render stock()}
-							{#if spare < 0 && !unknownStock}<span class="ft-more"
-									>{linked
-										? 'Short of filament.'
-										: `Get ${more} more spool${more > 1 ? 's' : ''}.`}</span
+							{#if spare < 0}<span class="ft-more">Get {more} more spool{more > 1 ? 's' : ''}.</span
 								>{/if}
-							{#if !f?.spoolman?.filamentId}<SpoolRemaining role={s.role} />{/if}
-							{@render spoolmanLine()}
 							<div class="ft-panel ft-panel-m">{@render panel()}</div>
 						</div>
 					{/if}
 				{/if}
 			</li>
 		{/each}
-
-		{#if !spoolmanOn && integrationsHref && stats.length}
-			<li class="ft-row ft-sm-off" data-testid="spoolman-line-off">
-				<p class="muted">
-					Track these filaments' grams in Spoolman.
-					<a href={integrationsHref}>Connect Spoolman</a>
-				</p>
-			</li>
-		{/if}
 
 		<li class="ft-row ft-time" data-testid="filament-tile">
 			<div class="ft-timehead">
@@ -592,26 +531,6 @@
 	.ft-edit .ft-gap {
 		flex-basis: 100%;
 	}
-	.ft-sm {
-		padding: 4px var(--sp-5) 10px;
-		min-width: 0;
-	}
-	.ft-sm-off p {
-		margin: 0;
-		padding: 8px var(--sp-5);
-		font-size: var(--fs-sm);
-	}
-	.ft-sm :global(.sl) {
-		justify-items: start;
-	}
-	.ft-edit .ft-sm {
-		flex-basis: 100%;
-		padding: 0;
-	}
-	.ft-hist .ft-h-note {
-		color: var(--muted);
-		font-size: var(--fs-xs);
-	}
 	.ft-more {
 		font-size: var(--fs-sm);
 		color: var(--muted);
@@ -797,9 +716,6 @@
 		.ft-wide .ft-total {
 			min-width: 9ch;
 			justify-content: flex-end;
-		}
-		.ft-sm {
-			padding: 0 var(--sp-6) 10px;
 		}
 		.ft-sub:has(> *) {
 			display: flex;

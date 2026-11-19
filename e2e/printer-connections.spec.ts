@@ -3,11 +3,10 @@ import { expect, test } from './fixtures';
 import { ownerWithBuild } from './helpers';
 
 /**
- * r49, API level: the connection options list, a manual (not connected) printer, and the
+ * API level: the connection options list, a manual (not connected) printer, and the
  * OctoEverywhere link for every printer type that can use one. Links are saved DISABLED and never
- * tested here: the suite runs on a self-hosted server with real DNS, and a link is a made-up name
- * that must never be looked up or dialled. Hosted-site (public mode) rules are covered in
- * src/lib/server/printers/connections.test.ts, because one e2e server runs in one mode.
+ * tested here: a link is a made-up name that must never be looked up or dialled. The outbound
+ * rules are covered in src/lib/server/printers/*.test.ts.
  */
 const LINK = 'https://shared-e2elinktoken1234.octoeverywhere.com';
 
@@ -25,24 +24,19 @@ test('connection options, a manual printer, and link printers of every type', as
 
 	// The one list the setup UI renders from.
 	const opts = await (await page.request.get('/api/printers/options')).json();
-	expect(opts.hosted).toBe(false);
+	expect(opts.hosted).toBeUndefined();
 	const keys = opts.connectionOptions.map((o: { key: string }) => o.key);
 	expect(keys).toEqual([
-		'elegoo-lan',
 		'octoeverywhere-elegoo',
 		'octoeverywhere-klipper',
 		'octoeverywhere-octoprint',
-		'klipper-lan',
-		'octoprint-lan',
-		'bambu-lan',
 		'manual'
 	]);
-	expect(opts.connectionOptions.every((o: { available: boolean }) => o.available)).toBe(true);
 	expect(
 		opts.connectionOptions
 			.filter((o: { verifiedOnHardware: boolean }) => o.verifiedOnHardware)
 			.map((o: { key: string }) => o.key)
-	).toEqual(['elegoo-lan', 'octoeverywhere-elegoo']);
+	).toEqual(['octoeverywhere-elegoo']);
 	// Signed-out callers get nothing.
 	const anon = await page.context().browser()!.newContext();
 	expect((await anon.request.get('/api/printers/options')).status()).toBe(401);
@@ -60,7 +54,6 @@ test('connection options, a manual printer, and link printers of every type', as
 		kind: 'manual',
 		connection: 'manual',
 		host: 'manual',
-		port: null,
 		status: null,
 		blocked: null,
 		secretsSet: [],
@@ -101,10 +94,20 @@ test('connection options, a manual printer, and link printers of every type', as
 		const p = JSON.parse(text).printer;
 		expect(p).toMatchObject({ kind, connection: 'link', host: 'octoeverywhere', blocked: null });
 		expect(p.secretsSet).toContain('shareLink');
-		expect(p.cameraUrl).toBeNull();
+		expect(p).not.toHaveProperty('cameraUrl');
+		expect(p).not.toHaveProperty('port');
 	}
 
-	// Bambu LAN cannot use a link; a bad link is refused without echoing it.
+	// There is no way in without a link: an address, or Bambu LAN, is refused; a bad link is
+	// refused without echoing it.
+	const lan = await send(page, 'post', '/api/printers', {
+		organizationId: org,
+		name: 'LAN',
+		kind: 'moonraker',
+		host: '192.168.0.5'
+	});
+	expect(lan.status()).toBe(400);
+	expect((await lan.json()).error).toMatch(/shared link/i);
 	const bambu = await send(page, 'post', '/api/printers', {
 		organizationId: org,
 		name: 'Bambu',
@@ -112,7 +115,11 @@ test('connection options, a manual printer, and link printers of every type', as
 		secrets: { shareLink: LINK }
 	});
 	expect(bambu.status()).toBe(400);
-	expect((await bambu.json()).error).toMatch(/Bambu Lab printers cannot be reached/);
+	expect((await bambu.json()).error).toMatch(/Unknown printer type/);
+	// LAN discovery is gone.
+	expect(
+		(await send(page, 'post', '/api/printers/discover', { organizationId: org })).status()
+	).toBeGreaterThanOrEqual(400);
 	const bad = await send(page, 'post', '/api/printers', {
 		organizationId: org,
 		name: 'Bad',
@@ -127,7 +134,7 @@ test('connection options, a manual printer, and link printers of every type', as
 	expect(list.printers).toHaveLength(4);
 	expect(JSON.stringify(list)).not.toMatch(/shared-|secretEnc|KEY/);
 
-	// A manual printer becomes a connected one only with an address, and back.
+	// A manual printer becomes a connected one only with a link.
 	const up = await send(page, 'patch', `/api/printers/${manual.id}`, { kind: 'octoprint' });
 	expect(up.status()).toBe(400);
 	const back = await send(page, 'patch', `/api/printers/${manual.id}`, { name: 'Garage' });

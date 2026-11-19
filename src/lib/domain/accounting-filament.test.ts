@@ -9,7 +9,7 @@ import {
 	timeStats,
 	units
 } from './accounting';
-import { splitGramsByRole } from './spool-split';
+import { runRoleGrams as splitGramsByRole } from './accounting';
 import { makeView, run } from './fixtures';
 import type { BuildView } from './types';
 

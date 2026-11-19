@@ -1,12 +1,11 @@
 /**
  * The OctoEverywhere share-link host IS the secret. Whatever DNS does, no response a member or
- * editor can read may contain it; and the share-host exception is opt-in (Elegoo link paths only).
+ * editor can read may contain it; and the share-host exception is opt-in (link paths only).
  * DNS and sockets are stubbed: nothing here leaves the machine.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openDb, runMigrations, type Db } from '../db';
 import { member, organization, user } from '../db/schema';
-import { SpoolmanClient } from '../spoolman/client';
 import { getCameraHub } from './camera';
 import { cameraChanged } from './camera-access';
 import { resolveCameraSource } from './camera-source';
@@ -138,10 +137,8 @@ describe('the share-host exception is opt-in', () => {
 	it('resolveAllowed / guardedFetch refuse a share host without allowShareLink', async () => {
 		const dns = async () => [PUBLIC4];
 		setResolver(dns);
-		await expect(resolveAllowed(HOST, dns)).rejects.toMatchObject({ kind: 'address' });
-		await expect(resolveAllowed(HOST, dns)).rejects.toThrow(
-			/not on your local network|not allowed/
-		);
+		await expect(resolveAllowed(HOST, dns)).rejects.toMatchObject({ kind: 'public' });
+		await expect(resolveAllowed(HOST, dns)).rejects.toThrow(/shared link only/);
 		await expect(resolveAllowed(HOST, dns, { allowShareLink: false })).rejects.toThrow();
 		await expect(guardedFetch(`https://${HOST}/video`)).rejects.toThrow();
 		await expect(resolveAllowed(HOST, dns, { allowShareLink: true })).resolves.toMatchObject({
@@ -154,40 +151,18 @@ describe('the share-host exception is opt-in', () => {
 		}
 	});
 
-	it('Spoolman on a share host is refused', async () => {
-		setResolver(async () => [PUBLIC4]);
-		const c = new SpoolmanClient(`https://${HOST}`);
-		const err = await c.health().then(
-			() => null,
-			(e: Error) => e
-		);
-		expect(err).toBeTruthy();
-		clean(err!.message);
-	});
-
-	it('a custom cameraUrl on a share host for a non-link printer is refused at connect', async () => {
-		// Not a link printer: its host is the share host itself (typed by an editor).
+	it('a printer with no link has no camera source, whatever else it carries', async () => {
 		const src = await resolveCameraSource({
 			kind: 'moonraker',
-			host: HOST,
-			port: null,
-			cameraUrl: `https://${HOST}/video`,
 			cameraEnabled: true,
 			secrets: {}
 		});
-		if (src) {
-			expect(src.shareLink).toBeFalsy();
-			setResolver(async () => [PUBLIC4]);
-			await expect(guardedFetch(src.urls[0])).rejects.toThrow();
-		}
+		expect(src).toBeNull();
 	});
 
 	it('the link paths still work: link source is flagged and the status socket dials it', async () => {
 		const src = await resolveCameraSource({
 			kind: 'elegoo-sdcp',
-			host: 'octoeverywhere',
-			port: null,
-			cameraUrl: null,
 			cameraEnabled: true,
 			secrets: { shareLink: `https://${HOST}` }
 		});

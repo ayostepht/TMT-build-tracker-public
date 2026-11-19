@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { estPerRun, filamentStats, partGrams, plateGrams, unitUsed, units } from './accounting';
-import { splitGramsByRole } from './spool-split';
+import { runRoleGrams as splitGramsByRole } from './accounting';
 import { applyPatches, makeView, run } from './fixtures';
 import type { BuildView, Plate } from './types';
 

@@ -5,7 +5,6 @@ export interface PrinterConfig {
 	id: string;
 	kind: PrinterKind;
 	host: string;
-	port: number | null;
 	secrets: Record<string, string>;
 }
 
@@ -14,8 +13,6 @@ export type StatusCallback = (s: PrinterStatus) => void;
 export interface AdapterHandle {
 	/** Subscribe to normalised status; the last status is replayed at once. Returns unsubscribe. */
 	status$: (cb: StatusCallback) => () => void;
-	/** Elegoo SDCP only: send Cmd 386 `{Enable:1}` (camera on). True when it was sent. */
-	enableCamera?: () => Promise<boolean>;
 	/** Stop and release the connection. */
 	close: () => void;
 }

@@ -2,10 +2,15 @@ import { getEventListeners } from 'node:events';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { guardedFetch } from './outbound';
+import { fetchPinned, type ResolvedTarget } from './outbound';
+
+/** The socket plumbing is tested against loopback; `fetchPinned` validates nothing by design. */
+const LOOP: ResolvedTarget = { host: '127.0.0.1', ip: '127.0.0.1', family: 4, literal: true };
+const guardedFetch = (u: string, init?: Parameters<typeof fetchPinned>[2]) =>
+	fetchPinned(new URL(u), LOOP, init);
 
 /** Every ordering of response / timeout / abort / error settles the promise once and frees the socket. */
-describe('guardedFetch lifecycle (settle once, no leaks)', () => {
+describe('fetchPinned lifecycle (settle once, no leaks)', () => {
 	let srv: Server;
 	let port = 0;
 	let handler: (req: IncomingMessage, res: ServerResponse) => void = () => {};

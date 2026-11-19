@@ -37,15 +37,13 @@ export interface KeptStockSlot {
 	was: string;
 	/** Kilograms of stock on hand (spools plus later additions). */
 	spools: number;
-	/** The slot is linked to a Spoolman spool. */
-	spoolman: boolean;
 }
 
 export interface RecolorPlan {
 	/** Slots whose name, material or hex change. */
 	changes: SlotColor[];
 	skipped: SkippedSlot[];
-	/** Changed slots that keep spools or a Spoolman link although the filament is another one now. */
+	/** Changed slots that keep spools although the filament is another one now. */
 	keptStock: KeptStockSlot[];
 }
 
@@ -115,13 +113,12 @@ export function planRecolor(
 		}
 		changes.push(to);
 		const kg = stockKg(f);
-		if (kg > 0 || f.spoolmanSpoolId !== null)
+		if (kg > 0)
 			keptStock.push({
 				role: f.key,
 				name: to.name,
 				was: f.name,
-				spools: kg,
-				spoolman: f.spoolmanSpoolId !== null
+				spools: kg
 			});
 	}
 	return { changes, skipped, keptStock };

@@ -83,7 +83,6 @@ export function makeView(
 			spools: r.recommendedSpools,
 			spoolAdds: [],
 			recommendedSpools: r.recommendedSpools,
-			spoolmanSpoolId: null,
 			kit: true
 		})),
 		parts,

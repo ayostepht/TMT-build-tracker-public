@@ -3,11 +3,10 @@ import type { PrinterStatus } from '#lib/printers/status.ts';
 import { adapters } from './adapters';
 import { safeError } from './types';
 import { testConnection } from './supervisor';
-import { enableSdcpCamera, normalizeSdcpStatus } from './adapters/sdcp';
+import { normalizeSdcpStatus, SDCP_ALLOWED_COMMANDS, sdcpEnvelope } from './adapters/sdcp';
 import { backoff, linkBackoff, OVERSIZED_MESSAGE } from './types';
 import { setResolver } from './outbound';
 import { resolveCameraSource, type CameraTarget } from './camera-source';
-import { testEnabler } from './camera-access';
 import { MockSdcp } from './mock-sdcp';
 import { decryptSecrets } from './secrets';
 import { openDb, runMigrations } from '../db';
@@ -58,7 +57,6 @@ const linkCfg = (secrets: Record<string, string> = { shareLink: LINK }): Printer
 	id: 'p',
 	kind: 'elegoo-sdcp',
 	host: 'octoeverywhere',
-	port: null,
 	secrets
 });
 
@@ -81,28 +79,28 @@ describe('elegoo-sdcp through an OctoEverywhere link', () => {
 		await new Promise((r) => setTimeout(r, 4600)); // longer than the direct 4 s poll
 
 		expect(urls).toEqual([`wss://${HOST}/websocket`]);
-		// Cmd 1 once (attributes); no Cmd 0 polling, never Cmd 386.
+		// Cmd 1 once (attributes); no Cmd 0 polling, no write command at all.
 		expect(mock.received.map((r) => r.cmd)).toEqual([1]);
 		expect(mock.cameraEnables).toBe(0);
 	}, 15000);
 
-	it('does not use the Cmd 386 camera enabler', async () => {
+	it('has no write command: nothing but reads is ever sent', async () => {
+		expect([...SDCP_ALLOWED_COMMANDS]).toEqual([]);
+		expect(() => sdcpEnvelope(386, { Enable: 1 }, 'MB1')).toThrow(/not allowed/);
+		expect(() => sdcpEnvelope(0, { x: 1 }, 'MB1')).toThrow(/takes no data/);
 		const mock = new MockSdcp();
 		await mock.start();
 		cleanup.push(() => mock.stop());
 		const urls = stubSocket(mock.port);
 		const h = adapters['elegoo-sdcp'](linkCfg());
 		cleanup.push(() => h.close());
-		expect(await h.enableCamera?.()).toBe(false);
-		expect(await enableSdcpCamera(linkCfg())).toBe(false);
-		expect(testEnabler(linkCfg())).toBeUndefined();
 		await new Promise((r) => setTimeout(r, 200));
 		expect(urls.filter((u) => u.startsWith('wss://')).length).toBe(1); // only the status socket
 		expect(mock.cameraEnables).toBe(0);
 		expect(mock.received.every((r) => r.cmd !== 386)).toBe(true);
 	});
 
-	it('ignores a link that is not the pinned shape and falls back to the address', async () => {
+	it('a link that is not the pinned shape is never dialled, and no address is used', async () => {
 		const urls: string[] = [];
 		useFakeSocket(
 			class {
@@ -112,23 +110,22 @@ describe('elegoo-sdcp through an OctoEverywhere link', () => {
 				close() {}
 			}
 		);
+		const seen: PrinterStatus[] = [];
 		const h = adapters['elegoo-sdcp']({
 			...linkCfg({ shareLink: 'https://evil.example', mainboardId: 'X' }),
-			host: '10.1.2.3',
-			port: 3030
+			host: '10.1.2.3'
 		});
-		await until(() => urls.length > 0);
+		h.status$((s) => seen.push(s));
+		await new Promise((r) => setTimeout(r, 50));
 		h.close();
-		expect(urls).toEqual(['ws://10.1.2.3:3030/websocket']);
+		expect(urls).toEqual([]);
+		expect(seen[0]?.state).toBe('error');
 	});
 });
 
 describe('camera through an OctoEverywhere link', () => {
 	const t = (o: Partial<CameraTarget>): CameraTarget => ({
 		kind: 'elegoo-sdcp',
-		host: 'octoeverywhere',
-		port: null,
-		cameraUrl: null,
 		cameraEnabled: true,
 		secrets: { shareLink: LINK },
 		...o
@@ -137,10 +134,8 @@ describe('camera through an OctoEverywhere link', () => {
 		const s = await resolveCameraSource(t({}));
 		expect(s).toEqual({ urls: [`${LINK}/video`], origin: 'default', host: HOST, shareLink: true });
 	});
-	it('ignores a custom address and never opens the guard to another host', async () => {
-		const s = await resolveCameraSource(t({ cameraUrl: 'http://10.0.0.5:3031/video' }));
-		expect(s?.urls).toEqual([`${LINK}/video`]);
-		// no usable link and the placeholder host: nothing is dialled
+	it('never opens the guard to another host', async () => {
+		// no usable link: nothing is dialled
 		expect(
 			await resolveCameraSource(t({ secrets: { shareLink: 'https://evil.example' } }))
 		).toBeNull();
@@ -171,7 +166,8 @@ describe('shared link storage', () => {
 		expect(row.secretEnc).not.toContain(HOST);
 		expect(decryptSecrets(row.secretEnc)).toEqual({ shareLink: LINK });
 		for (const editor of [true, false]) {
-			const pub = toPublic(row, editor);
+			void editor;
+			const pub = toPublic(row);
 			expect(JSON.stringify(pub)).not.toContain('octoeverywhere.com');
 			expect(JSON.stringify(pub)).not.toContain('shared-');
 			expect(pub.secretsSet).toEqual(['shareLink']);
@@ -181,7 +177,7 @@ describe('shared link storage', () => {
 		expect(db.select().from(printers).all()).toHaveLength(1);
 	});
 
-	it('rejects a bad link without echoing it, and a missing address without a link', () => {
+	it('rejects a bad link without echoing it, and a missing link', () => {
 		const db = setup();
 		let msg = '';
 		try {
@@ -191,35 +187,48 @@ describe('shared link storage', () => {
 		}
 		expect(msg).toBeTruthy();
 		expect(msg).not.toContain('evil.example');
+		// a connected printer needs a link: an address alone is no longer a way to add one
 		expect(() =>
-			createPrinter(db, 'o', 'u1', { name: 'x', kind: 'elegoo-sdcp', host: '' })
-		).toThrow();
-		// a printer type that cannot use a link says so (Bambu LAN is MQTT, not a web link)
+			createPrinter(db, 'o', 'u1', { name: 'x', kind: 'elegoo-sdcp', host: '192.168.0.5' })
+		).toThrow(/shared link/i);
+		// Bambu LAN is gone: it is not a printer type any more
 		expect(() => createPrinter(db, 'o', 'u1', body({ kind: 'bambu-lan' }))).toThrow(
-			/Bambu Lab printers cannot be reached through an OctoEverywhere link/
+			/Unknown printer type/
 		);
+		expect(db.select().from(printers).all()).toHaveLength(0);
 	});
 
-	it('keeps the link on edit, drops a custom camera address, and clears on request', () => {
+	it('keeps the link on edit, ignores a typed address or camera address, and refuses to clear it', () => {
 		const db = setup();
-		const row = createPrinter(db, 'o', 'u1', body({ cameraUrl: 'http://10.0.0.5:3031/video' }));
-		expect(row.cameraUrl).toBeNull();
-		const a = updatePrinter(db, row.id, 'o', { name: 'Renamed', cameraUrl: 'http://10.0.0.5/x' });
-		expect(a.cameraUrl).toBeNull();
-		expect(decryptSecrets(a.secretEnc)).toEqual({ shareLink: LINK });
-		// clearing without an address is refused; with one it goes back to the LAN
-		expect(() => updatePrinter(db, row.id, 'o', { secrets: { shareLink: '' } })).toThrow(
-			/address/i
+		const row = createPrinter(
+			db,
+			'o',
+			'u1',
+			body({ cameraUrl: 'http://10.0.0.5:3031/video', host: '10.0.0.5', port: 3030 })
 		);
-		const b = updatePrinter(db, row.id, 'o', { host: '10.0.0.5', secrets: { shareLink: '' } });
-		expect(decryptSecrets(b.secretEnc)).toEqual({});
-		expect(b.secretEnc).toBeNull();
+		expect(row.cameraUrl).toBeNull();
+		expect(row.host).toBe('octoeverywhere');
+		expect(row.port).toBeNull();
+		const a = updatePrinter(db, row.id, 'o', {
+			name: 'Renamed',
+			cameraUrl: 'http://10.0.0.5/x',
+			host: '10.0.0.5'
+		});
+		expect(a.cameraUrl).toBeNull();
+		expect(a.host).toBe('octoeverywhere');
+		expect(decryptSecrets(a.secretEnc)).toEqual({ shareLink: LINK });
+		// a link printer cannot go back to an address: clearing the link is refused
+		expect(() => updatePrinter(db, row.id, 'o', { secrets: { shareLink: '' } })).toThrow(
+			/shared link/i
+		);
+		// pausing and renaming stay possible
+		expect(updatePrinter(db, row.id, 'o', { enabled: false }).enabled).toBe(false);
 	});
 
 	it('connection tests use the stored link when none is typed', () => {
 		const db = setup();
 		const row = createPrinter(db, 'o', 'u1', body());
-		const cfg = configFromInput(db, 'o', { id: row.id, kind: 'elegoo-sdcp', host: '' });
+		const cfg = configFromInput(db, 'o', { id: row.id, kind: 'elegoo-sdcp' });
 		expect(cfg.secrets.shareLink).toBe(LINK);
 		const typed = configFromInput(db, 'o', { kind: 'elegoo-sdcp', secrets: { shareLink: LINK } });
 		expect(typed.host).toBe('octoeverywhere');
@@ -236,40 +245,23 @@ describe('credential hygiene (review findings)', () => {
 		return db;
 	};
 
-	it('M1: a pasted share link never lands in the address', () => {
+	it('M1: an address is never stored: a typed host (a pasted link included) is ignored', () => {
 		const db = setup();
-		for (const host of [
-			HOST,
-			LINK,
-			`${LINK}/`,
-			`${LINK}/video`,
-			'foo.octoeverywhere.com',
-			'octoeverywhere.com',
-			`${HOST}:3030`
-		]) {
-			let msg = '';
-			try {
-				createPrinter(db, 'o', 'u1', { name: 'x', kind: 'elegoo-sdcp', host });
-			} catch (e) {
-				msg = (e as Error).message;
-			}
-			expect(msg, host).toMatch(/shared link/i);
-			expect(msg).not.toContain('shared-testtoken');
+		for (const host of [HOST, LINK, `${LINK}/`, 'foo.octoeverywhere.com', '192.168.0.5']) {
+			expect(
+				() => createPrinter(db, 'o', 'u1', { name: 'x', kind: 'elegoo-sdcp', host }),
+				host
+			).toThrow(/shared link/i);
 		}
 		expect(db.select().from(printers).all()).toHaveLength(0);
 		const row = createPrinter(db, 'o', 'u1', {
 			name: 'x',
 			kind: 'elegoo-sdcp',
-			host: '192.168.0.5'
+			host: 'printer.local',
+			secrets: { shareLink: LINK }
 		});
-		expect(() => updatePrinter(db, row.id, 'o', { host: HOST })).toThrow(/shared link/i);
-		expect(() => configFromInput(db, 'o', { kind: 'elegoo-sdcp', host: LINK })).toThrow(
-			/shared link/i
-		);
-		// the plain placeholder and other hosts are untouched
-		expect(
-			createPrinter(db, 'o', 'u1', { name: 'y', kind: 'elegoo-sdcp', host: 'printer.local' }).host
-		).toBe('printer.local');
+		expect(row.host).toBe('octoeverywhere');
+		expect(JSON.stringify(row)).not.toContain('printer.local');
 	});
 
 	it('L1: the placeholder host without a usable link is never dialled', async () => {
@@ -282,16 +274,15 @@ describe('credential hygiene (review findings)', () => {
 				close() {}
 			}
 		);
-		for (const kind of ['elegoo-sdcp', 'moonraker', 'octoprint', 'bambu-lan'] as const) {
+		for (const kind of ['elegoo-sdcp', 'moonraker', 'octoprint'] as const) {
 			const seen: PrinterStatus[] = [];
-			const h = adapters[kind]({ id: 'p', kind, host: 'octoeverywhere', port: null, secrets: {} });
+			const h = adapters[kind]({ id: 'p', kind, host: 'octoeverywhere', secrets: {} });
 			h.status$((s) => seen.push(s));
 			h.close();
 			expect(seen[0]?.state, kind).toBe('offline');
 			expect(seen[0]?.message, kind).toMatch(/shared link is missing/i);
 		}
 		expect(dialled).toEqual([]);
-		expect(await enableSdcpCamera(linkCfg({}))).toBe(false);
 		const r = await testConnection(linkCfg({}), 300);
 		expect(r.ok).toBe(false);
 		expect(r.message).toMatch(/shared link is missing/i);
@@ -306,10 +297,10 @@ describe('credential hygiene (review findings)', () => {
 		});
 		expect(() =>
 			configFromInput(db, 'o', { id: row.id, kind: 'elegoo-sdcp', secrets: { shareLink: '' } })
-		).toThrow(/address/i);
+		).toThrow(/shared link/i);
 		expect(() =>
 			configFromInput(db, 'o', { kind: 'bambu-lan', secrets: { shareLink: LINK } })
-		).toThrow(/Bambu Lab/);
+		).toThrow(/Unknown printer type/);
 		expect(configFromInput(db, 'o', { id: row.id, kind: 'elegoo-sdcp' }).secrets.shareLink).toBe(
 			LINK
 		);
@@ -323,8 +314,6 @@ describe('credential hygiene (review findings)', () => {
 		])
 			expect(checkCameraUrl(bad, HOST).ok, bad).toBe(false);
 		expect(checkCameraUrl(`https://${HOST}:443/video`, HOST).ok).toBe(true);
-		// LAN hosts keep working over plain http with ports
-		expect(checkCameraUrl('http://10.0.0.5:3031/video', '10.0.0.5').ok).toBe(true);
 	});
 
 	it('L4: safeError masks share-link hosts', () => {
@@ -367,18 +356,10 @@ function fakeSockets() {
 	return socks;
 }
 const STATUS = JSON.stringify({ Status: { CurrentStatus: [0], PrintInfo: { Status: 0 } } });
-const lanCfg = (): PrinterConfig => ({
-	id: 'p',
-	kind: 'elegoo-sdcp',
-	host: '10.1.2.3',
-	port: 3030,
-	secrets: { mainboardId: 'MB1' }
-});
-
 describe('sdcp reconnect backoff', () => {
 	afterEach(() => vi.useRealTimers());
 
-	it('link backoff is slower than LAN backoff and capped at 5 minutes', () => {
+	it('link backoff is slower than the plain backoff and capped at 5 minutes', () => {
 		for (let a = 0; a < 10; a++) {
 			expect(linkBackoff(a)).toBeGreaterThanOrEqual(10_000);
 			expect(linkBackoff(a)).toBeLessThan(300_500);
@@ -386,7 +367,7 @@ describe('sdcp reconnect backoff', () => {
 		}
 		expect(linkBackoff(0)).toBeLessThan(10_500);
 		expect(linkBackoff(9)).toBeGreaterThanOrEqual(300_000);
-		expect(backoff(0)).toBeLessThan(2500); // LAN unchanged
+		expect(backoff(0)).toBeLessThan(2500); // the plain backoff is unchanged
 	});
 
 	it('a relay that accepts and closes at once is not re-dialled at a fixed pace', async () => {
@@ -425,24 +406,6 @@ describe('sdcp reconnect backoff', () => {
 		await vi.advanceTimersByTimeAsync(11_000);
 		expect(socks.length).toBe(3);
 	});
-
-	it('LAN keeps the fast schedule but also needs data before resetting', async () => {
-		vi.useFakeTimers();
-		const socks = fakeSockets();
-		const h = adapters['elegoo-sdcp'](lanCfg());
-		cleanup.push(() => h.close());
-		await vi.advanceTimersByTimeAsync(0);
-		socks[0].open();
-		socks[0].hangUp(); // ~2 s
-		await vi.advanceTimersByTimeAsync(3_000);
-		expect(socks.length).toBe(2);
-		socks[1].open();
-		socks[1].hangUp(); // ~4 s
-		await vi.advanceTimersByTimeAsync(3_000);
-		expect(socks.length).toBe(2);
-		await vi.advanceTimersByTimeAsync(2_000);
-		expect(socks.length).toBe(3);
-	});
 });
 
 describe('sdcp untrusted frames', () => {
@@ -451,7 +414,7 @@ describe('sdcp untrusted frames', () => {
 	it('survives bad JSON; a non-text or oversize frame drops the socket (audit: long backoff)', async () => {
 		vi.useFakeTimers();
 		const socks = fakeSockets();
-		const h = adapters['elegoo-sdcp'](lanCfg());
+		const h = adapters['elegoo-sdcp'](linkCfg({ shareLink: LINK, mainboardId: 'MB1' }));
 		cleanup.push(() => h.close());
 		const seen: PrinterStatus[] = [];
 		h.status$((s) => seen.push(s));

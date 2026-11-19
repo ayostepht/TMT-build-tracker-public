@@ -1,15 +1,18 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PrinterStatus } from '#lib/printers/status.ts';
 import { adapters } from './adapters';
-import { normalizeBambu } from './adapters/bambu';
 import { normalizeOctoprint } from './adapters/octoprint';
 import { MiniWsServer, sendJson, sendText } from './mini-ws';
-import { MAX_FILE_NAME } from './outbound';
+import { MAX_FILE_NAME, setResolver } from './outbound';
+import { resetFakeSocket, useLoopbackSocket } from './ws-test';
 import type { AdapterHandle, PrinterConfig } from './types';
 
 const cleanup: (() => unknown)[] = [];
+beforeEach(() => setResolver(async () => ['93.184.216.34']));
 afterEach(async () => {
 	while (cleanup.length) await cleanup.pop()!();
+	resetFakeSocket();
+	setResolver(null);
 });
 
 async function until<T>(fn: () => T | undefined | false, ms = 5000): Promise<T> {
@@ -27,13 +30,12 @@ const collect = (h: AdapterHandle) => {
 	cleanup.push(() => h.close());
 	return seen;
 };
-const cfg = (kind: PrinterConfig['kind'], port: number): PrinterConfig => ({
-	id: 'p',
-	kind,
-	host: '127.0.0.1',
-	port,
-	secrets: {}
-});
+const LINK = 'https://shared-testtoken12345678.octoeverywhere.com';
+/** A link printer whose sockets really connect to the loopback mock on `port` (nothing else is dialled). */
+const cfg = (kind: PrinterConfig['kind'], port: number, secrets = {}): PrinterConfig => {
+	useLoopbackSocket(port);
+	return { id: 'p', kind, host: 'octoeverywhere', secrets: { shareLink: LINK, ...secrets } };
+};
 
 describe('a hostile WebSocket peer cannot crash or poison the Moonraker adapter', () => {
 	it('survives deep nesting and __proto__ keys, then keeps working', async () => {
@@ -77,9 +79,7 @@ describe('a hostile WebSocket peer cannot crash or poison the Moonraker adapter'
 
 describe('printer-reported file names are bounded at the adapter edge', () => {
 	const long = 'x'.repeat(900) + '\n.gcode';
-	it('bambu and octoprint', () => {
-		const b = normalizeBambu({ gcode_state: 'RUNNING', subtask_name: long });
-		expect(b.fileName!.length).toBeLessThanOrEqual(MAX_FILE_NAME);
+	it('octoprint', () => {
 		const o = normalizeOctoprint(
 			{ state: 'Printing', job: { file: { name: long } }, progress: { completion: 5 } },
 			null
@@ -89,6 +89,10 @@ describe('printer-reported file names are bounded at the adapter edge', () => {
 	});
 	it('a normal slicer name passes through unchanged', () => {
 		const name = 'TMT_4691_PETG_plate_3_of_7_0.2mm_14h40m.gcode.3mf';
-		expect(normalizeBambu({ gcode_state: 'RUNNING', subtask_name: name }).fileName).toBe(name);
+		const o = normalizeOctoprint(
+			{ state: 'Printing', job: { file: { name } }, progress: {} },
+			null
+		);
+		expect(o.fileName).toBe(name);
 	});
 });

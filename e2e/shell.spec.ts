@@ -12,8 +12,6 @@ import {
 	uniqueEmail
 } from './helpers';
 import { chooseStatus } from './status-helpers';
-import { MockSdcp } from '../src/lib/server/printers/mock-sdcp';
-import { gotoIntegrations, openElegooForm } from './integrations-helpers';
 import type { Page } from '@playwright/test';
 
 // Phone shell (Stage 2): one-row top bar, one-line build header, bottom tab bar, error page,
@@ -556,41 +554,19 @@ test('Help is a top-level item after Stats on phones, 44px tall, current on /hel
 });
 
 // The bar sits in a max-width container, so the fit follows the bar, not the viewport. A long
-// chapter name, a long user name and the live "n printing" indicator must all stay on one row.
-test.describe('desktop top bar fit with a printer printing', () => {
-	let mock: MockSdcp;
-	test.beforeAll(async () => {
-		mock = new MockSdcp();
-		await mock.start();
-	});
-	test.afterAll(async () => {
-		await mock.stop();
-	});
-
+// chapter name and a long user name must stay on one row.
+test.describe('desktop top bar fit', () => {
 	test('one row at 1024, 1100, 1280, 1440 and 1920 px', async ({ page }) => {
 		test.setTimeout(150_000);
 		const OUT = 'data/r49-shots-shell';
 		await page.setViewportSize({ width: 1440, height: 900 });
 		await signUp(page, 'Helpful Maker With Long Name', uniqueEmail('helpfit'));
 		await createChapter(page, 'Northern Valley Volunteers Chapter of Makers');
-		const chapterPath = new URL(page.url()).pathname.replace(/\/(integrations|printers)$/, '');
-		await gotoIntegrations(page, chapterPath);
-		await openElegooForm(page);
-		await page.getByLabel('Name', { exact: true }).fill('Fit Centauri');
-		await page.getByTestId('pf-host').fill('127.0.0.1');
-		await page.getByTestId('pf-port').fill(String(mock.port));
-		await page.getByTestId('pf-save').click();
-		await expect(page.getByTestId('printer-row')).toContainText('Fit Centauri');
-		mock.printing('fit.gcode', 30);
-		await expect(page.getByTestId('nav-printing')).toBeVisible({ timeout: 20_000 });
-		// The indicator keeps its full text in its accessible name at every width.
-		await expect(page.getByTestId('nav-printing')).toContainText('1 printing');
 
 		for (const w of [761, 800, 900, 1024, 1100, 1280, 1440, 1920]) {
 			await page.setViewportSize({ width: w, height: 800 });
 			await page.goto('/help');
 			await page.waitForLoadState('networkidle');
-			await expect(page.getByTestId('nav-printing')).toBeVisible({ timeout: 20_000 });
 			const m = await page.locator('header.topbar').evaluate((el) => {
 				const tops: number[] = [];
 				for (const c of el.querySelectorAll('.navlink, .shell-brand, .chapter-slot')) {
@@ -620,7 +596,6 @@ test.describe('desktop top bar fit with a printer printing', () => {
 			expect.soft(m.spread, `one row at ${w} (bar ${m.bar}px)`).toBeLessThanOrEqual(8);
 			expect.soft(m.h, `bar height at ${w}`).toBeLessThanOrEqual(64);
 		}
-		mock.set({ printStatus: 0, machineStatus: [0], progress: 0, file: '' });
 	});
 });
 

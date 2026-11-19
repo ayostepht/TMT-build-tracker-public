@@ -89,11 +89,10 @@ function judgeV4(b: number[], shown: string): AddressVerdict {
 }
 
 /**
- * Judge one IP literal. Loopback (127/8, ::1) is deliberately ALLOWED, along with the other
- * private ranges: this is a self-hosted tool whose owner decides what it may reach, and the
- * e2e mocks plus same-host Spoolman/OctoPrint setups rely on loopback. The trade-off is that
- * anyone who may add a printer can make the server probe services on its own host; the
- * metadata addresses inside the allowed ranges are refused explicitly. Anything that is not a valid literal is refused. */
+ * Judge one IP literal as private/local (`ok`) or not. The outbound guard no longer connects to
+ * private addresses at all: it uses this only through `isGlobalUnicast`, which accepts just the
+ * public answers of an OctoEverywhere link name. The metadata addresses inside the private ranges
+ * are refused explicitly. Anything that is not a valid literal is refused. */
 export function classifyAddress(raw: string): AddressVerdict {
 	const ip = cleanHost(raw);
 	const v4 = parseIPv4(ip);
@@ -133,5 +132,5 @@ export function refusedMessage(v: Extract<AddressVerdict, { ok: false }>, host?:
 	if (v.reason === 'metadata')
 		return `${who} is a cloud metadata or link-local address, which is never allowed.`;
 	if (v.reason === 'reserved') return `${who} is not a usable printer address.`;
-	return `${who} is not on your local network. Printers, cameras and Spoolman must be reachable on a private address (like 192.168.x.x or 10.x.x.x).`;
+	return `${who} is not on your local network. Printers and cameras must be reachable on a private address (like 192.168.x.x or 10.x.x.x).`;
 }

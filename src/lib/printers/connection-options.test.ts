@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CONNECTION_OPTIONS, connectionOptionsFor } from './connection-options.ts';
+import { CONNECTION_OPTIONS } from './connection-options.ts';
 import { PRINTER_KIND_INFO, PRINTER_KINDS } from './status.ts';
 import { supportsShareLink } from './share-link.ts';
 
@@ -10,12 +10,12 @@ describe('connection options', () => {
 		for (const k of PRINTER_KINDS) expect(CONNECTION_OPTIONS.some((o) => o.kind === k)).toBe(true);
 	});
 
-	it('only Elegoo (LAN and link) is marked verified on real hardware', () => {
+	it('only Elegoo (through a link) is marked verified on real hardware', () => {
 		expect(
 			CONNECTION_OPTIONS.filter((o) => o.verifiedOnHardware)
 				.map((o) => o.key)
 				.sort()
-		).toEqual(['elegoo-lan', 'octoeverywhere-elegoo']);
+		).toEqual(['octoeverywhere-elegoo']);
 	});
 
 	it('link options exist exactly for the kinds that can use a link, and require the link', () => {
@@ -27,7 +27,6 @@ describe('connection options', () => {
 			expect(f).toMatchObject({ where: 'secrets', required: true, secret: true });
 			expect(o.fields.some((x) => x.key === 'host')).toBe(false);
 		}
-		expect(supportsShareLink('bambu-lan')).toBe(false);
 		expect(supportsShareLink('manual')).toBe(false);
 	});
 
@@ -47,15 +46,14 @@ describe('connection options', () => {
 		expect(m.fields.some((f) => f.key === 'host' || f.where === 'secrets')).toBe(false);
 	});
 
-	it('hosted mode offers links and Not connected only', () => {
-		const hosted = connectionOptionsFor(true);
-		expect(hosted.filter((o) => o.available).map((o) => o.key)).toEqual([
+	it('offers links and Not connected only, with no address or port field', () => {
+		expect(CONNECTION_OPTIONS.map((o) => o.key)).toEqual([
 			'octoeverywhere-elegoo',
 			'octoeverywhere-klipper',
 			'octoeverywhere-octoprint',
 			'manual'
 		]);
-		expect(hosted.find((o) => o.key === 'elegoo-lan')!.unavailableReason).toMatch(/hosted site/);
-		expect(connectionOptionsFor(false).every((o) => o.available)).toBe(true);
+		const keys = CONNECTION_OPTIONS.flatMap((o) => o.fields.map((f) => f.key));
+		expect(keys.includes('host') || keys.includes('port')).toBe(false);
 	});
 });

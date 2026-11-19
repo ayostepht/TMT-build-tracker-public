@@ -1,20 +1,16 @@
 /**
+/**
  * The outbound-connection guard. EVERYTHING the server connects to on a user's say-so (printer
- * adapters, cameras, discovery, connection tests, Spoolman) goes through here.
+ * adapters, cameras, connection tests) goes through here.
  *
- *  - Public mode (`TMT_MODE=public`): refused before any network activity (no DNS either), except
- *    an OctoEverywhere shared-link host on a call that passes `allowShareLink`.
- *  - Self-hosted: the host is resolved once (all A/AAAA records), EVERY answer must be on the
- *    owner's own network (`classifyAddress`), and the connection goes to the validated IP
- *    literal, so a second DNS answer cannot differ (DNS rebinding).
+ *  - The ONE destination is an OctoEverywhere shared-link host (`isShareLinkHost`), and only on a
+ *    call that passes `allowShareLink`. Any other host (a LAN address, a private or loopback IP,
+ *    a name that is not a link host) is refused before any network activity, no DNS either.
+ *  - The link name is resolved once; EVERY answer must be a global unicast address (a link name
+ *    that points inward is refused); the connection goes to the validated IP (DNS rebinding
+ *    cannot swap it), over https on the default port only.
  *  - HTTP never follows redirects: `guardedFetch` hands every 3xx back and callers treat it as
  *    a failure. API keys are therefore only ever sent to the validated host.
- *
- *  - The ONE public destination, opt-in per call (`allowShareLink`, default false; only the
- *    shared-link paths of Elegoo, Klipper and OctoPrint pass it): an OctoEverywhere shared-link host (`isShareLinkHost`). Its
- *    name is resolved like any other, but EVERY answer must be a global unicast address (the
- *    inverse of the private-range rule: a link name that points inward is refused), and it is
- *    reached over https on the default port only.
  *
  * Do not use `fetch`, `net`, `dgram` or a WebSocket on a user-supplied host anywhere else.
  */
@@ -22,20 +18,13 @@ import { lookup } from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
 import { Readable } from 'node:stream';
-import {
-	classifyAddress,
-	cleanHost,
-	isIpLiteral,
-	parseIPv4,
-	parseIPv6,
-	refusedMessage
-} from '#lib/printers/address.ts';
+import { classifyAddress, cleanHost, parseIPv4, parseIPv6 } from '#lib/printers/address.ts';
 import { isShareLinkHost } from '#lib/printers/share-link.ts';
 import { ApiError } from '../access';
-import { isPublicMode } from '../config';
 import { maskSecrets } from './types';
 
-export const PUBLIC_MODE_MESSAGE = 'Printer connections are not available on this hosted site yet.';
+export const LINK_ONLY_MESSAGE =
+	'Printers connect through an OctoEverywhere shared link only. Paste the link.';
 
 /** A refused or failed outbound target. An `ApiError`, so routes answer 4xx with the message. */
 export class OutboundError extends ApiError {
@@ -49,13 +38,12 @@ export class OutboundError extends ApiError {
 }
 
 /**
- * Throws the public-mode refusal. Call before any network activity or DNS lookup. Only a caller
- * that is about to use an OctoEverywhere shared link passes `allowShareLink`; `resolveAllowed`
- * then still refuses every host that is not a share-link host.
+ * Throws the refusal for any call that is not about an OctoEverywhere shared link. Call before
+ * any network activity or DNS lookup. Only a caller that is about to use a shared link passes
+ * `allowShareLink`; `resolveAllowed` then still refuses every host that is not a link host.
  */
 export function assertOutboundAllowed(opts: { allowShareLink?: boolean } = {}): void {
-	if (isPublicMode() && !opts.allowShareLink)
-		throw new OutboundError(PUBLIC_MODE_MESSAGE, 403, 'public');
+	if (!opts.allowShareLink) throw new OutboundError(LINK_ONLY_MESSAGE, 403, 'public');
 }
 
 /** Resolves a host name to every address it has (A and AAAA). Replaceable for tests. */
@@ -102,7 +90,7 @@ export interface ResolvedTarget {
 	/** The validated address to connect to. */
 	ip: string;
 	family: 4 | 6;
-	/** True when `host` was already an IP literal (nothing to pin, no Host/SNI name). */
+	/** Always false: only a link host name is ever resolved, never an IP literal. */
 	literal: boolean;
 	/** True for an OctoEverywhere shared-link host (a public address, https on 443 only). */
 	shareLink?: boolean;
@@ -142,8 +130,9 @@ export function isGlobalUnicast(raw: string): boolean {
 export const ipForUrl = (ip: string) => (ip.includes(':') ? `[${ip}]` : ip);
 
 /**
- * Check a host and pick the address to connect to. Public mode: refused before any lookup.
- * Every resolved address must be allowed; one bad answer refuses the host.
+ * Check a host and pick the address to connect to. Refused before any lookup unless the caller
+ * allows a share link AND the host is a share-link host. Every resolved address must be global
+ * unicast; one bad answer refuses the host.
  */
 export async function resolveAllowed(
 	rawHost: string,
@@ -152,25 +141,8 @@ export async function resolveAllowed(
 ): Promise<ResolvedTarget> {
 	assertOutboundAllowed({ allowShareLink: opts.allowShareLink });
 	const host = cleanHost(rawHost);
-	if (!host) throw new OutboundError('Enter the printer address.');
-	// Hosted site: the shared-link host is the only destination, whatever else the caller passes.
-	if (isPublicMode() && !isShareLinkHost(host))
-		throw new OutboundError(PUBLIC_MODE_MESSAGE, 403, 'public');
-	if (isIpLiteral(host)) {
-		const v = classifyAddress(host);
-		if (!v.ok) throw new OutboundError(refusedMessage(v, rawHost));
-		return { host, ip: v.ip, family: v.family === 6 || host.includes(':') ? 6 : 4, literal: true };
-	}
-	// A share-link host IS the secret: no message below may contain it, whatever the caller allows.
-	const secretHost = isShareLinkHost(host);
-	const notFound = () =>
-		new OutboundError(
-			secretHost
-				? 'The OctoEverywhere link could not be found. Check the link.'
-				: `Could not find ${host}. Check the address.`,
-			400,
-			'dns'
-		);
+	if (!host || !isShareLinkHost(host)) throw new OutboundError(LINK_ONLY_MESSAGE, 403, 'public');
+	// The host IS the secret: no message below may contain it.
 	let answers: string[];
 	try {
 		answers = await r(host);
@@ -178,47 +150,25 @@ export async function resolveAllowed(
 		throw notFound();
 	}
 	if (!answers.length) throw notFound();
-	if (secretHost && opts.allowShareLink) {
-		// The one public destination: every answer must be global unicast, then pin one.
-		if (!answers.every((a) => isGlobalUnicast(a)))
-			throw new OutboundError(
-				'The OctoEverywhere link does not point to a public address, so it was refused.',
-				400,
-				'address'
-			);
-		const pick = answers.find((a) => !a.includes(':')) ?? answers[0];
-		return {
-			host,
-			ip: cleanHost(pick),
-			family: pick.includes(':') ? 6 : 4,
-			literal: false,
-			shareLink: true
-		};
-	}
-	const verdicts = answers.map((a) => classifyAddress(a));
-	for (const v of verdicts)
-		if (!v.ok)
-			throw new OutboundError(
-				secretHost
-					? 'The OctoEverywhere link is not allowed here: it is not on your local network.'
-					: refusedMessage(v, host)
-			);
-	const ok = verdicts.filter((v) => v.ok);
-	const pick = ok.find((v) => !v.ip.includes(':')) ?? ok[0];
-	return { host, ip: pick.ip, family: pick.ip.includes(':') ? 6 : 4, literal: false };
+	// Every answer must be global unicast, then pin one.
+	if (!answers.every((a) => isGlobalUnicast(a)))
+		throw new OutboundError(
+			'The OctoEverywhere link does not point to a public address, so it was refused.',
+			400,
+			'address'
+		);
+	const pick = answers.find((a) => !a.includes(':')) ?? answers[0];
+	return {
+		host,
+		ip: cleanHost(pick),
+		family: pick.includes(':') ? 6 : 4,
+		literal: false,
+		shareLink: true
+	};
 }
 
-/**
- * Why a saved host can never be used, without any network activity: public mode, or an IP
- * literal that is not on a private range. Null for host names (those are judged at connect).
- */
-export function hostBlockReason(rawHost: string): string | null {
-	if (isPublicMode()) return PUBLIC_MODE_MESSAGE;
-	const host = cleanHost(rawHost);
-	if (!isIpLiteral(host)) return null;
-	const v = classifyAddress(host);
-	return v.ok ? null : refusedMessage(v, rawHost);
-}
+const notFound = () =>
+	new OutboundError('The OctoEverywhere link could not be found. Check the link.', 400, 'dns');
 
 /** Remote-supplied text, made safe to show: control characters out, one line, length-capped. */
 export function safeText(v: unknown, max = 120): string {
@@ -268,17 +218,28 @@ export async function guardedFetch(
 	if (url.protocol !== 'http:' && url.protocol !== 'https:')
 		throw new OutboundError('The address must start with http:// or https://', 400, 'protocol');
 	const allowShareLink = init?.allowShareLink === true;
-	if (
-		allowShareLink &&
-		isShareLinkHost(cleanHost(url.hostname)) &&
-		(url.protocol !== 'https:' || url.port)
-	)
+	if (isShareLinkHost(cleanHost(url.hostname)) && (url.protocol !== 'https:' || url.port))
 		throw new OutboundError(
 			'The OctoEverywhere link is reached over https on the default port only.',
 			400,
 			'protocol'
 		);
 	const target = await resolveAllowed(url.hostname, undefined, { allowShareLink });
+	return fetchPinned(url, target, init);
+}
+
+/**
+ * The connection half of `guardedFetch`: connects to `target.ip` (already validated by
+ * `resolveAllowed`), sends the request with the URL's host name in Host and TLS SNI, and never
+ * follows a redirect. INTERNAL: it validates nothing, so nothing but `guardedFetch` may call it
+ * with a real destination; it is exported only so the socket plumbing (settling once, timeouts,
+ * aborts, leaks) can be tested against a loopback server.
+ */
+export async function fetchPinned(
+	url: URL,
+	target: ResolvedTarget,
+	init: FetchInit = {}
+): Promise<Response> {
 	const headers = new Headers(init?.headers);
 	if (!headers.has('accept-encoding')) headers.set('accept-encoding', 'identity');
 	const body = init?.body;

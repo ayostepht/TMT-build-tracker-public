@@ -24,7 +24,7 @@ export const GET: RequestHandler = (event) =>
 				name: t.personal ? 'My builds' : t.name,
 				personal: t.personal,
 				canEdit: t.role !== 'viewer',
-				printers: listPrinters(db, t.id).map((p) => toPublic(p, t.role !== 'viewer'))
+				printers: listPrinters(db, t.id).map((p) => toPublic(p))
 			}))
 		};
 	});

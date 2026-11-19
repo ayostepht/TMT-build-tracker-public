@@ -1,4 +1,3 @@
-import { MockSdcp } from '../src/lib/server/printers/mock-sdcp';
 import { expect, test } from './fixtures';
 import { invite, joinViaInvite, ownerWithBuild, uniqueEmail } from './helpers';
 import { chooseStatus } from './status-helpers';
@@ -6,8 +5,6 @@ import type { Page } from '@playwright/test';
 
 // r49 tracking: a "Not connected" printer in "Where is it printing?", the Printer select in the log
 // sheet (prefilled from where the plate was started) and the quiet "Connect a printer" hint.
-// Shots (invented names only) in data/r49-shots-tracking/ (gitignored).
-const DIR = 'data/r49-shots-tracking';
 
 async function orgOf(page: Page, buildId: string) {
 	return (
@@ -158,73 +155,4 @@ test('a not-connected printer: dialog, no confirm prompt, prefilled log, saved n
 	expect(saved).toHaveLength(2);
 	expect(saved).toContain('Garage printer');
 	expect(saved).toContain(null);
-});
-
-test('shots: dialog with a connected and a not-connected printer, log sheet, hint', async ({
-	page
-}) => {
-	test.setTimeout(300_000);
-	const sdcp = new MockSdcp();
-	await sdcp.start();
-	try {
-		const { buildId } = await ownerWithBuild(page, 'r49shots');
-		const org = await orgOf(page, buildId);
-		// Hint first: a workspace without printers.
-		for (const [w, h] of [
-			[390, 844],
-			[1440, 900]
-		] as const) {
-			await page.setViewportSize({ width: w, height: h });
-			await page.goto(`/builds/${buildId}/print`);
-			await expect(page.getByTestId('printer-hint')).toBeVisible();
-			await page.screenshot({ path: `${DIR}/hint-${w}-light.png` });
-		}
-		const r = await page.request.post('/api/printers', {
-			data: {
-				organizationId: org,
-				name: 'Shop CC1',
-				kind: 'elegoo-sdcp',
-				host: '127.0.0.1',
-				port: sdcp.port,
-				secrets: { mainboardId: 'ABCDEF' }
-			}
-		});
-		expect(r.ok()).toBe(true);
-		await addManual(page, org, 'Garage printer');
-		sdcp.set({ printStatus: 0, machineStatus: [0], progress: 0, file: '' });
-
-		await page.emulateMedia({ colorScheme: 'light' });
-		for (const [w, h] of [
-			[390, 844],
-			[1440, 900]
-		] as const) {
-			await page.setViewportSize({ width: w, height: h });
-			// The printer list must be loaded, or Printing starts without asking.
-			const loaded = page.waitForResponse((r) => r.url().includes('/printer-jobs'));
-			await page.goto(`/builds/${buildId}/print`);
-			await loaded;
-			await chooseStatus(plateBadge(page), 'Printing');
-			const dlg = page.getByTestId('where-printing');
-			await expect(dlg).toBeVisible();
-			// Connected printers first, not-connected after.
-			const labels = await dlg.locator('.wp-opt').allInnerTexts();
-			expect(labels[0]).toContain('Shop CC1');
-			expect(labels[1]).toContain('Garage printer');
-			expect(labels[1]).toContain('not connected');
-			await page.screenshot({ path: `${DIR}/dialog-${w}-light.png` });
-			await dlg.locator('input[type="radio"]').nth(1).check();
-			await dlg.getByTestId('where-confirm').click();
-			await expect(dlg).toBeHidden();
-			await openLog(page);
-			const sheet = page.getByRole('dialog');
-			await expect(sheet.getByTestId('log-printer')).toHaveValue('Garage printer');
-			await page.screenshot({ path: `${DIR}/log-sheet-${w}-light.png` });
-			await sheet.getByRole('button', { name: 'Cancel', exact: true }).last().click();
-			await expect(sheet).toBeHidden();
-			// Back to To print for the next viewport.
-			await chooseStatus(printingBadge(page), 'To print');
-		}
-	} finally {
-		await sdcp.stop();
-	}
 });

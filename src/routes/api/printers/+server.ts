@@ -31,7 +31,7 @@ export const GET: RequestHandler = (event) =>
 						.all()
 				: [],
 			expected: editor ? pendingExpected(db, org) : [],
-			printers: listPrinters(db, org).map((p) => toPublic(p, role !== 'viewer')),
+			printers: listPrinters(db, org).map((p) => toPublic(p)),
 			jobs: teamJobs(db, org),
 			autoLogPrints: getOrgSettings(db, org).autoLogPrints
 		};
@@ -47,5 +47,5 @@ export const POST: RequestHandler = (event) =>
 		requireEditor(db, org, userId);
 		const row = createPrinter(db, org, userId, body);
 		getSupervisor()?.refresh(row.id);
-		return { printer: toPublic(row, true) };
+		return { printer: toPublic(row) };
 	});

@@ -1,13 +1,18 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PrinterStatus } from '#lib/printers/status.ts';
 import { adapters } from './adapters';
 import { mergeStatus } from './adapters/moonraker';
 import { MiniWsServer, sendJson } from './mini-ws';
+import { setResolver } from './outbound';
+import { resetFakeSocket, useLoopbackSocket } from './ws-test';
 import type { AdapterHandle, PrinterConfig } from './types';
 
 const cleanup: (() => unknown)[] = [];
+beforeEach(() => setResolver(async () => ['93.184.216.34']));
 afterEach(async () => {
 	while (cleanup.length) await cleanup.pop()!();
+	resetFakeSocket();
+	setResolver(null);
 	// in case a test fails after polluting
 	delete (Object.prototype as Record<string, unknown>).polluted;
 	delete (Object.prototype as Record<string, unknown>).polluted2;
@@ -34,13 +39,16 @@ async function until<T>(fn: () => T | undefined | false, ms = 5000): Promise<T> 
 		await new Promise((r) => setTimeout(r, 25));
 	}
 }
-const cfg = (port: number): PrinterConfig => ({
-	id: 'p',
-	kind: 'moonraker',
-	host: '127.0.0.1',
-	port,
-	secrets: {}
-});
+/** A link printer whose socket really connects to the loopback mock on `port`. */
+const cfg = (port: number): PrinterConfig => {
+	useLoopbackSocket(port);
+	return {
+		id: 'p',
+		kind: 'moonraker',
+		host: 'octoeverywhere',
+		secrets: { shareLink: 'https://shared-testtoken12345678.octoeverywhere.com' }
+	};
+};
 function rawText(socket: import('node:net').Socket, text: string) {
 	const data = Buffer.from(text);
 	const head =

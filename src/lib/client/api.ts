@@ -135,11 +135,10 @@ export interface PartialSplitBody {
 }
 /** Logs a run; with `split` (result Partial) two runs are made. `id` is the printed one, `ids` all of them. */
 export const logRun = (id: string, input: PrintRunInput & { split?: PartialSplitBody }) =>
-	call<{ id: string; ids?: string[]; spoolmanWarning?: string }>(
-		'POST',
-		`${b(id)}/runs`,
-		input
-	).then((r) => ({ id: r.id, ids: r.ids ?? [r.id], spoolmanWarning: r.spoolmanWarning }));
+	call<{ id: string; ids?: string[] }>('POST', `${b(id)}/runs`, input).then((r) => ({
+		id: r.id,
+		ids: r.ids ?? [r.id]
+	}));
 export const deleteRun = (id: string, runId: string, { recompute = true } = {}) =>
 	call('DELETE', `${b(id)}/runs/${encodeURIComponent(runId)}${recompute ? '' : '?recompute=0'}`);
 
@@ -675,47 +674,19 @@ export const saveGuideMapping = (templateId: string, map: Record<number, number 
 	call<{ changed: number }>('PUT', `${tpl(templateId)}/guide`, { map });
 export const clearGuideImages = (templateId: string) => call('DELETE', `${tpl(templateId)}/guide`);
 
-// ---- printers and Spoolman (milestone 7)
+// ---- printers (milestone 7)
 
 export interface PrinterInput {
 	organizationId?: string;
 	name?: string;
 	kind?: PrinterKind;
-	host?: string;
-	port?: number | null;
 	catalogId?: string | null;
 	enabled?: boolean;
-	/** Camera override (same host as the printer); null or blank = automatic. */
-	cameraUrl?: string | null;
 	cameraEnabled?: boolean;
 	/** Only the fields typed; blank clears a stored value, omitted keeps it. */
 	secrets?: Record<string, string>;
 }
-export interface DiscoveredPrinterDto {
-	host: string;
-	name: string;
-	machineName: string;
-	brand: string;
-	mainboardId: string;
-	firmware: string;
-}
-export interface SpoolDto {
-	id: number;
-	name: string;
-	vendor: string | null;
-	material: string | null;
-	colorHex: string | null;
-	remainingG: number | null;
-	usedG: number | null;
-	initialG: number | null;
-	archived: boolean;
-	location: string | null;
-}
 export interface OrgSettingsDto {
-	spoolmanUrl: string | null;
-	spoolmanAutoDeduct: boolean;
-	/** Who keeps Spoolman's weights up to date: 'app' (this app deducts logged grams) or 'other'. */
-	spoolmanKeptBy: 'app' | 'other';
 	autoLogPrints: boolean;
 }
 
@@ -743,12 +714,9 @@ export const listMyPrinters = (first?: string) =>
 		'GET',
 		`/api/printers/mine${first ? `?first=${encodeURIComponent(first)}` : ''}`
 	);
-/** The ways a printer can be added, as this site offers them (`hosted` follows the server's mode). */
+/** The ways a printer can be added. */
 export const getPrinterOptions = () =>
-	call<{ hosted: boolean; connectionOptions: ConnectionOptionView[] }>(
-		'GET',
-		'/api/printers/options'
-	);
+	call<{ connectionOptions: ConnectionOptionView[] }>('GET', '/api/printers/options');
 export const addPrinter = (org: string, input: PrinterInput) =>
 	call<{ printer: PrinterPublic }>('POST', '/api/printers', { ...input, organizationId: org });
 export const updatePrinter = (id: string, input: PrinterInput) =>
@@ -765,7 +733,7 @@ export interface CameraInfo {
 	supported: boolean;
 	enabled: boolean;
 	available: boolean;
-	origin: 'custom' | 'default' | 'moonraker' | 'octoprint' | null;
+	origin: 'default' | 'moonraker' | 'octoprint' | null;
 }
 export const printerCameraInfo = (printerId: string) =>
 	call<CameraInfo>('GET', `/api/printers/${encodeURIComponent(printerId)}/camera`);
@@ -775,10 +743,6 @@ export const testPrinterCamera = (org: string, input: PrinterInput & { id?: stri
 		'/api/printers/camera-test',
 		{ ...input, organizationId: org }
 	);
-export const discoverPrinters = (org: string) =>
-	call<{ found: DiscoveredPrinterDto[] }>('POST', '/api/printers/discover', {
-		organizationId: org
-	});
 export const buildPrinterJobs = (buildId: string) =>
 	call<{
 		organizationId: string;
@@ -801,100 +765,22 @@ export const jobAction = (
 				note?: string;
 		  }
 ) =>
-	call<{ runId?: string; spoolmanWarning?: string }>(
+	call<{ runId?: string; runIds?: string[] }>(
 		'POST',
 		`/api/printers/jobs/${encodeURIComponent(jobId)}`,
 		body
 	);
 
 export const getOrgSettings = (org: string) =>
-	call<{ settings: OrgSettingsDto; canEdit: boolean; blocked?: string | null }>(
+	call<{ settings: OrgSettingsDto; canEdit: boolean }>(
 		'GET',
-		`/api/spoolman?org=${encodeURIComponent(org)}`
+		`/api/printers/settings?org=${encodeURIComponent(org)}`
 	);
 export const saveOrgSettings = (org: string, patch: Partial<OrgSettingsDto>) =>
-	call<{ settings: OrgSettingsDto }>('PUT', '/api/spoolman', { ...patch, organizationId: org });
-export const testSpoolman = (org: string, spoolmanUrl?: string) =>
-	call<{ version: string | null; spoolCount: number }>('POST', '/api/spoolman/test', {
-		organizationId: org,
-		spoolmanUrl
+	call<{ settings: OrgSettingsDto }>('PUT', '/api/printers/settings', {
+		...patch,
+		organizationId: org
 	});
-export const buildSpoolman = (buildId: string, all = false) =>
-	call<{
-		configured: boolean;
-		autoDeduct: boolean;
-		linked: Record<string, SpoolDto | null>;
-		spools: SpoolDto[];
-		/** The server re-fetched linked filaments and their cached stock differs from before. */
-		changed?: boolean;
-		error?: string;
-	}>('GET', `${b(buildId)}/spoolman${all ? '?all=1' : ''}`);
-export interface SpoolmanSpoolStockDto {
-	id: number;
-	remainingG: number | null;
-	initialG: number | null;
-	usedG: number | null;
-	archived: boolean;
-	location: string | null;
-}
-export interface SpoolmanFilamentDto {
-	id: number;
-	name: string;
-	vendor: string | null;
-	material: string | null;
-	colorHex: string | null;
-	density: number | null;
-	diameter: number | null;
-	weightG: number | null;
-	spoolWeightG: number | null;
-	externalId: string | null;
-	spools: SpoolmanSpoolStockDto[];
-}
-export interface SpoolmanSuggestionDto {
-	filament: SpoolmanFilamentDto;
-	score: number;
-	level: 'exact' | 'likely' | 'possible' | 'other';
-	reasons: string[];
-	openSpoolCount: number;
-}
-export interface SpoolmanSuggestionsDto {
-	configured: boolean;
-	offline: boolean;
-	error?: string;
-	suggestions: SpoolmanSuggestionDto[];
-}
-export interface SpoolmanLinkResultDto {
-	linked: boolean;
-	filamentId: number | null;
-	filamentName: string | null;
-	spoolId: number | null;
-	/** Grams logged on this build for the slot before it was linked. */
-	preLinkLoggedG: number;
-}
-const sm = (buildId: string, role: string) =>
-	`${b(buildId)}/filaments/${encodeURIComponent(role)}/spoolman`;
-/** Spoolman filaments ranked for a slot. */
-export const spoolmanSuggestions = (buildId: string, role: string) =>
-	call<SpoolmanSuggestionsDto>('GET', sm(buildId, role));
-/** Link a slot to a Spoolman filament, or unlink it with null. */
-export const linkSpoolmanFilament = (buildId: string, role: string, filamentId: number | null) =>
-	call<SpoolmanLinkResultDto>('PUT', sm(buildId, role), { filamentId });
-/** Choose (null clears) the spool of the linked filament that deductions start on. */
-export const setSpoolmanSpool = (buildId: string, role: string, spoolId: number | null) =>
-	call<{ spoolId: number | null }>('PUT', `${sm(buildId, role)}/spool`, { spoolId });
-/** Subtract the grams logged before the link from Spoolman, once. */
-export const prelinkDeduct = (buildId: string, role: string) =>
-	call<{ grams: number; warning?: string }>('POST', `${sm(buildId, role)}/prelink`);
-/** Give those grams back. */
-export const prelinkUndo = (buildId: string, role: string) =>
-	call<{ grams: number; warning?: string }>('DELETE', `${sm(buildId, role)}/prelink`);
-export const linkFilamentSpool = (
-	buildId: string,
-	role: string,
-	spoolId: number | null,
-	spoolName?: string
-) =>
-	call('PUT', `${b(buildId)}/filaments/${encodeURIComponent(role)}/spool`, { spoolId, spoolName });
 export const expectOnPrinter = (
 	printerId: string,
 	buildId: string,

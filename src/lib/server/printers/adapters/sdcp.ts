@@ -1,13 +1,12 @@
 import { isObj, type Obj } from '#lib/domain/guards.ts';
 /**
- * Elegoo SDCP (Smart Device Control Protocol v3) over WebSocket, read-only except for one
- * maintainer-approved write: Cmd 386 `{ Enable: 1 }` (camera on; port 3031 answers
- * `camera not ready` until the printer gets it). Every request is built by `sdcpEnvelope`, which
- * refuses any other command (`SDCP_ALLOWED_COMMANDS`).
+ * Elegoo SDCP (Smart Device Control Protocol v3) over WebSocket, through an OctoEverywhere shared
+ * link only, and strictly read-only. Every request is built by `sdcpEnvelope`, which refuses any
+ * command that is not a read (`SDCP_READ_COMMANDS`); there is no write command at all.
  *
- * Centauri Carbon (CC1): `ws://<ip>:3030/websocket`, JSON envelopes
+ * Centauri Carbon (CC1): `wss://<link host>/websocket`, JSON envelopes
  * `{ Id, Topic: 'sdcp/request/<MainboardID>', Data: { Cmd, Data, RequestID, MainboardID, TimeStamp, From } }`.
- * We only ever send Cmd 0 (status refresh) and Cmd 1 (attributes refresh); answers arrive on
+ * Through the link we send only Cmd 1 (attributes refresh), once; answers arrive on
  * `sdcp/status/<id>` and `sdcp/attributes/<id>`. Sources: Elegoo's SDCP v3 spec
  * (cbd-tech/SDCP-Smart-Device-Control-Protocol-V3.0.0), OpenCentauri, pycentauri docs and the
  * danielcherubini/elegoo-homeassistant integration. The FDM print-status codes are the
@@ -15,21 +14,9 @@ import { isObj, type Obj } from '#lib/domain/guards.ts';
  */
 import { randomBytes } from 'node:crypto';
 import type { PrinterFilament, PrinterStatus } from '#lib/printers/status.ts';
+import { shareLinkOf, shareLinkSocketUrl } from '#lib/printers/share-link.ts';
+import { MAX_REMOTE_MESSAGE_BYTES, resolveAllowed, safeFileName } from '../outbound';
 import {
-	SHARE_LINK_HOST_PLACEHOLDER,
-	shareLinkOf,
-	shareLinkSocketUrl
-} from '#lib/printers/share-link.ts';
-import { probeMainboardId } from '../discovery';
-import {
-	ipForUrl,
-	MAX_REMOTE_MESSAGE_BYTES,
-	OutboundError,
-	resolveAllowed,
-	safeFileName
-} from '../outbound';
-import {
-	backoff,
 	CONNECT_TIMEOUT_MS,
 	FLOODED_MESSAGE,
 	HostileGuard,
@@ -49,23 +36,19 @@ import { openSocket, type SocketLike, type SocketPin } from '../ws-client';
 /** Read-only commands: status refresh and attributes refresh. Always sent with empty data. */
 export const SDCP_READ_COMMANDS: readonly number[] = [0, 1];
 /**
- * The ONLY write commands this app may ever send, each with its one allowed payload. 386 turns
- * the camera on. Never add anything that moves, heats, pauses, stops or starts a print.
+ * Write commands this app may send: none. The app only observes; never add anything that turns
+ * something on or moves, heats, pauses, stops or starts a print.
  */
-export const SDCP_ALLOWED_COMMANDS: readonly number[] = [386];
-const SDCP_WRITE_PAYLOADS: Record<number, string> = { 386: JSON.stringify({ Enable: 1 }) };
+export const SDCP_ALLOWED_COMMANDS: readonly number[] = [];
 
 export class SdcpCommandError extends Error {}
 
-/** The one place an SDCP request is built: throws unless the command (and payload) is allowed. */
+/** The one place an SDCP request is built: throws unless the command is a read with no data. */
 export function sdcpEnvelope(cmd: number, data: Obj, mainboardId: string): string {
-	const isRead = SDCP_READ_COMMANDS.includes(cmd);
-	const isWrite = SDCP_ALLOWED_COMMANDS.includes(cmd);
-	if (!isRead && !isWrite) throw new SdcpCommandError(`SDCP command ${cmd} is not allowed`);
-	const payload = JSON.stringify(data);
-	if (isRead && payload !== '{}') throw new SdcpCommandError(`SDCP command ${cmd} takes no data`);
-	if (isWrite && payload !== SDCP_WRITE_PAYLOADS[cmd])
-		throw new SdcpCommandError(`SDCP command ${cmd} payload is not allowed`);
+	if (!SDCP_READ_COMMANDS.includes(cmd))
+		throw new SdcpCommandError(`SDCP command ${cmd} is not allowed`);
+	if (JSON.stringify(data) !== '{}')
+		throw new SdcpCommandError(`SDCP command ${cmd} takes no data`);
 	return JSON.stringify({
 		Id: mainboardId,
 		Topic: `sdcp/request/${mainboardId}`,
@@ -80,78 +63,6 @@ export function sdcpEnvelope(cmd: number, data: Obj, mainboardId: string): strin
 	});
 }
 
-/** Camera-on request text (Cmd 386 `{ Enable: 1 }`). */
-export const cameraOnEnvelope = (mainboardId: string) =>
-	sdcpEnvelope(386, { Enable: 1 }, mainboardId);
-
-/**
- * Turn the camera on over a short-lived socket of our own (used when no supervisor socket is
- * open): connect, send Cmd 386, wait briefly for the answer, close. True when it was sent.
- */
-export async function enableSdcpCamera(
-	cfg: PrinterConfig,
-	opts: { timeoutMs?: number; settleMs?: number } = {}
-): Promise<boolean> {
-	const timeout = opts.timeoutMs ?? 5000;
-	const settle = opts.settleMs ?? 1500;
-	// Through an OctoEverywhere link the camera needs no Cmd 386 (OctoEverywhere keeps the stream
-	// up), so no second socket is opened on the printer's own connection slots.
-	if (shareLinkOf(cfg.secrets)) return false;
-	if (cfg.host === SHARE_LINK_HOST_PLACEHOLDER) return false; // link missing: never dial the placeholder
-	let target;
-	try {
-		target = await resolveAllowed(cfg.host); // public mode / non-local address: refused here
-	} catch {
-		return false;
-	}
-	const id = cfg.secrets.mainboardId || (await probeMainboardId(cfg.host)) || '';
-	if (!id) return false;
-	return new Promise<boolean>((resolve) => {
-		let sock: SocketLike;
-		let sent = false;
-		let finished = false;
-		const done = (ok: boolean) => {
-			if (finished) return;
-			finished = true;
-			clearTimeout(t);
-			try {
-				sock.close();
-			} catch {
-				/* ignore */
-			}
-			resolve(ok);
-		};
-		const t = setTimeout(() => done(sent), timeout);
-		try {
-			sock = openSocket(`ws://${ipForUrl(target.ip)}:${cfg.port ?? 3030}/websocket`);
-		} catch {
-			clearTimeout(t);
-			return resolve(false);
-		}
-		sock.onopen = () => {
-			try {
-				sock.send(cameraOnEnvelope(id));
-				sent = true;
-				setTimeout(() => done(true), settle);
-			} catch {
-				done(false);
-			}
-		};
-		sock.onmessage = (ev) => {
-			// An oversized or non-text answer ends this short-lived socket at once.
-			if (
-				typeof ev.data !== 'string' ||
-				(ev.bytes ?? Buffer.byteLength(ev.data)) > MAX_REMOTE_MESSAGE_BYTES
-			)
-				return done(sent);
-			if (sent) done(true);
-		};
-		sock.onerror = () => done(sent);
-		sock.onclose = () => done(sent);
-	});
-}
-
-const POLL_MS = 4000;
 const STALE_MS = 20000;
 
 const PREP = new Set([1, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]);
@@ -264,9 +175,20 @@ export function extractFilaments(...sources: (Obj | undefined)[]): PrinterFilame
 
 export function connectSdcp(cfg: PrinterConfig): AdapterHandle {
 	const subj = new StatusSubject();
+	// OctoEverywhere shared link: the printer keeps its one connection to OctoEverywhere and we
+	// ride on it (wss, no port, no polling). Without a link nothing is dialled (`guarded`).
+	const found = shareLinkOf(cfg.secrets);
+	if (!found) {
+		subj.emit({
+			state: 'error',
+			progress: null,
+			message: 'The OctoEverywhere shared link is missing.'
+		});
+		return { status$: (cb) => subj.subscribe(cb), close: () => (subj.closed = true) };
+	}
+	const link = found;
 	let ws: SocketLike | null = null;
 	let attempt = 0;
-	let poll: ReturnType<typeof setInterval> | undefined;
 	let retry: ReturnType<typeof setTimeout> | undefined;
 	let stale: ReturnType<typeof setTimeout> | undefined;
 	let connectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -275,13 +197,10 @@ export function connectSdcp(cfg: PrinterConfig): AdapterHandle {
 	let attributes: Obj | undefined;
 	let lastStatus: Obj | undefined;
 
-	// OctoEverywhere shared link: the printer keeps its one connection to OctoEverywhere and we
-	// ride on it (wss, no port, no UDP discovery, no polling). Otherwise the printer's own socket.
-	const link = shareLinkOf(cfg.secrets);
 	let askedAttributes = false;
 
-	const send = (cmd: 0 | 1) => {
-		if (!ws || ws.readyState !== 1 || (link && !mainboardId)) return;
+	const send = (cmd: 1) => {
+		if (!ws || ws.readyState !== 1 || !mainboardId) return;
 		ws.send(sdcpEnvelope(cmd, {}, mainboardId));
 	};
 
@@ -300,7 +219,6 @@ export function connectSdcp(cfg: PrinterConfig): AdapterHandle {
 				/* ignore */
 			}
 		}
-		clearInterval(poll);
 		clearTimeout(stale);
 		clearTimeout(connectTimer);
 		if (subj.closed) return;
@@ -311,8 +229,7 @@ export function connectSdcp(cfg: PrinterConfig): AdapterHandle {
 	const armStale = () => {
 		clearTimeout(stale);
 		stale = setTimeout(() => {
-			if (!link) return dropSocket('No data from the printer');
-			// Link: report it, but keep the socket until the long silence limit.
+			// Report it, but keep the socket until the long silence limit.
 			subj.emit({ state: 'offline', progress: null, message: 'No data from the printer' });
 			stale = setTimeout(
 				() => dropSocket('No data from the printer'),
@@ -323,13 +240,12 @@ export function connectSdcp(cfg: PrinterConfig): AdapterHandle {
 
 	// A relay that accepts the upgrade and hangs up must not be re-dialled every few seconds:
 	// `attempt` resets only once a valid Status/Attributes frame arrived (see `gotData`).
-	const delay = () => (link ? linkBackoff(attempt++) : backoff(attempt++));
+	const delay = () => linkBackoff(attempt++);
 	const gotData = () => {
 		attempt = 0;
 	};
 
 	const scheduleReconnect = () => {
-		clearInterval(poll);
 		clearTimeout(stale);
 		if (subj.closed) return;
 		subj.emit({ state: 'offline', progress: null, message: 'Disconnected' });
@@ -342,30 +258,20 @@ export function connectSdcp(cfg: PrinterConfig): AdapterHandle {
 		let url: string;
 		let pin: SocketPin | undefined;
 		try {
-			// Resolved and validated on every (re)connect. LAN: the socket goes to the validated IP.
-			// Link: wss to the link host; every answer must be public and the socket is pinned to
-			// the validated address (SNI and certificate checks stay on for the link host).
-			if (link) {
-				const t = await resolveAllowed(link.host, undefined, { allowShareLink: true });
-				pin = { ip: t.ip, family: t.family, servername: link.host };
-				url = shareLinkSocketUrl(link.origin);
-			} else {
-				const t = await resolveAllowed(cfg.host);
-				url = `ws://${ipForUrl(t.ip)}:${cfg.port ?? 3030}/websocket`;
-			}
+			// Resolved and validated on every (re)connect: wss to the link host; every answer must be
+			// public and the socket is pinned to the validated address (SNI and certificate checks
+			// stay on for the link host).
+			const t = await resolveAllowed(link.host, undefined, { allowShareLink: true });
+			pin = { ip: t.ip, family: t.family, servername: link.host };
+			url = shareLinkSocketUrl(link.origin);
 		} catch (e) {
 			if (subj.closed) return;
 			subj.emit({ state: 'error', progress: null, message: safeError(e) });
-			// A hosted site never retries; a refused address may be fixed by DNS or an edit.
-			if (!(e instanceof OutboundError && e.kind === 'public'))
-				retry = setTimeout(() => void open(), link ? delay() : backoff(attempt++ + 3));
+			// A refused link may be fixed by DNS or an edit: try again on the slow link backoff.
+			retry = setTimeout(() => void open(), delay());
 			return;
 		}
 		if (subj.closed) return;
-		if (!mainboardId && !link) {
-			mainboardId = cleanMainboardId(await probeMainboardId(cfg.host));
-			if (subj.closed) return;
-		}
 		try {
 			ws = openSocket(url, pin ? { pin } : undefined);
 		} catch (e) {
@@ -384,7 +290,6 @@ export function connectSdcp(cfg: PrinterConfig): AdapterHandle {
 		const tooBig = (message = OVERSIZED_MESSAGE) => {
 			ws = null; // the close handler below then ignores this socket
 			sock.onmessage = null;
-			clearInterval(poll);
 			clearTimeout(stale);
 			try {
 				sock.close();
@@ -394,21 +299,14 @@ export function connectSdcp(cfg: PrinterConfig): AdapterHandle {
 			clearTimeout(connectTimer);
 			subj.emit({ state: 'error', progress: null, message });
 			clearTimeout(retry);
-			// Through a link: never faster than the slow link backoff either.
-			retry = setTimeout(
-				() => void open(),
-				Math.max(hostile.trip(), link ? linkBackoff(attempt++) : 0)
-			);
+			// Never faster than the slow link backoff either.
+			retry = setTimeout(() => void open(), Math.max(hostile.trip(), linkBackoff(attempt++)));
 		};
 		sock.onopen = () => {
 			clearTimeout(connectTimer);
 			armStale();
 			askedAttributes = false;
-			if (link) return; // OctoEverywhere pushes status by itself; the MainboardID comes with it
-			send(1);
-			send(0);
-			clearInterval(poll);
-			poll = setInterval(() => send(0), POLL_MS);
+			// OctoEverywhere pushes status by itself; the MainboardID comes with it.
 		};
 		sock.onmessage = (ev) => {
 			// Event-handler throws are uncaught exceptions: nothing remote-driven may escape.
@@ -438,7 +336,7 @@ export function connectSdcp(cfg: PrinterConfig): AdapterHandle {
 			}
 			// Through the link the id is known only once the first push arrives: ask for the
 			// attributes (Cmd 1, read-only) once, then rely on the pushed status.
-			if (link && mainboardId && !askedAttributes) {
+			if (mainboardId && !askedAttributes) {
 				askedAttributes = true;
 				send(1);
 			}
@@ -471,22 +369,8 @@ export function connectSdcp(cfg: PrinterConfig): AdapterHandle {
 
 	return {
 		status$: (cb) => subj.subscribe(cb),
-		/** Cmd 386 on our own open socket (the printer limits clients); a temporary one otherwise. */
-		enableCamera: async () => {
-			if (link) return false; // no Cmd 386 through OctoEverywhere
-			if (ws && ws.readyState === 1 && mainboardId) {
-				try {
-					ws.send(cameraOnEnvelope(mainboardId));
-					return true;
-				} catch {
-					return false;
-				}
-			}
-			return enableSdcpCamera(cfg);
-		},
 		close: () => {
 			subj.closed = true;
-			clearInterval(poll);
 			clearTimeout(retry);
 			clearTimeout(stale);
 			clearTimeout(connectTimer);

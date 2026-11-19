@@ -1,5 +1,4 @@
 import type { Page } from '@playwright/test';
-import { MockSdcp } from '../src/lib/server/printers/mock-sdcp';
 import { expect, test } from './fixtures';
 import { arrangeForCentauri, createBuild, ownerWithBuild } from './helpers';
 
@@ -100,56 +99,6 @@ async function openDialog(page: Page, buildId: string, designName: string) {
 	return dlg;
 }
 
-/**
- * A printer job that is printing right now and linked to `plateNumber` of the build, through the
- * SDCP mock (as printer-partial does). The caller stops the mock.
- */
-async function liveJob(page: Page, buildId: string, plateNumber: number) {
-	const mock = new MockSdcp();
-	await mock.start();
-	try {
-		const { organizationId } = (await (
-			await page.request.get(`/api/builds/${buildId}/printer-jobs`)
-		).json()) as { organizationId: string };
-		const created = await page.request.post('/api/printers', {
-			data: {
-				organizationId,
-				name: 'Shop Centauri',
-				kind: 'elegoo-sdcp',
-				host: '127.0.0.1',
-				port: mock.port,
-				secrets: { mainboardId: 'ABCDEF' }
-			}
-		});
-		expect(created.ok()).toBe(true);
-		mock.printing('benchy.gcode', 40);
-		let jobId = '';
-		await expect
-			.poll(
-				async () => {
-					const j = (await (
-						await page.request.get(`/api/builds/${buildId}/printer-jobs`)
-					).json()) as { jobs: { id: string }[] };
-					jobId = j.jobs[0]?.id ?? '';
-					return jobId;
-				},
-				{ timeout: 20_000 }
-			)
-			.not.toBe('');
-		const link = await page.request.post(`/api/printers/jobs/${jobId}`, {
-			data: { action: 'link', buildId, plateNumber }
-		});
-		expect(link.ok()).toBe(true);
-		await expect
-			.poll(async () => (await viewOf(page, buildId)).started.liveJobs)
-			.toBeGreaterThan(0);
-		return mock;
-	} catch (e) {
-		await mock.stop();
-		throw e;
-	}
-}
-
 test('colors only: slots recolor; plates, part states and locks stay; activity says so', async ({
 	page
 }) => {
@@ -248,33 +197,6 @@ test('replacing print files is off while a part is printing, on otherwise, and k
 	const after = await viewOf(page, idle);
 	expect(hexOf(after, 'primary')).toBe('#0044cc');
 	expect(after.allParts.find((p) => p.slug === locked)!.locked).toBe(true);
-});
-
-test('replacing print files is off while a printer job is live', async ({ page }) => {
-	test.setTimeout(120_000);
-	const { chapterUrl, buildId } = await ownerWithBuild(page, 'dstarted-live');
-	const name = `Live ${Date.now().toString(36)}`;
-	const designId = await makeDesign(page, chapterUrl, name);
-	const plate = (await viewOf(page, buildId)).plates[0].number;
-	const mock = await liveJob(page, buildId, plate);
-	try {
-		const dlg = await openDialog(page, buildId, name);
-		await expect(dlg.getByTestId('started-apply-blocked')).toBeVisible();
-		await expect(dlg.getByTestId('started-apply-full')).toBeDisabled();
-		await expect(dlg.getByTestId('started-apply-colors')).toBeEnabled();
-		await page.keyboard.press('Escape');
-
-		// The server agrees, with the confirmation too.
-		const full = await api(page, 'POST', `/api/designs/${designId}/apply`, {
-			buildId,
-			mode: 'full',
-			confirm: true
-		});
-		expect(full.status).toBe(409);
-		expect(full.body).toMatchObject({ code: 'build-started' });
-	} finally {
-		await mock.stop();
-	}
 });
 
 test('apply API: no mode asks (409), full while printing is refused, colors works', async ({
@@ -417,26 +339,5 @@ test.describe('plates under a started build', () => {
 		await expect(page.getByTestId('plates-refused')).toHaveCount(0);
 
 		expect(platesOf(await viewOf(page, buildId))).toBe(platesOf(before));
-	});
-
-	test('re-arranging is refused while a printer job is live', async ({ page }) => {
-		test.setTimeout(120_000);
-		const buildId = await startedArranged(page, 'dstarted-refused');
-		await moveAPart(page, buildId);
-		const before = await viewOf(page, buildId);
-		const mock = await liveJob(page, buildId, before.plates[0].number);
-		try {
-			await page.goto(`/builds/${buildId}/files`);
-			await expect(page.getByTestId('plates-refused')).toContainText(
-				'wait until the print finishes'
-			);
-			await expect(
-				page.getByTestId('stale-banner').getByRole('button', { name: 'Re-arrange plates' })
-			).toBeDisabled();
-			await expect(page.getByTestId('ask-dialog')).toHaveCount(0);
-			expect(platesOf(await viewOf(page, buildId))).toBe(platesOf(before));
-		} finally {
-			await mock.stop();
-		}
 	});
 });

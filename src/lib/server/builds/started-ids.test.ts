@@ -51,7 +51,7 @@ beforeEach(() => {
 	printerId = createPrinter(db, 'org1', 'owner', {
 		name: 'Shop Centauri',
 		kind: 'elegoo-sdcp',
-		host: '10.0.0.9',
+		secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
 		catalogId: 'elegoo-centauri-carbon'
 	}).id;
 	db.update(printers)

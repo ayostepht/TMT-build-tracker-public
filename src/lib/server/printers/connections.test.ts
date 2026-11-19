@@ -15,12 +15,11 @@ import { adapters } from './adapters';
 import { LINK_POLL_ACTIVE_MS, LINK_POLL_IDLE_MS } from './adapters/octoprint';
 import { resolveCameraSource, type CameraTarget } from './camera-source';
 import { MiniWsServer, sendJson } from './mini-ws';
-import { guardedFetch, resolveAllowed, setResolver, PUBLIC_MODE_MESSAGE } from './outbound';
+import { guardedFetch, LINK_ONLY_MESSAGE, resolveAllowed, setResolver } from './outbound';
 import { decryptSecrets } from './secrets';
 import { configFromInput, createPrinter, toPublic, updatePrinter } from './store';
 import { getSupervisor, startSupervisor, Supervisor, testConnection } from './supervisor';
 import { linkBackoff, type PrinterConfig } from './types';
-import { discoverSdcp } from './discovery';
 import { resetFakeSocket, useFakeSocket } from './ws-test';
 
 const HOST = 'shared-testtoken12345678.octoeverywhere.com';
@@ -96,7 +95,6 @@ const cfg = (kind: PrinterConfig['kind'], secrets: Record<string, string>): Prin
 	id: 'p',
 	kind,
 	host: 'octoeverywhere',
-	port: null,
 	secrets
 });
 function collect(h: ReturnType<(typeof adapters)['octoprint']>) {
@@ -152,7 +150,7 @@ describe('OctoPrint through an OctoEverywhere link', () => {
 		expect(asked).toEqual([]);
 	});
 
-	it('polls slower through a link than on the LAN, and an error does not shorten it', () => {
+	it('polls gently through a link, and an error does not shorten it', () => {
 		expect(LINK_POLL_ACTIVE_MS).toBeGreaterThanOrEqual(10_000);
 		expect(LINK_POLL_IDLE_MS).toBeGreaterThanOrEqual(30_000);
 	});
@@ -264,9 +262,6 @@ describe('Klipper (Moonraker) through an OctoEverywhere link', () => {
 describe('camera through an OctoEverywhere link (Klipper, OctoPrint)', () => {
 	const t = (o: Partial<CameraTarget>): CameraTarget => ({
 		kind: 'moonraker',
-		host: 'octoeverywhere',
-		port: null,
-		cameraUrl: null,
 		cameraEnabled: true,
 		secrets: { shareLink: LINK },
 		...o
@@ -301,22 +296,21 @@ describe('camera through an OctoEverywhere link (Klipper, OctoPrint)', () => {
 		});
 	});
 
-	it('OctoPrint: webcam settings through the link, key sent, a custom address ignored', async () => {
+	it('OctoPrint: webcam settings through the link, key sent', async () => {
 		const { calls, fetchFn } = fetchRecorder({
 			webcam: { webcamEnabled: true, streamUrl: '/webcam/?action=stream' }
 		});
 		const s = await resolveCameraSource(
 			t({
 				kind: 'octoprint',
-				secrets: { shareLink: LINK, apiKey: 'KEY' },
-				cameraUrl: 'http://10.0.0.5/x'
+				secrets: { shareLink: LINK, apiKey: 'KEY' }
 			}),
 			{ fetchFn }
 		);
 		expect(calls).toEqual([{ url: `${LINK}/api/settings`, allow: true }]);
 		expect(s?.urls).toEqual([`${LINK}/webcam/?action=stream`]);
 		expect(s?.shareLink).toBe(true);
-		// OctoPrint without a key has no camera (as on the LAN)
+		// OctoPrint without a key has no camera
 		expect(await resolveCameraSource(t({ kind: 'octoprint' }), { fetchFn })).toBeNull();
 	});
 
@@ -325,15 +319,9 @@ describe('camera through an OctoEverywhere link (Klipper, OctoPrint)', () => {
 		expect(await resolveCameraSource(t({ secrets: {} }), { fetchFn })).toBeNull();
 		expect(calls).toEqual([]);
 	});
-
-	it('a Bambu printer with a link secret has no camera and no link', async () => {
-		const { calls, fetchFn } = fetchRecorder({});
-		expect(await resolveCameraSource(t({ kind: 'bambu-lan' }), { fetchFn })).toBeNull();
-		expect(calls).toEqual([]);
-	});
 });
 
-describe('the printer store: link kinds, Bambu, manual', () => {
+describe('the printer store: link kinds, manual', () => {
 	const setup = () => {
 		const db = openDb(':memory:');
 		runMigrations(db);
@@ -356,7 +344,7 @@ describe('the printer store: link kinds, Bambu, manual', () => {
 			expect(row.host).toBe('octoeverywhere');
 			expect(row.secretEnc).not.toContain(HOST);
 			expect(decryptSecrets(row.secretEnc)).toEqual({ shareLink: LINK, apiKey: 'KEY' });
-			const pub = toPublic(row, true);
+			const pub = toPublic(row);
 			expect(JSON.stringify(pub)).not.toContain('shared-');
 			expect(pub.secretsSet.sort()).toEqual(['apiKey', 'shareLink']);
 			expect(pub.connection).toBe('link');
@@ -380,36 +368,28 @@ describe('the printer store: link kinds, Bambu, manual', () => {
 		expect(msg).not.toContain('evil.example');
 	});
 
-	it('Bambu LAN refuses a link with a clear message, on create, edit and test', () => {
+	it('a printer that is not on a link has no way in: no address, no Bambu LAN', () => {
 		const db = setup();
-		const m = /Bambu Lab printers cannot be reached through an OctoEverywhere link/;
-		expect(() =>
-			createPrinter(db, 'o', 'u1', { name: 'B', kind: 'bambu-lan', secrets: { shareLink: LINK } })
-		).toThrow(m);
-		const row = createPrinter(db, 'o', 'u1', {
-			name: 'B',
-			kind: 'bambu-lan',
-			host: '10.0.0.8',
-			secrets: { accessCode: 'C', serial: 'S' }
-		});
-		expect(() => updatePrinter(db, row.id, 'o', { secrets: { shareLink: LINK } })).toThrow(m);
-		expect(() => configFromInput(db, 'o', { id: row.id, secrets: { shareLink: LINK } })).toThrow(m);
-	});
-
-	it('Klipper on the LAN stays as it was (address, port, key)', () => {
-		const db = setup();
-		const row = createPrinter(db, 'o', 'u1', {
-			name: 'K',
-			kind: 'moonraker',
-			host: '10.0.0.7',
-			port: 7125,
-			secrets: { apiKey: 'KEY' }
-		});
-		expect(row).toMatchObject({ host: '10.0.0.7', port: 7125 });
-		expect(toPublic(row, true).connection).toBe('lan');
 		expect(() => createPrinter(db, 'o', 'u1', { name: 'K', kind: 'moonraker' })).toThrow(
-			/host|address/i
+			/shared link/i
 		);
+		expect(() =>
+			createPrinter(db, 'o', 'u1', {
+				name: 'K',
+				kind: 'moonraker',
+				host: '10.0.0.7',
+				port: 7125,
+				secrets: { apiKey: 'KEY' }
+			})
+		).toThrow(/shared link/i);
+		expect(() =>
+			createPrinter(db, 'o', 'u1', {
+				name: 'B',
+				kind: 'bambu-lan',
+				host: '10.0.0.8',
+				secrets: { accessCode: 'C', serial: 'S' }
+			})
+		).toThrow(/Unknown printer type/);
 	});
 
 	it('manual: a name is enough; no host, port, secrets or camera are kept', () => {
@@ -426,7 +406,7 @@ describe('the printer store: link kinds, Bambu, manual', () => {
 		expect(row).toMatchObject({ kind: 'manual', host: 'manual', port: null, secretEnc: null });
 		expect(row.cameraUrl).toBeNull();
 		expect(row.cameraEnabled).toBe(false);
-		const pub = toPublic(row, true);
+		const pub = toPublic(row);
 		expect(pub).toMatchObject({
 			connection: 'manual',
 			blocked: null,
@@ -441,16 +421,15 @@ describe('the printer store: link kinds, Bambu, manual', () => {
 		expect(configFromInput(db, 'o', { id: row.id })).toMatchObject({ kind: 'manual', secrets: {} });
 	});
 
-	it('manual to connected needs an address; connected to manual drops everything', () => {
+	it('manual to connected needs a link; connected to manual drops everything', () => {
 		const db = setup();
 		const m = createPrinter(db, 'o', 'u1', { name: 'M', kind: 'manual' });
-		expect(() => updatePrinter(db, m.id, 'o', { kind: 'octoprint' })).toThrow(/address/i);
+		expect(() => updatePrinter(db, m.id, 'o', { kind: 'octoprint' })).toThrow(/shared link/i);
 		const up = updatePrinter(db, m.id, 'o', {
 			kind: 'octoprint',
-			host: '10.0.0.6',
-			secrets: { apiKey: 'K' }
+			secrets: { apiKey: 'K', shareLink: LINK }
 		});
-		expect(up).toMatchObject({ kind: 'octoprint', host: '10.0.0.6' });
+		expect(up).toMatchObject({ kind: 'octoprint', host: 'octoeverywhere' });
 		const back = updatePrinter(db, m.id, 'o', { kind: 'manual' });
 		expect(back).toMatchObject({ kind: 'manual', host: 'manual', secretEnc: null, port: null });
 	});
@@ -468,18 +447,15 @@ describe('the printer store: link kinds, Bambu, manual', () => {
 			'elegoo-sdcp': fake('elegoo'),
 			moonraker: fake('moonraker'),
 			octoprint: fake('octoprint'),
-			'bambu-lan': fake('bambu'),
 			manual: fake('manual')
 		});
 		sup.start();
 		expect(dialled).toEqual(['octoprint']);
 		expect(sup.size).toBe(1);
 		sup.stop();
-		const r = await testConnection(
-			{ id: 't', kind: 'manual', host: 'manual', port: null, secrets: {} },
-			500,
-			{ manual: fake('manual') } as never
-		);
+		const r = await testConnection({ id: 't', kind: 'manual', host: 'manual', secrets: {} }, 500, {
+			manual: fake('manual')
+		} as never);
 		expect(r).toMatchObject({ ok: false, message: expect.stringMatching(/not connected/) });
 		expect(dialled).toEqual(['octoprint']);
 		expect(getSupervisor).toBeDefined();
@@ -487,7 +463,7 @@ describe('the printer store: link kinds, Bambu, manual', () => {
 	});
 
 	it('the manual adapter in the registry opens nothing and reports nothing', () => {
-		const h = adapters.manual({ id: 'p', kind: 'manual', host: 'manual', port: null, secrets: {} });
+		const h = adapters.manual({ id: 'p', kind: 'manual', host: 'manual', secrets: {} });
 		const seen: unknown[] = [];
 		h.status$((s) => seen.push(s));
 		expect(seen).toEqual([]);
@@ -495,7 +471,7 @@ describe('the printer store: link kinds, Bambu, manual', () => {
 	});
 });
 
-describe('hosted site (TMT_MODE=public)', () => {
+describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 	beforeEach(() => vi.stubEnv('TMT_MODE', 'public'));
 	const setup = () => {
 		vi.stubEnv('TMT_MODE', 'public');
@@ -510,14 +486,14 @@ describe('hosted site (TMT_MODE=public)', () => {
 		return db;
 	};
 
-	it('allows link printers of the three kinds and manual ones; refuses every LAN printer', () => {
+	it('allows link printers of the three kinds and manual ones; refuses every address', () => {
 		const db = setup();
 		for (const kind of ['elegoo-sdcp', 'moonraker', 'octoprint'] as const)
 			expect(
 				createPrinter(db, 'o2', 'u1', { name: kind, kind, secrets: { shareLink: LINK } }).host
 			).toBe('octoeverywhere');
 		expect(createPrinter(db, 'o', 'u1', { name: 'M', kind: 'manual' }).kind).toBe('manual');
-		for (const kind of ['elegoo-sdcp', 'moonraker', 'octoprint', 'bambu-lan'] as const)
+		for (const kind of ['elegoo-sdcp', 'moonraker', 'octoprint'] as const)
 			expect(() =>
 				createPrinter(db, 'o', 'u1', {
 					name: 'x',
@@ -525,10 +501,10 @@ describe('hosted site (TMT_MODE=public)', () => {
 					host: '192.168.0.5',
 					secrets: { apiKey: 'k' }
 				})
-			).toThrow(PUBLIC_MODE_MESSAGE);
+			).toThrow(/shared link/i);
 		expect(() =>
 			createPrinter(db, 'o', 'u1', { name: 'x', kind: 'bambu-lan', secrets: { shareLink: LINK } })
-		).toThrow(/Bambu Lab/);
+		).toThrow(/Unknown printer type/);
 		expect(db.select().from(printers).all()).toHaveLength(4);
 	});
 
@@ -585,11 +561,11 @@ describe('hosted site (TMT_MODE=public)', () => {
 			secrets: { shareLink: LINK }
 		});
 		expect(() => updatePrinter(db, link.id, 'o', { secrets: { shareLink: '' } })).toThrow(
-			PUBLIC_MODE_MESSAGE
+			/shared link/i
 		);
 		expect(() =>
 			updatePrinter(db, link.id, 'o', { host: '192.168.0.5', secrets: { shareLink: '' } })
-		).toThrow(PUBLIC_MODE_MESSAGE);
+		).toThrow(/shared link/i);
 		expect(updatePrinter(db, link.id, 'o', { name: 'Renamed', enabled: false }).enabled).toBe(
 			false
 		);
@@ -600,14 +576,14 @@ describe('hosted site (TMT_MODE=public)', () => {
 			.returning()
 			.get();
 		expect(updatePrinter(db, lan.id, 'o', { name: 'older', enabled: false }).name).toBe('older');
-		expect(() => updatePrinter(db, lan.id, 'o', { enabled: true })).toThrow(PUBLIC_MODE_MESSAGE);
-		expect(toPublic(lan, true)).toMatchObject({ connection: 'lan', blocked: PUBLIC_MODE_MESSAGE });
+		expect(() => updatePrinter(db, lan.id, 'o', { enabled: true })).toThrow(/shared link/i);
+		expect(toPublic(lan)).toMatchObject({ connection: 'link', blocked: LINK_ONLY_MESSAGE });
 	});
 
 	it('connection tests: a link is allowed (resolves the link only); a LAN address is refused', () => {
 		const db = setup();
 		expect(() => configFromInput(db, 'o', { kind: 'moonraker', host: '192.168.0.5' })).toThrow(
-			PUBLIC_MODE_MESSAGE
+			/shared link/i
 		);
 		expect(
 			configFromInput(db, 'o', { kind: 'octoprint', secrets: { shareLink: LINK, apiKey: 'k' } })
@@ -654,11 +630,10 @@ describe('hosted site (TMT_MODE=public)', () => {
 				id: 'p',
 				kind: 'octoprint',
 				host: '192.168.0.5',
-				port: null,
 				secrets: { apiKey: 'K' }
 			})
 		);
-		expect(lan).toEqual([{ state: 'error', progress: null, message: PUBLIC_MODE_MESSAGE }]);
+		expect(lan).toEqual([{ state: 'error', progress: null, message: LINK_ONLY_MESSAGE }]);
 		expect(asked.every((a) => a.hostname === HOST)).toBe(true);
 	});
 
@@ -681,7 +656,6 @@ describe('hosted site (TMT_MODE=public)', () => {
 			'elegoo-sdcp': fake('elegoo'),
 			moonraker: fake('moonraker'),
 			octoprint: fake('octoprint'),
-			'bambu-lan': fake('bambu'),
 			manual: fake('manual')
 		});
 		sup.start();
@@ -689,32 +663,29 @@ describe('hosted site (TMT_MODE=public)', () => {
 		sup.stop();
 	});
 
-	it('camera: a link printer has a source; a LAN one is refused before any request', async () => {
+	it('camera: a link printer has a source; one without a link has none and nothing is requested', async () => {
 		const calls: string[] = [];
 		const fetchFn = (async (u: string) => {
 			calls.push(String(u));
 			return new Response(JSON.stringify({ result: { webcams: [{ stream_url: '/w' }] } }));
 		}) as unknown as typeof fetch;
-		const base = { port: null, cameraUrl: null, cameraEnabled: true };
 		const s = await resolveCameraSource(
-			{ ...base, kind: 'moonraker', host: 'octoeverywhere', secrets: { shareLink: LINK } },
+			{ kind: 'moonraker', cameraEnabled: true, secrets: { shareLink: LINK } },
 			{ fetchFn }
 		);
 		expect(s?.urls).toEqual([`${LINK}/w`]);
-		await expect(
-			resolveCameraSource(
-				{ ...base, kind: 'moonraker', host: '10.0.0.7', secrets: {} },
+		expect(
+			await resolveCameraSource(
+				{ kind: 'moonraker', cameraEnabled: true, secrets: {} },
 				{ fetchFn }
 			)
-		).rejects.toMatchObject({ kind: 'public' });
+		).toBeNull();
 		expect(calls).toHaveLength(1);
 	});
 
-	it('discovery and Spoolman stay refused', async () => {
-		vi.stubEnv('TMT_MODE', 'public'); // set first: discovery must refuse before any socket opens
-		await expect(discoverSdcp({ timeoutMs: 50 })).rejects.toThrow(PUBLIC_MODE_MESSAGE);
+	it('a call that does not allow a link is refused', async () => {
 		const { assertOutboundAllowed } = await import('./outbound');
-		expect(() => assertOutboundAllowed()).toThrow(PUBLIC_MODE_MESSAGE);
+		expect(() => assertOutboundAllowed()).toThrow(LINK_ONLY_MESSAGE);
 	});
 });
 

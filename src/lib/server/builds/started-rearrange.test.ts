@@ -89,7 +89,7 @@ describe('design changes on a started build keep the plates', () => {
 				const printerId = createPrinter(db, orgId, 'owner', {
 					name: 'Shop',
 					kind: 'elegoo-sdcp',
-					host: '10.0.0.9',
+					secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
 					catalogId: 'elegoo-centauri-carbon'
 				}).id;
 				db.insert(printerJobs)
@@ -131,7 +131,7 @@ describe('design changes on a started build keep the plates', () => {
 		const printerId = createPrinter(db, orgId, 'owner', {
 			name: 'Shop',
 			kind: 'elegoo-sdcp',
-			host: '10.0.0.9',
+			secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
 			catalogId: 'elegoo-centauri-carbon'
 		}).id;
 		db.insert(printerJobs)

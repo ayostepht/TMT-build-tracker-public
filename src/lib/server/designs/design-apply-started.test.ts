@@ -110,7 +110,7 @@ const liveJob = (id: string) => {
 	const printerId = createPrinter(db, orgId, 'owner', {
 		name: 'Shop',
 		kind: 'elegoo-sdcp',
-		host: '10.0.0.9',
+		secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
 		catalogId: 'elegoo-centauri-carbon'
 	}).id;
 	db.insert(printerJobs)
@@ -126,7 +126,7 @@ const liveJob = (id: string) => {
 };
 
 describe('Colors only (design.recolor)', () => {
-	it('changes hexes only: plates, part roles, locks, spools and Spoolman stay', () => {
+	it('changes hexes only: plates, part roles, locks and spools stay', () => {
 		const d = makeDesign();
 		const id = mk();
 		startReprint(id);
@@ -134,8 +134,7 @@ describe('Colors only (design.recolor)', () => {
 		db.update(buildFilaments)
 			.set({
 				spools: 3,
-				spoolAdds: [{ id: 'a', kg: 1, at: '2026-01-01', by: 'x' } as never],
-				spoolmanSpoolId: 42
+				spoolAdds: [{ id: 'a', kg: 1, at: '2026-01-01', by: 'x' } as never]
 			})
 			.where(and(eq(buildFilaments.buildId, id), eq(buildFilaments.roleKey, 'accent')))
 			.run();
@@ -158,15 +157,14 @@ describe('Colors only (design.recolor)', () => {
 		expect(v.allParts.filter((p) => p.locked).map((p) => p.slug)).toEqual(lockedBefore);
 		expect(v.runs).toEqual(before.runs);
 		expect(v.state['handle-left'].status).toBe('Reprint');
-		// the accent slot keeps its spools, adds and Spoolman link although it is Lime now
-		expect(fil(id, 'accent')).toMatchObject({ name: 'Lime', spools: 3, spoolmanSpoolId: 42 });
+		// the accent slot keeps its spools and adds although it is Lime now
+		expect(fil(id, 'accent')).toMatchObject({ name: 'Lime', spools: 3 });
 		expect(fil(id, 'accent').spoolAdds).toHaveLength(1);
 		expect(plan.keptStock).toContainEqual({
 			role: 'accent',
 			name: 'Lime',
 			was: before.filaments.find((f) => f.key === 'accent')!.name,
-			spools: 4,
-			spoolman: true
+			spools: 4
 		});
 		const row = lastKind(id);
 		expect(row.kind).toBe('design.recolor');

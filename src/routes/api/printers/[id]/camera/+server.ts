@@ -12,7 +12,7 @@ export const GET: RequestHandler = (event) =>
 		const db = getDb();
 		const { row } = printerForMember(db, event.params.id, requireUserId(event));
 		const supported = cameraSupported(row.kind as PrinterKind);
-		// Hosted site: only a printer on an OctoEverywhere link has a camera; for any other the
+		// Only a printer on an OctoEverywhere link has a camera; for any other the
 		// refusal means no tile (sourceFor throws a 403 there, which is "no camera" here).
 		let src = null;
 		if (supported && row.cameraEnabled)

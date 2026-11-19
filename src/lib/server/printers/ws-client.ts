@@ -109,7 +109,8 @@ class WsSocket implements SocketLike {
 	}
 }
 
-const realFactory: SocketFactory = (url, opts) =>
+/** The real `ws` client; exported only so tests can point it at a loopback server. */
+export const realFactory: SocketFactory = (url, opts) =>
 	new WsSocket(url, opts?.pin, opts?.handshakeTimeoutMs);
 let factory: SocketFactory = realFactory;
 

@@ -1,12 +1,22 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDb, runMigrations } from '../db';
 import { organization, user } from '../db/schema';
-import { ApiError } from '../access';
 import { CameraHub, CameraError, grabFrame, streamResponse } from './camera';
 import { resolveCameraSource, type CameraSource, type CameraTarget } from './camera-source';
 import { fakeJpeg, MockCamera } from './mock-camera';
 import { boundaryOf, cleanJpeg, MjpegParser } from './mjpeg';
 import { createPrinter, toPublic, updatePrinter } from './store';
+import { fetchPinned, type ResolvedTarget } from './outbound';
+
+// The hub talks to a loopback mock camera: `fetchPinned` connects without validating, so the
+// hub and the frame parsing can be tested (production always goes through `guardedFetch`).
+const LOOP: ResolvedTarget = { host: '127.0.0.1', ip: '127.0.0.1', family: 4, literal: true };
+const loopFetch = ((u: string | URL | Request, init?: RequestInit) =>
+	fetchPinned(
+		new URL(typeof u === 'string' || u instanceof URL ? u : u.url),
+		LOOP,
+		init
+	)) as typeof fetch;
 
 const cleanup: (() => unknown)[] = [];
 afterEach(async () => {
@@ -139,14 +149,13 @@ describe('MJPEG parser', () => {
 	});
 });
 
-describe('camera source defaults', () => {
+describe('camera source (through an OctoEverywhere link)', () => {
+	const HOST = 'shared-testtoken12345678.octoeverywhere.com';
+	const LINK = `https://${HOST}`;
 	const t = (o: Partial<CameraTarget>): CameraTarget => ({
 		kind: 'elegoo-sdcp',
-		host: '10.0.0.5',
-		port: null,
-		cameraUrl: null,
 		cameraEnabled: true,
-		secrets: {},
+		secrets: { shareLink: LINK },
 		...o
 	});
 	const jsonFetch =
@@ -157,27 +166,21 @@ describe('camera source defaults', () => {
 			return new Response(JSON.stringify(payload), { status: 200 });
 		};
 
-	it('Elegoo SDCP: http://<host>:3031/video, no network needed', async () => {
+	it('Elegoo SDCP: the link /video, no network needed', async () => {
 		const s = await resolveCameraSource(t({}), { fetchFn: () => Promise.reject(new Error('no')) });
 		expect(s).toEqual({
-			urls: ['http://10.0.0.5:3031/video'],
+			urls: [`${LINK}/video`],
 			origin: 'default',
-			host: '10.0.0.5'
+			host: HOST,
+			shareLink: true
 		});
 	});
-	it('a custom URL wins, but only on the printer host', async () => {
-		const ok = await resolveCameraSource(t({ cameraUrl: 'http://10.0.0.5:8080/s' }));
-		expect(ok?.origin).toBe('custom');
-		expect(ok?.urls).toEqual(['http://10.0.0.5:8080/s']);
-		expect(await resolveCameraSource(t({ cameraUrl: 'http://10.0.0.99/s' }))).toBeNull();
-	});
-	it('off and Bambu give no camera', async () => {
+	it('off, manual and a printer with no link give no camera', async () => {
 		expect(await resolveCameraSource(t({ cameraEnabled: false }))).toBeNull();
-		expect(
-			await resolveCameraSource(t({ kind: 'bambu-lan', cameraUrl: 'http://10.0.0.5/x' }))
-		).toBeNull();
+		expect(await resolveCameraSource(t({ kind: 'manual' }))).toBeNull();
+		expect(await resolveCameraSource(t({ secrets: {} }))).toBeNull();
 	});
-	it('Moonraker: webcam list, relative URLs resolve against the host, foreign hosts dropped', async () => {
+	it('Moonraker: webcam list, relative URLs resolve against the link, foreign hosts dropped', async () => {
 		const seen: { url?: string; headers?: unknown } = {};
 		const fetchFn = jsonFetch(
 			{
@@ -195,14 +198,15 @@ describe('camera source defaults', () => {
 			seen
 		);
 		const s = await resolveCameraSource(
-			t({ kind: 'moonraker', port: null, secrets: { apiKey: 'k' } }),
+			t({ kind: 'moonraker', secrets: { shareLink: LINK, apiKey: 'k' } }),
 			{ fetchFn: fetchFn as typeof fetch }
 		);
-		expect(seen.url).toBe('http://10.0.0.5:7125/server/webcams/list');
+		expect(seen.url).toBe(`${LINK}/server/webcams/list`);
 		expect(s).toEqual({
-			urls: ['http://10.0.0.5/webcam/?action=stream'],
+			urls: [`${LINK}/webcam/?action=stream`],
 			origin: 'moonraker',
-			host: '10.0.0.5'
+			host: HOST,
+			shareLink: true
 		});
 	});
 	it('Moonraker with no webcams, or an error: none', async () => {
@@ -220,27 +224,27 @@ describe('camera source defaults', () => {
 		const payload = {
 			webcam: { streamUrl: '/webcam/?action=stream', snapshotUrl: '/webcam/?action=snapshot' }
 		};
-		const s = await resolveCameraSource(t({ kind: 'octoprint', secrets: { apiKey: 'abc' } }), {
-			fetchFn: jsonFetch(payload, seen) as typeof fetch
-		});
-		expect(seen.url).toBe('http://10.0.0.5:80/api/settings');
-		expect(s?.urls).toEqual([
-			'http://10.0.0.5/webcam/?action=stream',
-			'http://10.0.0.5/webcam/?action=snapshot'
-		]);
+		const s = await resolveCameraSource(
+			t({ kind: 'octoprint', secrets: { shareLink: LINK, apiKey: 'abc' } }),
+			{ fetchFn: jsonFetch(payload, seen) as typeof fetch }
+		);
+		expect(seen.url).toBe(`${LINK}/api/settings`);
+		expect(s?.urls).toEqual([`${LINK}/webcam/?action=stream`, `${LINK}/webcam/?action=snapshot`]);
 		expect(
 			await resolveCameraSource(t({ kind: 'octoprint' }), {
 				fetchFn: jsonFetch(payload) as typeof fetch
 			})
 		).toBeNull();
-		const denied = await resolveCameraSource(t({ kind: 'octoprint', secrets: { apiKey: 'abc' } }), {
-			fetchFn: (async () => new Response('', { status: 403 })) as typeof fetch
-		});
+		const denied = await resolveCameraSource(
+			t({ kind: 'octoprint', secrets: { shareLink: LINK, apiKey: 'abc' } }),
+			{ fetchFn: (async () => new Response('', { status: 403 })) as typeof fetch }
+		);
 		expect(denied).toBeNull();
 	});
 });
 
-describe('saving a camera URL (SSRF guard)', () => {
+describe('camera settings on a saved printer', () => {
+	const LINK = 'https://shared-testtoken12345678.octoeverywhere.com';
 	function setup() {
 		const db = openDb(':memory:');
 		runMigrations(db);
@@ -248,49 +252,23 @@ describe('saving a camera URL (SSRF guard)', () => {
 		db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() }).run();
 		return db;
 	}
-	const base = { name: 'P', kind: 'elegoo-sdcp', host: '10.0.0.5' };
-	it('accepts same-host URLs, refuses everything else with 400', () => {
+	const base = { name: 'P', kind: 'elegoo-sdcp', secrets: { shareLink: LINK } };
+	it('a custom camera address is never stored, on create or edit', () => {
 		const db = setup();
 		const row = createPrinter(db, 'o', 'u1', { ...base, cameraUrl: 'http://10.0.0.5:8080/s' });
-		expect(row.cameraUrl).toBe('http://10.0.0.5:8080/s');
-		for (const bad of [
-			'http://10.0.0.6/s',
-			'http://169.254.169.254/',
-			'file:///etc/passwd',
-			'nonsense'
-		]) {
-			expect(() => createPrinter(db, 'o', 'u1', { ...base, cameraUrl: bad })).toThrow(ApiError);
-			try {
-				updatePrinter(db, row.id, 'o', { cameraUrl: bad });
-			} catch (e) {
-				expect((e as ApiError).status).toBe(400);
-			}
-		}
-		expect(() => updatePrinter(db, row.id, 'o', { cameraUrl: 'http://10.0.0.6/s' })).toThrow(
-			/same address/
-		);
-		// still the old value
-		expect(updatePrinter(db, row.id, 'o', { name: 'Q' }).cameraUrl).toBe('http://10.0.0.5:8080/s');
+		expect(row.cameraUrl).toBeNull();
+		expect(updatePrinter(db, row.id, 'o', { cameraUrl: 'http://10.0.0.6/s' }).cameraUrl).toBeNull();
+		const view = JSON.stringify(toPublic(row));
+		expect(view).not.toContain('cameraUrl');
+		expect(view).not.toContain('10.0.0.5');
 	});
-	it('blank clears; host change needs a matching camera; Bambu refuses', () => {
+	it('the camera can be switched off; a manual printer has none', () => {
 		const db = setup();
-		const row = createPrinter(db, 'o', 'u1', { ...base, cameraUrl: 'http://10.0.0.5:8080/s' });
-		expect(() => updatePrinter(db, row.id, 'o', { host: '10.0.0.7' })).toThrow(ApiError);
-		const moved = updatePrinter(db, row.id, 'o', { host: '10.0.0.7', cameraUrl: '' });
-		expect(moved.cameraUrl).toBeNull();
-		expect(() =>
-			createPrinter(db, 'o', 'u1', { ...base, kind: 'bambu-lan', cameraUrl: 'http://10.0.0.5/x' })
-		).toThrow(/no camera support/);
-	});
-	it('only editors see the override in the public view', () => {
-		const db = setup();
-		const row = createPrinter(db, 'o', 'u1', {
-			...base,
-			cameraUrl: 'http://10.0.0.5:8080/s?token=abc'
-		});
-		expect(toPublic(row).cameraUrl).toBeNull();
-		expect(toPublic(row, true).cameraUrl).toBe('http://10.0.0.5:8080/s?token=abc');
+		const row = createPrinter(db, 'o', 'u1', { ...base });
 		expect(toPublic(row).cameraEnabled).toBe(true);
+		expect(updatePrinter(db, row.id, 'o', { cameraEnabled: false }).cameraEnabled).toBe(false);
+		const m = createPrinter(db, 'o', 'u1', { name: 'M', kind: 'manual' });
+		expect(m.cameraEnabled).toBe(false);
 	});
 });
 
@@ -310,12 +288,13 @@ describe('camera hub', () => {
 			stallTimeoutMs: 400,
 			backoffBaseMs: 20,
 			backoffMaxMs: 60,
+			fetchFn: loopFetch,
 			...opts
 		});
 		cleanup.push(() => hub.closeAll());
 		const src = (path = '/video'): CameraSource => ({
 			urls: [cam.url(path)],
-			origin: 'custom',
+			origin: 'default',
 			host: '127.0.0.1'
 		});
 		return { cam, hub, src };
@@ -434,7 +413,7 @@ describe('camera hub', () => {
 		const { cam, hub } = await rig();
 		const s = hub.session('p1', async () => ({
 			urls: [cam.url('/video')],
-			origin: 'custom' as const,
+			origin: 'default' as const,
 			host: '10.9.9.9' // not the camera's host
 		}));
 		await expect(s.snapshot()).rejects.toThrow(/away from the printer/);
@@ -466,10 +445,10 @@ describe('camera hub', () => {
 
 	it('grabFrame fetches one frame without a hub', async () => {
 		const { cam, src } = await rig();
-		const f = await grabFrame(src());
+		const f = await grabFrame(src(), { fetchFn: loopFetch });
 		expect(f[0]).toBe(0xff);
 		await until(() => cam.active === 0);
-		const j = await grabFrame(src('/snapshot'));
+		const j = await grabFrame(src('/snapshot'), { fetchFn: loopFetch });
 		expect(j[1]).toBe(0xd8);
 	});
 

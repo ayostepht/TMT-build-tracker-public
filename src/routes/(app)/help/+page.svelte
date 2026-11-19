@@ -158,7 +158,7 @@
 			Connecting a printer is optional. With one connected you see live progress next to the plate,
 			the print that is running is linked to its plate for you, and, if you switch it on, finished
 			prints are logged automatically. The app only reads from a printer: it never starts, stops,
-			pauses or moves one (the single exception is turning the camera on).
+			pauses, moves or switches anything on.
 		</p>
 		<p>
 			Do it in your workspace under <b>Integrations</b> → <b>Add a printer</b>. The page lists the
@@ -166,20 +166,10 @@
 		</p>
 		<ul class="help-list">
 			<li>
-				<b>Elegoo on your network</b>: Elegoo printers such as the Centauri Carbon, straight over
-				your home or shop network, with status and camera. In regular use.
-			</li>
-			<li>
 				<b>OctoEverywhere link</b>: paste an OctoEverywhere shared link for an Elegoo, Klipper or
-				OctoPrint printer, so the app can see it from anywhere. In regular use for Elegoo; Klipper
-				and OctoPrint through a link are new.
-			</li>
-			<li>
-				<b>Klipper (Moonraker)</b> and <b>OctoPrint</b>: printers running those, over your network.
-				New, so tell us if something is off.
-			</li>
-			<li>
-				<b>Bambu Lab (LAN mode)</b>: Bambu printers in LAN mode, status only, no camera. New.
+				OctoPrint printer, so the app can see it from anywhere, with status and camera. In regular
+				use for Elegoo; Klipper and OctoPrint through a link are new, so tell us if something is
+				off.
 			</li>
 			<li>
 				<b>Not connected</b>: just a name for a printer the app cannot reach. Pick it when logging a
@@ -187,9 +177,8 @@
 			</li>
 		</ul>
 		<p class="muted">
-			A hosted site cannot reach a printer's address on your own network, so there you can use an
-			OctoEverywhere link (which works from anywhere) or a not-connected printer. A copy you run
-			yourself can use all of them, and Spoolman as well.
+			The app never connects to a printer's own address on your network: a printer is reached
+			through an OctoEverywhere link, or it is not connected at all.
 		</p>
 	</section>
 
@@ -243,10 +232,9 @@
 			<details>
 				<summary>Does the app control my printer?</summary>
 				<p>
-					No. Printers are read-only. The app reads status and progress. The one thing it can send
-					is the command that turns the printer's camera on, and only on Elegoo printers. It never
-					moves, heats, pauses, stops or starts anything, so you always start a print on the
-					printer.
+					No. Printers are read-only. The app reads status and progress and sends no command at all:
+					it never moves, heats, pauses, stops or starts anything, so you always start a print on
+					the printer.
 				</p>
 			</details>
 			<details>
