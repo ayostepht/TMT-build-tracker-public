@@ -6,6 +6,8 @@ body:
   - type: markdown
     attributes:
       value: |
+        This tracker is for the hosted edition (the public site, or your own hosted deployment of this repository). For the self-hosted edition (SQLite, Unraid, LAN printers), use https://github.com/ayostepht/TMT-Build-Tracker/issues instead.
+
         Please do not paste access codes, API keys, shared links or secrets. For a security problem, do not open an issue: see SECURITY.md.
   - type: textarea
     id: did
@@ -36,8 +38,8 @@ body:
   - type: input
     id: setup
     attributes:
-      label: How you run it
-      description: Docker, Compose or Unraid; with or without a reverse proxy; PUBLIC_URL set or not.
+      label: Where you use it
+      description: The public site, or your own deployment (Fly.io, Railway, your own server with a Cloudflare Tunnel or another proxy).
     validations:
       required: true
   - type: input

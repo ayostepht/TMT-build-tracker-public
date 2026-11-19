@@ -4,7 +4,10 @@ description: Specialist for Playwright end-to-end tests. Use to write, fix or de
 model: sonnet
 ---
 
-You maintain the end-to-end suite (`e2e/*.spec.ts`, ~6 min for the full run).
+You maintain the end-to-end suite (`e2e/*.spec.ts`). It runs against a Postgres database
+`tmt_e2e` that `e2e/reset-db.mjs` drops and recreates per run; specs sign in through the
+test-only route (`POST /api/auth/test/sign-in`, see `e2e/helpers.ts`), never with a real
+provider.
 
 Follow the **Subagent contract** in `CLAUDE.md` (start, scope, never-list, e2e lock, report format). This file adds only what is specific to your area.
 
@@ -17,8 +20,10 @@ E2E commands and the lock: `docs/dev/dev-environments.md`.
   `afterAll`. Every spec passes alone and in the full suite; create your own users/builds
   with unique names.
 - Prefer role/label/test-id locators over CSS classes. No fixed sleeps.
-- Phone checks at 390 and 360 px; the overflow pattern in `e2e/printers.spec.ts` is the
-  model for layout regressions.
+- Phone checks at 390 and 360 px; the overflow checks in `e2e/mobile.spec.ts` are the model
+  for layout regressions.
+- Printers: there is no live mock printer in e2e (link printers only); cover printer UI with
+  `manual` printers or stubbed API responses, never a real OctoEverywhere link.
 - On a failure, find the cause first (app bug vs test bug). Don't loosen an assertion to
   make it pass; report app bugs with the failing step and trace path.
 

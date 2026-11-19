@@ -1,8 +1,11 @@
 # Public hosted site: plan and progress
 
-Track: branch `public-site/main`, work branches `public-site/<topic>` (started 2026-11-19 as `claude/elegant-fermi-ea7mci`). Separate from the self-hosted
-0.9.x line on `edge`/`main`, which this work never touches. This file is the handoff for this
-track: rewrite the "Progress" section in place as work lands.
+Track: built on a branch of the self-hosted repository (started 2026-11-19), then split into
+this repository, `ayostepht/TMT-build-tracker-public`, whose `main` is the hosted site. The
+self-hosted 0.9.x line stays in
+[ayostepht/TMT-Build-Tracker](https://github.com/ayostepht/TMT-Build-Tracker). This file is
+the record of how the hosted edition was planned and built; current state and open items now
+live in `docs/dev/STATUS.md` and `docs/dev/HANDOFF.md`.
 
 ## Goal
 
@@ -82,20 +85,20 @@ verifier close each wave.
 - Wave 2 merged (`83a330c`): every DB call is async Postgres (six area agents + one integration pass). Check, lint (typed `no-floating-promises`/`no-misused-promises` on server code), 1824 unit tests and build green; e2e runs on a Postgres `tmt_e2e` database reset by the webServer command (smoke specs green). Check-then-insert paths use advisory locks (per-build mutation lock, quota locks per scope, personal workspace, site admins, printer caps, org settings). Password reset (CLI and page) removed. Template filament roles now `ORDER BY key` (SQLite returned index order).
 - Wave 3a merged: deploy (Dockerfile on Postgres, `deploy/` for Fly.io, Railway and Docker + Cloudflare Tunnel, `TRUST_CLOUDFLARE` client IP, cookieless analytics with an exact-origin CSP extension, `public-ci.yml`, `docs/guides/hosting.md`); shared design gallery (`/gallery`); SSO-only sign-in (Google, GitHub, Discord; verified-email linking only, no trusted providers) and the demo sandbox (`/demo`, server-created `isDemo` users, 24 h, per-IP/global/live caps, cleanup job, server-side `requireNotDemo` guards). Integration pass: quota defaults (10 teams per user, 50 builds per team, 1 GB uploads per team, 95 MB 3MF), self-host guides replaced by the hosting guide, full e2e green.
 - Wave 3b merged: tracking-first home with the real MakeGood chair (lazy three.js, still images first, CC0 credit), "team" wording everywhere, gallery cards render the design on the chair, the per-design public flag retired (sharing = the gallery).
-- Security review (2026-11-20): auth, access, linking, test sign-in seam, SSRF guard, CSP and secrets sound. Fixes on this branch: gallery (no sharing from a team's own kit copy, public author names only, sticky admin hide, share-event cap, scoped design list). Further hardening (upload, export and STEP resource limits, database pool safety, Supabase lockdown, demo start) was held briefly and then merged on the maintainer's go-ahead (2026-11-20).
+- Security review (2026-11-19): auth, access, linking, test sign-in seam, SSRF guard, CSP and secrets sound. Fixes on this branch: gallery (no sharing from a team's own kit copy, public author names only, sticky admin hide, share-event cap, scoped design list). Further hardening (upload, export and STEP resource limits, database pool safety, Supabase lockdown, demo start) was held briefly and then merged on the maintainer's go-ahead (2026-11-19).
 
-- Second security review (2026-11-20): nothing High; earlier findings confirmed fixed. Gallery limited to built-in kits end to end, seeded examples marked explicitly, built-in kit model cacheable by Cloudflare, share-event pruning (all on this branch).
+- Second security review (2026-11-19): nothing High; earlier findings confirmed fixed. Gallery limited to built-in kits end to end, seeded examples marked explicitly, built-in kit model cacheable by Cloudflare, share-event pruning (all on this branch).
 - Final gate on the combined tree: check, lint, 1901 unit tests (twice), build, production start from an empty database (twice, idempotent) green; full e2e 244/245 with the one failure fixed and its specs re-run green.
 
 ### Rules from now on
 
-- **Branches:** the hosted version lives on `public-site/main` (CI publishes `ghcr.io/ayostepht/tmt-build-tracker:public` from it). Work happens on `public-site/<topic>` branches (one task, one branch, one worktree), merged into `public-site/main` through a pull request once checks are green. Never merge into `edge` or `main` from here.
+- **Branches:** the hosted version lives on `main` of this repository (`public-ci.yml` publishes `ghcr.io/ayostepht/tmt-build-tracker-public:latest` and `sha-<short>` from it). Work happens on topic branches (`feat/…`, `fix/…`, `docs/…`; one task, one branch, one worktree), merged into `main` through a pull request once checks are green. Merging publishes the image the live site runs. See `CLAUDE.md`.
 
-- **Migrations:** until the first real deploy, schema changes regenerate the single `drizzle/0000_baseline.sql`. From the first deploy on, never edit an applied migration: add `0001_…` and later.
+- **Migrations:** until the first real deploy, schema changes regenerate the single `drizzle/0000_baseline.sql`. From the first deploy on, never edit an applied migration: add `0001_…` and later. (Same rule in `CLAUDE.md`; keep the two in sync.)
 
 ### Waiting on the maintainer
 
-- Self-hosted line: the upload and export resource limits also apply to `edge`/0.9.x. Back-port them and cut a patch release (maintainer's call on timing and tag).
+- Self-hosted line: the upload and export resource limits also apply to the self-hosted 0.9.x line in the sibling repository. Back-port them and cut a patch release (maintainer's call on timing and tag).
 - Real accounts: Supabase project, Google/GitHub/Discord OAuth apps, Cloudflare, Fly.io/Railway or self-host + Tunnel, analytics provider (all steps in `docs/guides/hosting.md`). Check the Supabase lockdown step on the real project (it is tested on plain Postgres only).
 - Review the screenshots and the demo.
 - Choices: an "Allow sharing again" admin button for designs hidden from the gallery (the API exists); Cloudflare Turnstile on `/demo` against slot-filling by many addresses; whether the service worker should drop cached kit models on sign-out (shared devices).

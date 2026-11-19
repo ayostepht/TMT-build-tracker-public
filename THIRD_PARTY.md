@@ -85,8 +85,9 @@ model's MakerWorld page). Credit: 3D model and print files by MakeGood.
 
 They are not in this git repository. TMT Build Tracker converts them (STEP to a web 3D model, slicer
 projects to compact print geometry with the per-object print settings and painted supports) and
-ships the result as a kit pack, a release asset that the Docker image includes and installs on first
-start (see `docs/kit-pack.md`; `CREDITS.md` and the license in `manifest.json` are inside every
+ships the result as a kit pack, a release asset (published on the self-hosted repository,
+[ayostepht/TMT-Build-Tracker](https://github.com/ayostepht/TMT-Build-Tracker/releases), and shared
+by both editions) that the Docker image includes and installs on first start (see `docs/kit-pack.md`; `CREDITS.md` and the license in `manifest.json` are inside every
 pack). The design is unchanged, the data is only reformatted (print meshes are quantized to 0.01 mm).
 
 ### One-piece push handle (jeepxj, CC BY-NC)

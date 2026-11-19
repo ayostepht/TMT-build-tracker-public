@@ -98,7 +98,7 @@ For each template with an index entry:
 
 1. Skip if the marker `<uploads>/kitpack/<slug>.json` already holds this version and sha256 and the template has a model.
 2. Find the pack: `KITPACK_DIR/<file>` (default `/app/kitpacks` in the image, `./kitpacks` in dev), else download
-   from `KITPACK_URL` (default `https://github.com/ayostepht/TMT-Build-Tracker/releases/download/kitpack-{slug}-{version}/{file}`;
+   from `KITPACK_URL` (default `https://github.com/ayostepht/TMT-Build-Tracker/releases/download/kitpack-{slug}-{version}/{file}`, the releases of the self-hosted repository, which both editions share;
    `{slug}`, `{version}`, `{file}` placeholders, or a base URL; `file://` works) unless `KITPACK_DOWNLOAD=off`.
 3. Install per item (a pack newer than the installed pack data, e.g. 1.0.2 over 1.0.1, replaces rows with `kitpack:<older>`; admin-imported rows stay):
    - **Model** (+ hardware GLB, placements): when there is none, or only older pack data. A model an admin imported is kept.
@@ -132,6 +132,8 @@ install already has"): migrate and seed, let the installer put 1.0.1 in, then
 (`--origins-from` keeps each part's source file name in `geometry.json`, which an installed pack row no longer knows; `kitpacks/licenses.json` is picked up by default).
 
 It prints the size and sha256. Then: attach the file to a GitHub release tagged
-`kitpack-makegood-tmt-revb-<version>`, put `slug`, `version`, `file`, `sha256`, `size` into
-`kitpacks/index.json` and commit that. Never commit the pack (`*.kitpack` is ignored). For a local Docker build, copy
+`kitpack-makegood-tmt-revb-<version>` on the self-hosted repository
+([ayostepht/TMT-Build-Tracker](https://github.com/ayostepht/TMT-Build-Tracker/releases), where
+both editions download packs from), put `slug`, `version`, `file`, `sha256`, `size` into
+`kitpacks/index.json` of each repository that should ship it, and commit that. Never commit the pack (`*.kitpack` is ignored). For a local Docker build, copy
 the pack into `kitpacks/`; the build uses it when its sha256 matches the index.

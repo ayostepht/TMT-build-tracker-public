@@ -1,5 +1,10 @@
 # Public site: SQLite to Postgres porting guide (wave 2)
 
+> Written during the port (wave 2, 2026-11-19), before this repository was split from the
+> self-hosted project. The port is done: every call is async Postgres. The foundation, test
+> harness, patterns and pitfalls below are still how the code works; the "SQLite (old)"
+> column is only there to explain each pattern.
+
 Wave 1 (`kit-and-startup`) replaced better-sqlite3 with Postgres. This is what changed in the
 foundation and how to port the rest of the app. Everything is async now: every query is
 `await`ed. The foundation, its tests and `startup.ts` are done; the app code outside

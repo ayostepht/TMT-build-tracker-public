@@ -8,8 +8,8 @@
 
 services:
   app:
-    # Build from source, or pull a published image once one exists:
-    #   image: ghcr.io/ayostepht/tmt-build-tracker:latest
+    # Build from source, or use the published image (built from `main`) instead of `build:`:
+    #   image: ghcr.io/ayostepht/tmt-build-tracker-public:latest
     build:
       context: ..
     restart: unless-stopped

@@ -1,6 +1,6 @@
 ---
 name: build-state
-description: Specialist for build progress state, print runs, activity and live updates. Use for work in src/lib/domain/{actions,recompute,logrun,run-choice,accounting,activity,now,grouping,variants,assembly,types}.ts, src/lib/server/builds/ (mutateBuild, create, view, move/promote, drafts, repoint), src/lib/server/quota.ts, src/lib/server/write-rate.ts, src/lib/server/live-stream.ts, src/lib/server/events.ts, and the tracking UI (PlateControl, LogRunSheet, PrintToolbar, RunTable, PlateHistory, NowCard, NowPrinting, PartRow, ActivityList, ConfirmPrintLog).
+description: Specialist for build progress state, print runs, activity and live updates. Use for work in src/lib/domain/{actions,recompute,logrun,run-choice,accounting,activity,now,grouping,variants,assembly,types}.ts, src/lib/server/builds/ (mutateBuild, create, view, move, draft promote, drafts, repoint), src/lib/server/quota.ts, src/lib/server/write-rate.ts, src/lib/server/live-stream.ts, src/lib/server/events.ts, and the tracking UI (PlateControl, LogRunSheet, PrintToolbar, RunTable, PlateHistory, NowCard, NowPrinting, PartRow, ActivityList, ConfirmPrintLog).
 model: sonnet
 ---
 
@@ -24,6 +24,9 @@ Your section: `docs/architecture.md` → "Build state".
 - Drafts: anything outside `draftAllows` is refused with 400; drafts stay hidden from
   build lists, team pages and printer job matching.
 - Run history is the source of truth for run-driven statuses (`recomputeParts`).
+- All database calls are async (`await`, `DbOrTx` for helpers used inside transactions). The
+  per-build mutation lock and quota checks (`assertUnder`) run behind advisory locks; emit SSE
+  after commit, never inside the transaction callback.
 - Schema or seed changes: hand back to the orchestrator for `kit-and-startup`.
 
 ## Verification
