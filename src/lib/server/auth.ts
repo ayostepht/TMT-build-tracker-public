@@ -1,16 +1,10 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { genericOAuth, organization } from 'better-auth/plugins';
+import { organization } from 'better-auth/plugins';
+import { createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import { ac, roles } from '../permissions';
-import {
-	authSecret,
-	isPublicMode,
-	oidcConfig,
-	publicUrl,
-	signupMode,
-	socialProviders
-} from './config';
-import { decideNewUser, mayUseInvitations, userCount, type PolicyConfig } from './auth-policy';
+import { authSecret, e2eAuthEnabled, publicUrl, socialProviders } from './config';
+import { decideNewUser, mayUseInvitations } from './auth-policy';
 import * as schema from './db/schema';
 import { user as userTable } from './db/schema';
 import { eq } from 'drizzle-orm';
@@ -35,11 +29,17 @@ import {
 	deleteOwnedTemplates,
 	type FilePlan
 } from './account';
-import { ApiError } from './access';
+import { ApiError, DEMO_REFUSAL, requireNotDemoId } from './access';
 import { repointBuildsOffTemplates } from './builds/repoint';
 import { QuotaError, quotaLimit } from './quota';
+import { demoPlugin } from './demo/plugin';
+import { deleteDemoUser } from './demo/cleanup';
+import { e2eSignInPlugin } from './auth-e2e';
 
-/** The account fields to overwrite with null; only keys the write actually carries (or all on create). */
+/**
+ * The account fields to overwrite with null: only keys the write actually carries (or all on
+ * create). The app never uses a provider's tokens, so none is stored (id token included).
+ */
 export function unusedTokensCleared(a: { providerId?: unknown } & Record<string, unknown>) {
 	const out: Record<string, null> = {};
 	const creating = 'accountId' in a;
@@ -48,10 +48,10 @@ export function unusedTokensCleared(a: { providerId?: unknown } & Record<string,
 		'refreshToken',
 		'accessTokenExpiresAt',
 		'refreshTokenExpiresAt',
-		'scope'
+		'scope',
+		'idToken'
 	])
 		if (creating || k in a) out[k] = null;
-	if (typeof a.providerId === 'string' && a.providerId !== 'oidc') out.idToken = null;
 	return out;
 }
 
@@ -65,8 +65,8 @@ function sameOrigin(request?: Request): string[] {
 }
 
 /**
- * Better Auth routes that exist only for passwords. In public mode (SSO-only) none of them
- * may answer, whatever the `emailAndPassword` flag says. `disabledPaths` matches exactly, so
+ * Better Auth routes that exist only for passwords. Sign-in is SSO only, so none of them may
+ * answer, whatever the `emailAndPassword` flag says. `disabledPaths` matches exactly, so
  * `/reset-password/:token` cannot be listed; it needs a token from `/request-password-reset`,
  * which is disabled, and no reset mail is ever sent.
  */
@@ -86,8 +86,8 @@ export const PASSWORD_PATHS = [
 /**
  * Organization endpoints nothing in the app calls. `/organization/update` could rewrite a
  * workspace's metadata (the `personal` flag) and slug; `/leave` and `/check-slug` have no UI.
- * Disabled for every mode. (Team and dynamic-role endpoints are not registered at all because
- * those plugin options are off.) Everything else the app uses goes through the quota hooks below.
+ * (Team and dynamic-role endpoints are not registered at all because those plugin options are
+ * off.) Everything else the app uses goes through the quota hooks below.
  */
 export const ORGANIZATION_DISABLED_PATHS = [
 	'/organization/update',
@@ -106,6 +106,16 @@ async function quotaGuard(fn: () => Promise<void>): Promise<void> {
 	}
 }
 
+/** A demo sandbox user may not create or join teams or send invitations (403 to Better Auth callers). */
+async function demoGuard(db: Db, userId: string): Promise<void> {
+	try {
+		await requireNotDemoId(db, userId);
+	} catch (e) {
+		if (e instanceof ApiError) throw new APIError('FORBIDDEN', { message: DEMO_REFUSAL });
+		throw e;
+	}
+}
+
 /**
  * Number handed back to the plugin's own limit check, which runs right after ours with no await
  * between them in practice. Our check already passed (so the user is under the limit or exempt as a
@@ -115,92 +125,85 @@ async function quotaGuard(fn: () => Promise<void>): Promise<void> {
 const plugin = (limit: number | null) => (limit === null ? 100 : Number.MAX_SAFE_INTEGER);
 
 export function createAuth(db: Db) {
-	const publicMode = isPublicMode();
-	const policy: PolicyConfig = { publicMode, signup: signupMode() };
-	/** In-flight bootstrap sign-up (see user.create.before); expires so a failed attempt cannot lock it. */
-	const BOOTSTRAP_CLAIM_MS = 30_000;
-	let bootstrapClaimedAt = 0;
-	/** Files of chapters being deleted, between the plugin's before and after hooks. */
+	/** Files of teams being deleted, between the plugin's before and after hooks. */
 	const pendingFiles = new Map<string, { plan: FilePlan; at: number }>();
 	/** A failed delete never reaches the after hook: entries older than this are dropped on the next delete. */
 	const PENDING_FILES_MS = 120_000;
-	const social = publicMode ? socialProviders() : {};
-	const oidc = publicMode ? null : oidcConfig();
+	const social = socialProviders();
 	const url = publicUrl();
+	const e2e = e2eAuthEnabled();
 	return betterAuth({
-		// With PUBLIC_URL set, that origin is the only trusted one. Without it, the
-		// origin of each request (resolved by scripts/proxy-origin.mjs from Host /
-		// X-Forwarded-*) is trusted, so plain http://<lan-ip>:3000 and a proxied https
-		// URL both work. Cookies are only marked Secure when PUBLIC_URL is https,
+		// With PUBLIC_URL set, that origin is the only trusted one. Without it (development, tests),
+		// the origin of each request (resolved by scripts/proxy-origin.mjs from Host /
+		// X-Forwarded-*) is trusted. Cookies are only marked Secure when PUBLIC_URL is https,
 		// because the scheme is fixed when the server starts.
 		...(url ? { baseURL: url } : { trustedOrigins: sameOrigin }),
-		advanced: { useSecureCookies: url ? url.startsWith('https://') : false },
+		advanced: {
+			useSecureCookies: url ? url.startsWith('https://') : false,
+			// Better Auth skips its origin (CSRF) check when NODE_ENV=test. Never skip it: the e2e
+			// server runs with NODE_ENV=test and must behave like production here.
+			disableOriginCheck: false
+		},
 		secret: authSecret(),
 		database: drizzleAdapter(db, { provider: 'pg', schema }),
-		// Public mode is SSO-only (Google, GitHub): no passwords, no generic OIDC.
-		// There is no password reset flow (the operator CLI and the reset page were removed).
-		emailAndPassword: {
-			enabled: !publicMode,
-			minPasswordLength: 8,
-			revokeSessionsOnPasswordReset: true
+		// Sign-in is SSO only (Google, GitHub, Discord): no passwords, no generic OIDC, no email
+		// verification or reset flow, so no email is ever sent.
+		emailAndPassword: { enabled: false },
+		socialProviders: social,
+		disabledPaths: [...PASSWORD_PATHS, ...ORGANIZATION_DISABLED_PATHS],
+		user: {
+			additionalFields: {
+				// Demo sandbox marker. `input: false`: no request or provider profile can set it; only
+				// the server-side demo start (`demo/plugin.ts`) creates such users.
+				isDemo: { type: 'boolean', required: false, defaultValue: false, input: false }
+			}
 		},
-		...(publicMode ? { socialProviders: social } : {}),
-		disabledPaths: [...(publicMode ? PASSWORD_PATHS : []), ...ORGANIZATION_DISABLED_PATHS],
 		// Failures of the OAuth round trip land on the login page, which turns the code into
-		// a fixed message. Linking stays on Better Auth's safe default (provider email verified
-		// AND local email verified); do not add trustedProviders.
+		// a fixed message.
 		onAPIError: { errorURL: '/login' },
 		rateLimit: {
-			enabled: publicMode || process.env.NODE_ENV === 'production',
+			enabled: true,
 			window: 60,
 			max: 120,
-			...(publicMode
-				? {
-						customRules: {
-							'/sign-in/*': { window: 60, max: 10 },
-							'/callback/*': { window: 60, max: 20 },
-							'/link-social': { window: 60, max: 10 }
-						}
-					}
-				: {})
+			customRules: {
+				'/sign-in/*': { window: 60, max: 10 },
+				'/callback/*': { window: 60, max: 20 },
+				'/link-social': { window: 60, max: 10 }
+			}
 		},
-		// The app never reads the provider's access/refresh tokens; keep them encrypted at rest
-		// (XChaCha20-Poly1305 keyed from the auth secret). The id token is not covered by the option.
-		account: { encryptOAuthTokens: true },
+		// The app never reads the provider's access/refresh tokens and stores none (see the account
+		// hooks); `encryptOAuthTokens` stays on as a backstop.
+		account: {
+			encryptOAuthTokens: true,
+			// Linking one person's Google, GitHub and Discord logins into one account is by VERIFIED
+			// email only: a provider that reports the address as unverified never links, and nothing is
+			// listed in `trustedProviders` (a "trusted" provider links even for an unverified address,
+			// which would let someone take over an account with a Discord or GitHub profile that merely
+			// claims its email). Different-email linking is off.
+			accountLinking: { enabled: true, trustedProviders: [], allowDifferentEmails: false }
+		},
 		databaseHooks: {
-			// Provider tokens are never used by the app, so none are stored. Only the generic OIDC id
-			// token is kept: sign-out passes it as id_token_hint to the provider's end-session endpoint.
-			// `null`, not undefined (undefined is dropped and the value would be stored). Updates carry
-			// providerId only on sign-in/link; without it the id token is left alone.
 			account: {
-				create: { before: async (a) => ({ data: unusedTokensCleared(a) }) },
+				create: {
+					before: async (a) => {
+						// A demo sandbox user cannot link a sign-in provider (it would turn a throwaway
+						// user into a login).
+						await demoGuard(db, a.userId);
+						return { data: unusedTokensCleared(a) };
+					}
+				},
 				update: { before: async (a) => ({ data: unusedTokensCleared(a) }) }
 			},
 			user: {
 				create: {
-					// Public: provider-verified email only. Self-hosted: the SIGNUP switch.
-					// Runs for email sign-up and SSO first login alike.
+					// Provider-verified email only (and the account caps), for a first SSO login. A
+					// demo user created by the server skips both (it is not an account).
 					before: async (u) => {
-						const d = await decideNewUser(db, u, policy);
+						const d = await decideNewUser(db, u);
 						if (!d.ok) throw new APIError('FORBIDDEN', { code: d.code, message: d.message });
-						// Bootstrap race: with SIGNUP=closed|invite the "empty database" exception lets
-						// one account through, but the user-count check and the insert are separated by
-						// awaits, so two simultaneous first sign-ups could both pass. The claim check and
-						// set run in one synchronous stretch right after the count (one Node process), so
-						// only one wins. Not shared across several app instances: the unique email index
-						// still bounds a double bootstrap to accounts that were both allowed in anyway.
-						if (!policy.publicMode && policy.signup !== 'open' && (await userCount(db)) === 0) {
-							if (bootstrapClaimedAt && Date.now() - bootstrapClaimedAt < BOOTSTRAP_CLAIM_MS)
-								throw new APIError('FORBIDDEN', {
-									code: 'signup_closed',
-									message: 'Sign-up is closed on this server.'
-								});
-							bootstrapClaimedAt = Date.now();
-						}
 					},
-					// Every account (email, OIDC, invited) gets a personal workspace.
+					// Every account gets a personal workspace.
 					after: async (u) => {
-						bootstrapClaimedAt = 0;
 						await ensurePersonalWorkspace(db, { id: u.id, name: u.name });
 					}
 				}
@@ -208,20 +211,19 @@ export function createAuth(db: Db) {
 			session: {
 				create: {
 					before: async (session) => {
-						// Public mode: no session for an unverified email, checked before any early return.
-						if (publicMode) {
-							const v = await first(
-								db
-									.select({ emailVerified: userTable.emailVerified })
-									.from(userTable)
-									.where(eq(userTable.id, session.userId))
-							);
-							if (!v?.emailVerified)
-								throw new APIError('FORBIDDEN', {
-									code: 'email_not_verified',
-									message: 'Your email address is not verified.'
-								});
-						}
+						const v = await first(
+							db
+								.select({ emailVerified: userTable.emailVerified, isDemo: userTable.isDemo })
+								.from(userTable)
+								.where(eq(userTable.id, session.userId))
+						);
+						// No session for an unverified email (demo users have none by design), checked
+						// before any early return.
+						if (!v?.isDemo && !v?.emailVerified)
+							throw new APIError('FORBIDDEN', {
+								code: 'email_not_verified',
+								message: 'Your email address is not verified.'
+							});
 						// The IP address is not stored on sessions (privacy). Not `advanced.ipAddress.
 						// disableIpTracking`: that also switches the IP-keyed rate limiter off.
 						const noIp = { ...session, ipAddress: '' };
@@ -230,19 +232,35 @@ export function createAuth(db: Db) {
 						// The user's after-create hook may not have run yet; ensure is idempotent.
 						const u = await first(
 							db
-								.select({ name: userTable.name, emailVerified: userTable.emailVerified })
+								.select({ name: userTable.name })
 								.from(userTable)
 								.where(eq(userTable.id, session.userId))
 						);
 						if (!u) return { data: noIp };
 						const { id } = await ensurePersonalWorkspace(db, { id: session.userId, name: u.name });
-						// Users who already belong to chapters keep their own default (see the app layout).
+						// Users who already belong to real teams keep their own default (see the app layout).
 						if ((await listTeams(db, session.userId)).some((t) => !t.personal))
 							return { data: noIp };
 						return { data: { ...noIp, activeOrganizationId: id } };
 					}
 				}
 			}
+		},
+		hooks: {
+			// Signing out of a demo deletes it at once (its builds, files and the user). Whoever calls
+			// /sign-out with a demo session cookie gets this, whatever page they came from.
+			before: createAuthMiddleware(async (ctx) => {
+				if (ctx.path !== '/sign-out') return;
+				const s = await getSessionFromCtx(ctx, { disableRefresh: true }).catch(() => null);
+				const u = s?.user as { id: string; isDemo?: boolean } | undefined;
+				if (u?.isDemo === true) {
+					try {
+						await deleteDemoUser(db, u.id);
+					} catch (e) {
+						console.error('[tmt] demo sign-out cleanup failed', e);
+					}
+				}
+			})
 		},
 		plugins: [
 			organization({
@@ -251,8 +269,9 @@ export function createAuth(db: Db) {
 				creatorRole: 'owner',
 				// The plugin checks these before its own hooks, and they are its hard bounds (our hooks
 				// cannot share a transaction with the plugin's insert). The checks throw our sentence.
-				// Personal workspaces are not chapters and never reach the plugin's endpoints.
+				// Personal workspaces are not teams and never reach the plugin's endpoints.
 				organizationLimit: async (u) => {
+					await demoGuard(db, u.id);
 					await quotaGuard(() => assertCanCreateChapter(db, u.id));
 					return false;
 				},
@@ -261,23 +280,26 @@ export function createAuth(db: Db) {
 					return plugin(quotaLimit('membersPerChapter'));
 				},
 				invitationLimit: async ({ user: u, organization: org }) => {
+					await demoGuard(db, u.id);
 					await quotaGuard(() => assertCanInvite(db, u.id, org.id));
 					return plugin(quotaLimit('pendingInvitesPerChapter'));
 				},
-				// Public mode: accepting, declining and reading an invitation needs a verified
-				// email (Better Auth checks this on the invitation routes).
-				requireEmailVerificationOnInvitation: publicMode,
+				// Accepting, declining and reading an invitation needs a verified email (Better Auth
+				// checks this on the invitation routes).
+				requireEmailVerificationOnInvitation: true,
 				organizationHooks: {
 					// Belt and braces for the option above, on the accept path itself.
 					beforeAcceptInvitation: async ({ user: u, organization: org }) => {
-						if (!mayUseInvitations(policy, u))
+						if (!mayUseInvitations(u as { emailVerified?: boolean; isDemo?: boolean }))
 							throw new APIError('FORBIDDEN', {
-								message: 'Verify your email address before accepting an invitation'
+								message: 'Sign in with a verified email address to accept an invitation'
 							});
+						await demoGuard(db, u.id);
 						await quotaGuard(() => assertCanJoinChapter(db, u.id, org.id));
 					},
 					// Personal workspaces are created by the server only.
 					beforeCreateOrganization: async ({ organization: org, user: u }) => {
+						await demoGuard(db, u.id);
 						if (isPersonalMetadata(org.metadata))
 							throw new APIError('BAD_REQUEST', { message: 'Reserved organization metadata' });
 						await quotaGuard(() => assertCanCreateChapter(db, u.id));
@@ -285,12 +307,14 @@ export function createAuth(db: Db) {
 					// Server-side adds (no HTTP route): same caps as joining.
 					beforeAddMember: async ({ user: u, organization: org }) => {
 						if (await isPersonalOrg(db, org.id)) return;
+						await demoGuard(db, u.id);
 						await quotaGuard(() => assertCanAddMember(db, u.id, org.id));
 					},
 					beforeCreateInvitation: async ({ organization: org, inviter }) => {
+						await demoGuard(db, inviter.id);
 						if (isPersonalMetadata(org.metadata) || (await isPersonalOrg(db, org.id)))
 							throw new APIError('BAD_REQUEST', {
-								message: 'Create a chapter to invite people; My builds is just for you'
+								message: 'Create a team to invite people; My builds is just for you'
 							});
 						await quotaGuard(() => assertCanInvite(db, inviter.id, org.id));
 						// Keep the invitation table bounded under invite/cancel loops.
@@ -304,10 +328,10 @@ export function createAuth(db: Db) {
 							throw new APIError('BAD_REQUEST', {
 								message: 'Move or delete the builds in My builds first'
 							});
-						// The rows cascade away with the chapter; list their files first, remove them after.
+						// The rows cascade away with the team; list their files first, remove them after.
 						const plan = await planFiles(db, { orgIds: [org.id] });
-						// Builds in other workspaces that use this chapter's kit copies go back to the base kit.
-						// One transaction: a refusal (409) leaves the chapter untouched. The plugin has already
+						// Builds in other workspaces that use this team's kit copies go back to the base kit.
+						// One transaction: a refusal (409) leaves the team untouched. The plugin has already
 						// checked session, membership and the delete permission before this hook, and its own
 						// delete is a single statement that our part has cleared of FK blockers.
 						try {
@@ -331,21 +355,10 @@ export function createAuth(db: Db) {
 					}
 				}
 			}),
-			...(oidc
-				? [
-						genericOAuth({
-							config: [
-								{
-									providerId: 'oidc',
-									discoveryUrl: `${oidc.issuer}/.well-known/openid-configuration`,
-									clientId: oidc.clientId,
-									clientSecret: oidc.clientSecret,
-									scopes: ['openid', 'profile', 'email']
-								}
-							]
-						})
-					]
-				: [])
+			// Server-only endpoint that starts a demo sandbox (never routed over HTTP).
+			demoPlugin(db),
+			// Test-only sign-in, present only when `e2eAuthEnabled()` (see config.ts).
+			...(e2e ? [e2eSignInPlugin()] : [])
 		]
 	});
 }

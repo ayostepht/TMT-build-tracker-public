@@ -84,52 +84,13 @@ const fillCopy = (bytes: number) => {
 };
 
 describe('print-geometry POST', () => {
-	it('public mode: a copy manager gets 403, a site admin does not', async () => {
+	it('a copy manager gets 403, a site admin does not', async () => {
 		const res = await geoCall();
 		expect(res.status).toBe(403);
 		expect((await res.json()).error).toMatch(/site admin/);
 		expect(imports()).toEqual([]);
 		const boss = await geoCall({ id: 'boss', email: 'boss@example.test', emailVerified: true });
 		expect(boss.status).not.toBe(403);
-	});
-
-	describe('self-host', () => {
-		beforeEach(() => {
-			vi.stubEnv('TMT_MODE', 'selfhost');
-			vi.stubEnv('QUOTA_UPLOAD_MB_PER_WORKSPACE', '1');
-		});
-
-		it('429 when the upload slots are taken, before any file', async () => {
-			vi.stubEnv('QUOTA_CONCURRENT_UPLOADS_PER_USER', '0');
-			const res = await geoCall();
-			expect(res.status).toBe(429);
-			expect(imports()).toEqual([]);
-			expect(openUploadSlots('owner')).toBe(0);
-		});
-
-		it('409 when the workspace is already over, before any file', async () => {
-			fillCopy(MB + 10);
-			const res = await geoCall();
-			expect(res.status).toBe(409);
-			expect((await res.json()).code).toBe('quota');
-			expect(imports()).toEqual([]);
-			expect(openUploadSlots('owner')).toBe(0);
-		});
-
-		it('507 when the disk is nearly full, before any file', async () => {
-			vi.stubEnv('MIN_FREE_DISK_MB', String(1024 ** 4));
-			const res = await geoCall();
-			expect(res.status).toBe(507);
-			expect(imports()).toEqual([]);
-			expect(openUploadSlots('owner')).toBe(0);
-		});
-
-		it('a bad file is a 400, not a 403, and leaves nothing behind', async () => {
-			const res = await geoCall();
-			expect(res.status).toBe(400);
-			expect(imports()).toEqual([]);
-			expect(openUploadSlots('owner')).toBe(0);
-		});
 	});
 });
 

@@ -8,6 +8,7 @@ import { startSupervisor } from './printers/supervisor';
 import { sweepImportsDir } from './imports-sweep';
 import { installKitPacks } from './kitpack/install';
 import { cleanupAuthDataAtStartup } from './auth-cleanup';
+import { startDemoCleanup } from './demo/cleanup';
 
 // The helpers imported from outside the db/seed/kit-pack area (backfill, twin repair, auth cleanup,
 // imports sweep, printer supervisor) are still synchronous until the async port lands; every call
@@ -62,6 +63,8 @@ async function run(): Promise<void> {
 		.then((n) => n && console.log(`[tmt] removed ${n} stale upload leftover(s) from imports`))
 		.catch(() => {});
 	kickQueue(db);
+	// Demo sandboxes older than 24 h: now, then every 15 minutes (advisory-locked, one instance at a time).
+	startDemoCleanup(db);
 	// MakeGood's kit (CC0, one community part under CC BY-NC) from the baked-in or downloaded kit pack; in the background, never blocks start.
 	installKitPacks(db).catch((e) => console.error('[tmt] kit pack install error', e));
 	if (process.env.TMT_PRINTERS !== 'off') await startSupervisor(db);

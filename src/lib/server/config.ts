@@ -93,13 +93,13 @@ export function secretProblems(secret: string | undefined): string[] {
 /** Only `NODE_ENV=development` (vite dev) and `NODE_ENV=test` (vitest) may run without a real secret. */
 function secretRelaxed(): boolean {
 	const nodeEnv = env.NODE_ENV;
-	return (nodeEnv === 'development' || nodeEnv === 'test') && !isPublicMode();
+	return nodeEnv === 'development' || nodeEnv === 'test';
 }
 
 /**
  * Signing/encryption secret (`BETTER_AUTH_SECRET`). Enforced (set, 32+ characters, not an
- * obvious placeholder) unless `NODE_ENV` is exactly `development` or `test`, and always in
- * public mode; an unset `NODE_ENV` is treated as production. Relaxed runs fall back to a
+ * obvious placeholder) unless `NODE_ENV` is exactly `development` or `test`; an unset
+ * `NODE_ENV` is treated as production. Relaxed runs fall back to a
  * fixed dev secret. There is no build-time exemption: the secret is only read at runtime
  * (`hooks.server.ts` init, behind the `building` guard). Errors never include the secret.
  */
@@ -111,42 +111,34 @@ export function authSecret(): string {
 	return secret as string;
 }
 
-export type AppMode = 'selfhost' | 'public';
+export type AppMode = 'public';
 
-/** `TMT_MODE`: `selfhost` (default) or `public` (SSO-only hosted instance). Anything else throws. */
+/**
+ * This build is the hosted, SSO-only app: there is no self-hosted mode any more. `TMT_MODE` is
+ * still parsed so an old environment file keeps working, but `selfhost` (the old default) behaves
+ * exactly like `public`: sign-in through Google, GitHub or Discord only, finite quotas, uploads
+ * capped for strangers. Anything other than empty, `public` or `selfhost` throws.
+ */
 export function appMode(): AppMode {
 	const raw = (env.TMT_MODE ?? '').trim().toLowerCase();
-	if (!raw) return 'selfhost';
-	if (raw === 'selfhost' || raw === 'public') return raw;
-	throw new Error(`TMT_MODE must be "selfhost" or "public", got "${env.TMT_MODE}".`);
+	if (!raw || raw === 'selfhost' || raw === 'public') return 'public';
+	throw new Error(`TMT_MODE must be "public" (or unset), got "${env.TMT_MODE}".`);
 }
 
+/** Always true (after validating `TMT_MODE`): call sites read as "the hosted rules apply". */
 export function isPublicMode(): boolean {
 	return appMode() === 'public';
 }
 
-export type SignupMode = 'open' | 'invite' | 'closed';
-
-/**
- * `SIGNUP`: `open` (default), `invite` or `closed`. Applies to self-hosted email/password
- * sign-up; in `public` mode password sign-up does not exist at all.
- */
-export function signupMode(): SignupMode {
-	const raw = (env.SIGNUP ?? '').trim().toLowerCase();
-	if (!raw) return 'open';
-	if (raw === 'open' || raw === 'invite' || raw === 'closed') return raw;
-	throw new Error(`SIGNUP must be "open", "invite" or "closed", got "${env.SIGNUP}".`);
-}
+export const SOCIAL_PROVIDER_IDS = ['google', 'github', 'discord'] as const;
+export type SocialProviderId = (typeof SOCIAL_PROVIDER_IDS)[number];
 
 export interface SocialProviderConfig {
 	clientId: string;
 	clientSecret: string;
 }
 
-export interface SocialProviders {
-	google?: SocialProviderConfig;
-	github?: SocialProviderConfig;
-}
+export type SocialProviders = Partial<Record<SocialProviderId, SocialProviderConfig>>;
 
 function socialPair(name: string, idVar: string, secretVar: string): SocialProviderConfig | null {
 	const clientId = (env[idVar] ?? '').trim();
@@ -160,14 +152,79 @@ function socialPair(name: string, idVar: string, secretVar: string): SocialProvi
 	return { clientId, clientSecret };
 }
 
-/** Google / GitHub OAuth apps, each configured only when both of its variables are set. */
+/**
+ * Google, GitHub and Discord OAuth apps, each enabled only when both of its variables are set
+ * (`<NAME>_CLIENT_ID` and `<NAME>_CLIENT_SECRET`). Callback URL of each:
+ * `<PUBLIC_URL>/api/auth/callback/<google|github|discord>`.
+ */
 export function socialProviders(): SocialProviders {
 	const out: SocialProviders = {};
 	const google = socialPair('Google', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET');
 	if (google) out.google = google;
 	const github = socialPair('GitHub', 'GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET');
 	if (github) out.github = github;
+	const discord = socialPair('Discord', 'DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET');
+	if (discord) out.discord = discord;
 	return out;
+}
+
+/** The enabled providers' ids, in a fixed order (login page buttons). */
+export function enabledProviderIds(): SocialProviderId[] {
+	const p = socialProviders();
+	return SOCIAL_PROVIDER_IDS.filter((id) => p[id]);
+}
+
+/**
+ * Test-only sign-in seam (`/api/auth/test/sign-in`, `auth-e2e.ts`). It exists only when ALL of
+ * these hold: `E2E_AUTH=1`, `NODE_ENV=test` and the database is named `*_e2e` or `*_test`.
+ * `E2E_AUTH` set to anything but empty, `0` or `1`, or `1` with another condition missing, throws:
+ * the server refuses to start (`bootProblems`) rather than silently running without the seam or,
+ * worse, with it on a real database. The production image sets `NODE_ENV=production`.
+ */
+export function e2eAuthEnabled(): boolean {
+	const raw = (env.E2E_AUTH ?? '').trim();
+	if (!raw || raw === '0') return false;
+	if (raw !== '1') throw new Error('E2E_AUTH must be 1 or unset.');
+	if (env.NODE_ENV !== 'test')
+		throw new Error('E2E_AUTH=1 is allowed only with NODE_ENV=test. Unset E2E_AUTH.');
+	let dbName = '';
+	try {
+		dbName = decodeURIComponent(new URL(databaseUrl()).pathname.slice(1));
+	} catch {
+		/* rejected below */
+	}
+	if (!/_(e2e|test)$/.test(dbName))
+		throw new Error('E2E_AUTH=1 is allowed only with a database whose name ends in _e2e or _test.');
+	return true;
+}
+
+/**
+ * Demo sandbox limits, all env-configurable (digits, or `off` where a limit may be removed):
+ * `DEMO_MAX_LIVE` (live demo users, default 500), `DEMO_PER_IP_PER_HOUR` (default 5),
+ * `DEMO_TTL_HOURS` (default 24, 1 to 72) and `DEMO_BUILDS` (builds one demo may hold, default 2).
+ */
+export interface DemoConfig {
+	maxLive: number;
+	perIpPerHour: number;
+	ttlMs: number;
+	buildsPerDemo: number;
+}
+
+function demoInt(name: string, fallback: number, min: number, max: number): number {
+	const raw = (env[name] ?? '').trim();
+	if (!raw) return fallback;
+	if (!/^\d+$/.test(raw) || Number(raw) < min || Number(raw) > max)
+		throw new Error(`${name} must be a whole number from ${min} to ${max}, got "${raw}".`);
+	return Number(raw);
+}
+
+export function demoConfig(): DemoConfig {
+	return {
+		maxLive: demoInt('DEMO_MAX_LIVE', 500, 0, 100_000),
+		perIpPerHour: demoInt('DEMO_PER_IP_PER_HOUR', 5, 0, 1000),
+		ttlMs: demoInt('DEMO_TTL_HOURS', 24, 1, 72) * 3600 * 1000,
+		buildsPerDemo: demoInt('DEMO_BUILDS', 2, 1, 10)
+	};
 }
 
 export interface TrustedProxy {
@@ -205,7 +262,7 @@ export function trustedProxy(): TrustedProxy | null {
 
 function publicUrlProblems(): string[] {
 	const raw = rawPublicUrl();
-	if (!raw) return ['PUBLIC_URL must be set in public mode.'];
+	if (!raw) return ['PUBLIC_URL must be set (the public https:// address of the site).'];
 	const name = raw.name;
 	let url: URL;
 	try {
@@ -214,8 +271,7 @@ function publicUrlProblems(): string[] {
 		return [`${name} is not a valid URL.`];
 	}
 	const problems: string[] = [];
-	if (url.protocol !== 'https:')
-		problems.push(`${name} must be an https:// address in public mode.`);
+	if (url.protocol !== 'https:') problems.push(`${name} must be an https:// address.`);
 	if (url.username || url.password)
 		problems.push(`${name} must not contain a user name or password.`);
 	if ((url.pathname !== '/' && url.pathname !== '') || url.search || url.hash) {
@@ -231,35 +287,45 @@ function publicUrlProblems(): string[] {
 	return problems;
 }
 
-/** Problems that make `TMT_MODE=public` unsafe to start; empty when fine or not in public mode. */
+/**
+ * What a real deployment must have, empty when it does. Production (any `NODE_ENV` other than
+ * `development` and `test`) needs an https `PUBLIC_URL`, at least one sign-in provider,
+ * `ADMIN_EMAILS` and a trusted reverse proxy (`ADDRESS_HEADER`, or Cloudflare via
+ * `TRUST_CLOUDFLARE=1`). Development and tests relax all four (the login page then says that sign-in
+ * is not configured). Half-configured providers and the old `OIDC_*` variables are problems in every
+ * environment. Messages never contain a secret.
+ */
 export function validatePublicMode(): string[] {
-	if (!isPublicMode()) return [];
-	const problems = publicUrlProblems();
+	const problems: string[] = [];
+	const production = !secretRelaxed();
+	if (production) problems.push(...publicUrlProblems());
 	try {
-		if (Object.keys(socialProviders()).length === 0) {
+		if (production && Object.keys(socialProviders()).length === 0) {
 			problems.push(
-				'Public mode needs at least one sign-in provider: set GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET or GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET.'
+				'Set at least one sign-in provider: GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET, GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET or DISCORD_CLIENT_ID/DISCORD_CLIENT_SECRET.'
 			);
-		}
+		} else socialProviders();
 	} catch (e) {
 		problems.push((e as Error).message);
 	}
 	if (['OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET'].some((k) => (env[k] ?? '').trim())) {
 		problems.push(
-			'Public mode supports only Google and GitHub sign-in: unset the OIDC_* variables.'
+			'Generic OIDC sign-in was removed: unset the OIDC_* variables. Only Google, GitHub and Discord are supported.'
 		);
 	}
-	try {
-		if (!trustedProxy()) {
-			problems.push(
-				'Public mode needs a trusted reverse proxy: set ADDRESS_HEADER (for example X-Forwarded-For) and, if more than one proxy is in front, XFF_DEPTH.'
-			);
+	if (production) {
+		try {
+			if (!trustedProxy() && (env.TRUST_CLOUDFLARE ?? '').trim() !== '1') {
+				problems.push(
+					'Set a trusted reverse proxy: ADDRESS_HEADER (for example X-Forwarded-For) and, if more than one proxy is in front, XFF_DEPTH, or TRUST_CLOUDFLARE=1 behind Cloudflare.'
+				);
+			}
+		} catch (e) {
+			problems.push((e as Error).message);
 		}
-	} catch (e) {
-		problems.push((e as Error).message);
-	}
-	if (adminEmails().length === 0) {
-		problems.push('ADMIN_EMAILS must list at least one site admin in public mode.');
+		if (adminEmails().length === 0) {
+			problems.push('ADMIN_EMAILS must list at least one site admin.');
+		}
 	}
 	return problems;
 }
@@ -277,43 +343,20 @@ export function bootProblems(): string[] {
 			problems.push((e as Error).message);
 		}
 	};
-	let mode: AppMode;
-	try {
-		mode = appMode();
-	} catch (e) {
-		problems.push((e as Error).message);
-		return problems;
-	}
+	guard(() => appMode());
 	if (!secretRelaxed()) problems.push(...secretProblems(env.BETTER_AUTH_SECRET));
-	guard(() => signupMode());
 	guard(() => trustedProxy());
 	guard(() => publicUrl());
 	guard(() => quotas());
+	guard(() => demoConfig());
+	guard(() => e2eAuthEnabled());
 	guard(() => linkPrintersPerWorkspace());
 	guard(() => linkPrintersTotal());
 	guard(() => manualPrintersPerWorkspace());
 	guard(() => minFreeDiskBytes());
 	guard(() => writeRateVars());
-	if (mode === 'public') problems.push(...validatePublicMode());
+	problems.push(...validatePublicMode());
 	return [...new Set(problems)];
-}
-
-export interface OidcConfig {
-	issuer: string;
-	clientId: string;
-	clientSecret: string;
-	providerName: string;
-}
-
-export function oidcConfig(): OidcConfig | null {
-	const { OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_PROVIDER_NAME } = env;
-	if (!OIDC_ISSUER || !OIDC_CLIENT_ID || !OIDC_CLIENT_SECRET) return null;
-	return {
-		issuer: OIDC_ISSUER.replace(/\/+$/, ''),
-		clientId: OIDC_CLIENT_ID,
-		clientSecret: OIDC_CLIENT_SECRET,
-		providerName: OIDC_PROVIDER_NAME || 'SSO'
-	};
 }
 
 /** Directory for files on disk (uploads, kit pack): `DATA_DIR`, else `/data` in production, `./data` in dev. */

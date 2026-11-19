@@ -150,7 +150,12 @@ export async function pendingInvitationCount(db: DbOrTx, email: string): Promise
 
 /** Only same-origin relative paths are allowed as post-login redirects. */
 export function safeRedirect(v: string | null | undefined): string | null {
-	return v && v.startsWith('/') && !v.startsWith('//') && !v.includes('\\') ? v : null;
+	// Same-origin relative path only: one leading slash, no backslash or control character (browsers
+	// strip tabs and newlines, so "/\t/evil.example" would otherwise become "//evil.example").
+	// eslint-disable-next-line no-control-regex
+	return v && v.startsWith('/') && !v.startsWith('//') && !/[\\\u0000-\u001f\u007f]/.test(v)
+		? v
+		: null;
 }
 
 export function slugify(name: string): string {

@@ -1,8 +1,6 @@
 import { newClientContext } from './fixtures';
 import { expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
-export const PASSWORD = 'correct-horse-battery';
-
 let counter = 0;
 export function uniqueEmail(label: string): string {
 	counter += 1;
@@ -14,14 +12,22 @@ async function settled(page: Page) {
 	await page.waitForLoadState('networkidle');
 }
 
+const ORIGIN = process.env.E2E_BASE_URL ?? `http://127.0.0.1:${process.env.E2E_PORT ?? 4173}`;
+
+/**
+ * Signs `page` in as a user with a verified email, creating the account on first use, through the
+ * test-only sign-in route (see playwright.config.ts: there is no email/password sign-in). With a
+ * `redirect` it then opens that path (an invitation link, say); without one it lands on the
+ * user's own team page.
+ */
 export async function signUp(page: Page, name: string, email: string, redirect?: string) {
-	await page.goto(redirect ? `/signup?redirect=${encodeURIComponent(redirect)}` : '/signup');
+	const res = await page.request.post('/api/auth/test/sign-in', {
+		headers: { origin: ORIGIN },
+		data: { name, email }
+	});
+	expect(res.ok(), `test sign-in: ${res.status()} ${await res.text()}`).toBe(true);
+	await page.goto(redirect ?? '/workspace');
 	await settled(page);
-	await page.getByLabel('Name').fill(name);
-	await page.getByLabel('Email').fill(email);
-	await page.getByLabel(/^Password/).fill(PASSWORD);
-	await page.getByRole('button', { name: 'Create account' }).click();
-	// Without an invite redirect a new account lands on its personal workspace, not onboarding.
 	if (!redirect) await expect(page).toHaveURL(/\/teams\//);
 }
 
@@ -108,16 +114,14 @@ export async function joinViaInvite(
 	const context = await newClientContext(browser);
 	const page = await context.newPage();
 	const path = new URL(link).pathname;
+	// Signed out, the invitation page asks to sign in and sends the person back here afterwards.
 	await page.goto(path);
-	await page.getByRole('link', { name: 'Create account' }).click();
-	await expect(page).toHaveURL(/\/signup\?redirect=/);
-	await settled(page);
-	await page.getByLabel('Name').fill(name);
-	await page.getByLabel('Email').fill(email);
-	await page.getByLabel(/^Password/).fill(PASSWORD);
-	await page.getByRole('button', { name: 'Create account' }).click();
+	await expect(page.getByRole('link', { name: 'Sign in' })).toHaveAttribute(
+		'href',
+		`/login?redirect=${encodeURIComponent(path)}`
+	);
+	await signUp(page, name, email, path);
 	await expect(page).toHaveURL(new RegExp(`${path}$`));
-	await settled(page);
 	await page.getByRole('button', { name: 'Accept' }).click();
 	await expect(page).toHaveURL(/\/teams\//);
 	return { context, page };
@@ -157,18 +161,7 @@ export const ADMIN_EMAIL = 'e2e-admin@example.test';
  * order: the account is admin through `ADMIN_EMAILS`, not by being the first user.
  */
 export async function signInAsAdmin(page: Page) {
-	await page.goto('/login');
-	await settled(page);
-	await page.getByLabel('Email').fill(ADMIN_EMAIL);
-	await page.getByLabel(/^Password/).fill(PASSWORD);
-	await page.getByRole('button', { name: 'Sign in' }).click();
-	const signedIn = await page
-		.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 8_000 })
-		.then(() => true)
-		.catch(() => false);
-	if (!signedIn) {
-		await signUp(page, 'Ada Admin', ADMIN_EMAIL);
-	}
+	await signUp(page, 'Ada Admin', ADMIN_EMAIL);
 	const res = await page.goto('/admin/templates');
 	expect(res?.status(), 'ADMIN_EMAILS must contain the e2e admin').toBe(200);
 }

@@ -20,7 +20,10 @@ vi.mock('#lib/server/db/index.ts', async (orig) => ({
 let db: Db;
 let tid: string;
 
-function event(body: BodyInit | null, user_ = { id: 'adm', email: 'adm@x.test' }) {
+function event(
+	body: BodyInit | null,
+	user_ = { id: 'adm', email: 'adm@x.test', emailVerified: true }
+) {
 	return {
 		request: new Request('http://x.test/upload', {
 			method: 'POST',
@@ -35,12 +38,19 @@ function event(body: BodyInit | null, user_ = { id: 'adm', email: 'adm@x.test' }
 
 beforeEach(async () => {
 	vi.stubEnv('DATA_DIR', mkdtempSync(join(tmpdir(), 'tmt-up-')));
+	vi.stubEnv('ADMIN_EMAILS', 'adm@x.test');
 	db = await createTestDb();
 	h.db = db;
 	await seedTemplates(db, templateSeeds);
 	await db
 		.insert(user)
-		.values({ id: 'adm', name: 'A', email: 'adm@x.test', createdAt: new Date(1) })
+		.values({
+			id: 'adm',
+			name: 'A',
+			email: 'adm@x.test',
+			emailVerified: true,
+			createdAt: new Date(1)
+		})
 		.onConflictDoNothing();
 	tid = (await defaultTemplate(db)).id;
 });

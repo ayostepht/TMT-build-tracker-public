@@ -33,6 +33,7 @@ let db: Db;
 let baseId: string;
 
 beforeEach(async () => {
+	vi.stubEnv('ADMIN_EMAILS', 'admin@example.test');
 	db = await createTestDb();
 	await seedTemplates(db, templateSeeds);
 	baseId = (await defaultTemplate(db)).id;
@@ -47,6 +48,7 @@ beforeEach(async () => {
 			id,
 			name,
 			email: `${id}@example.test`,
+			emailVerified: true,
 			createdAt: new Date(id === 'admin' ? 1 : 2)
 		});
 	for (const org of ['org1', 'org2'])
@@ -61,7 +63,10 @@ beforeEach(async () => {
 			.insert(member)
 			.values({ id: `m-${u}`, organizationId: org, userId: u, role, createdAt: new Date() });
 });
-afterEach(() => dropTestDb(db));
+afterEach(() => {
+	vi.unstubAllEnvs();
+	return dropTestDb(db);
+});
 
 describe('forkTemplate', () => {
 	it('copies the static data into a workspace-owned template', async () => {
@@ -109,7 +114,7 @@ describe('forkTemplate', () => {
 describe('who may add kit files', () => {
 	it('global kits: site admins only; own copies: owners and editors of that workspace', async () => {
 		const fork = await forkTemplate(db, 'org1', baseId, 'Mine');
-		const u = (id: string) => ({ id, email: `${id}@example.test` });
+		const u = (id: string) => ({ id, email: `${id}@example.test`, emailVerified: true });
 		expect(await canManageTemplate(db, u('admin'), baseId)).toBe(true);
 		for (const id of ['owner', 'editor', 'viewer', 'other'])
 			expect(await canManageTemplate(db, u(id), baseId)).toBe(false);
@@ -162,7 +167,7 @@ describe('chooseBuildTemplate', () => {
 
 describe('kit copies limit', () => {
 	afterEach(() => vi.unstubAllEnvs());
-	const u = (id: string) => ({ id, email: `${id}@example.test` });
+	const u = (id: string) => ({ id, email: `${id}@example.test`, emailVerified: true });
 
 	it('refuses past the limit with 409 + code, per workspace', async () => {
 		vi.stubEnv('QUOTA_KIT_COPIES_PER_WORKSPACE', '2');
@@ -184,7 +189,8 @@ describe('kit copies limit', () => {
 		expect(await countKitCopies(db, 'org1')).toBe(1);
 	});
 
-	it('no limit set: unlimited; site admin exempt', async () => {
+	it('limit off: unlimited; site admin exempt', async () => {
+		vi.stubEnv('QUOTA_KIT_COPIES_PER_WORKSPACE', 'off');
 		for (let i = 0; i < 5; i++) await forkTemplate(db, 'org1', baseId, `N${i}`, 'owner');
 		vi.stubEnv('QUOTA_KIT_COPIES_PER_WORKSPACE', '1');
 		await expect(forkTemplate(db, 'org1', baseId, 'admin one', 'admin')).resolves.toBeTypeOf(

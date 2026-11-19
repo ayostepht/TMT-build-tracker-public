@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { exportAccountData } from '#lib/server/account.ts';
-import { ApiError } from '#lib/server/access.ts';
+import { ApiError, requireNotDemo } from '#lib/server/access.ts';
 import { requireUserId } from '#lib/server/api.ts';
 import { getDb } from '#lib/server/db/index.ts';
 import type { RequestHandler } from './$types';
@@ -8,7 +8,9 @@ import type { RequestHandler } from './$types';
 /** The signed-in user's own data as one JSON download (profile, memberships, personal builds). */
 export const GET: RequestHandler = async (event) => {
 	try {
-		const body = await exportAccountData(getDb(), requireUserId(event));
+		const userId = requireUserId(event);
+		requireNotDemo(event.locals.user);
+		const body = await exportAccountData(getDb(), userId);
 		return new Response(body, {
 			headers: {
 				'content-type': 'application/json; charset=utf-8',

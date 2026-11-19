@@ -1,14 +1,13 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { getAuth } from '#lib/server/auth-instance.ts';
-import { effectiveSignup, mayUseInvitations } from '#lib/server/auth-policy.ts';
-import { appMode, signupMode } from '#lib/server/config.ts';
+import { mayUseInvitations } from '#lib/server/auth-policy.ts';
 import { first, getDb } from '#lib/server/db/index.ts';
 import { invitation, organization, user } from '#lib/server/db/schema.ts';
 import type { Actions, PageServerLoad } from './$types';
 
-function policyAllows(u: { emailVerified?: boolean | null }) {
-	return mayUseInvitations({ publicMode: appMode() === 'public', signup: signupMode() }, u);
+function policyAllows(u: { emailVerified?: boolean | null; isDemo?: boolean | null }) {
+	return mayUseInvitations(u);
 }
 
 function find(id: string) {
@@ -49,12 +48,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 					: null
 		},
 		signedIn: !!locals.user,
-		// 'open' | 'invite' | 'closed' as for /signup; public mode has no sign-up page, only SSO sign-in.
-		signup: await effectiveSignup(getDb(), {
-			publicMode: appMode() === 'public',
-			signup: signupMode()
-		}),
-		publicMode: appMode() === 'public',
+		isDemo: (locals.user as { isDemo?: boolean } | null)?.isDemo === true,
 		needsVerifiedEmail: !!locals.user && !policyAllows(locals.user),
 		wrongAccount: !!locals.user && locals.user.email.toLowerCase() !== inv.email.toLowerCase(),
 		userEmail: locals.user?.email ?? null
@@ -67,7 +61,9 @@ export const actions: Actions = {
 		const inv = await find(params.id);
 		if (!inv) error(404, 'Invitation not found');
 		if (!policyAllows(locals.user))
-			return fail(403, { error: 'Verify your email address before accepting an invitation' });
+			return fail(403, {
+				error: 'Sign in with a verified email address (not the demo) to accept an invitation'
+			});
 		try {
 			await getAuth().api.acceptInvitation({
 				body: { invitationId: params.id },

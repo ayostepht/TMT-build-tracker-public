@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { ApiError, isSiteAdmin } from './access';
 import { first, type Db } from './db';
@@ -62,7 +62,10 @@ beforeEach(async () => {
 		'first'
 	);
 });
-afterEach(() => dropTestDb(db));
+afterEach(() => {
+	vi.unstubAllEnvs();
+	return dropTestDb(db);
+});
 
 describe('photos', () => {
 	it('stores a PNG, lists it, serves it to members only, and deletes it', async () => {
@@ -180,7 +183,8 @@ describe('metadata stripping', () => {
 
 describe('guide pages', () => {
 	it('only site admins pass the template guard', async () => {
-		const get = (id: string) => ({ id, email: `${id}@example.test` });
+		vi.stubEnv('ADMIN_EMAILS', 'first@example.test');
+		const get = (id: string) => ({ id, email: `${id}@example.test`, emailVerified: true });
 		expect(await isSiteAdmin(db, get('first'))).toBe(true);
 		await expect(assertTemplateAdmin(db, get('first'), templateId)).resolves.toBeUndefined();
 		for (const u of ['editor', 'viewer', 'outsider'])

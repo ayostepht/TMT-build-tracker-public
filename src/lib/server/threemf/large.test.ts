@@ -141,7 +141,7 @@ describe(`${BIG_MB} MB sliced project`, () => {
 				});
 			const prev = process.env.MAX_3MF_MB;
 			try {
-				delete process.env.MAX_3MF_MB; // default 1024
+				process.env.MAX_3MF_MB = '1024';
 				const before = rssMb();
 				let peak = before;
 				const t = setInterval(() => (peak = Math.max(peak, rssMb())), 20);

@@ -1,5 +1,5 @@
 import { getDb } from '#lib/server/db/index.ts';
-import { ApiError, buildAccess } from '#lib/server/access.ts';
+import { ApiError, buildAccess, requireNotDemo } from '#lib/server/access.ts';
 import { createUpload } from '#lib/server/builds/plates.ts';
 import { loadBuildView } from '#lib/server/builds/view.ts';
 import { diskHasRoom } from '#lib/server/config.ts';
@@ -12,6 +12,7 @@ export const POST: RequestHandler = (event) =>
 	respond(async () => {
 		const db = getDb();
 		const userId = requireUserId(event);
+		requireNotDemo(event.locals.user);
 		const access = await buildAccess(db, event.params.id, userId);
 		if (!access) throw new ApiError(404, 'Not found');
 		if (!access.canEdit) throw new ApiError(403, 'Your role cannot edit');

@@ -34,7 +34,7 @@ import { rm } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { and, count, eq, ne, sql } from 'drizzle-orm';
 import { ApiError, isSiteAdmin } from './access';
-import { quotas, uploadsDir, type Quotas } from './config';
+import { demoConfig, quotas, uploadsDir, type Quotas } from './config';
 import { advisoryLock, first, type DbOrTx } from './db';
 import { member, organization } from './db/auth.schema';
 import {
@@ -168,13 +168,51 @@ export async function assertUnder(
 	count: number | (() => number | Promise<number>),
 	ctx: QuotaContext
 ): Promise<void> {
-	const limit = quotaLimit(key);
+	const base = quotaLimit(key);
+	// Demo sandbox users get much lower caps (and a sentence that points at signing in).
+	const demoCap = demoCapFor(key);
+	const demo = demoCap !== undefined && (await isDemoId(tx, ctx.userId));
+	const limit = demo ? (base === null ? demoCap : Math.min(base, demoCap)) : base;
 	if (limit === null) return;
 	await advisoryLock(tx, `quota:${key}:${ctx.scope ?? ctx.userId}`);
 	const current = typeof count === 'function' ? await count() : count;
 	if (current < limit) return;
+	if (demo) throw new QuotaError(DEMO_LIMIT_SENTENCE(limit));
 	if (await isExempt(tx, ctx.userId)) return;
 	throw new QuotaError(sentence(key, limit, current));
+}
+
+/** What a demo sandbox user may hold, per quota key (keys left out use the normal limit). */
+function demoCapFor(key: QuotaKey): number | undefined {
+	switch (key) {
+		case 'buildsPerWorkspace':
+			return demoConfig().buildsPerDemo;
+		case 'draftsPerUser':
+			return 2;
+		case 'savedDesignsPerUser':
+			return 3;
+		case 'customFilamentsPerWorkspace':
+			return 5;
+		case 'photosPerBuild':
+		case 'kitCopiesPerWorkspace':
+		case 'chaptersPerUser':
+		case 'membershipsPerUser':
+		case 'stepConversionsPerUser':
+		case 'concurrentUploadsPerUser':
+			return 0;
+		default:
+			return undefined;
+	}
+}
+
+const DEMO_LIMIT_SENTENCE = (limit: number) =>
+	limit === 0
+		? 'This is not available in the demo. Sign in to use your own account.'
+		: `The demo holds up to ${limit} of these. Sign in to track as many as you like.`;
+
+async function isDemoId(db: DbOrTx, userId: string): Promise<boolean> {
+	const row = await first(db.select({ d: user.isDemo }).from(user).where(eq(user.id, userId)));
+	return row?.d === true;
 }
 
 // ---- row caps (constants, both modes)

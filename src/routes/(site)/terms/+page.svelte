@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import LegalPage from '#lib/components/LegalPage.svelte';
 	import { MAKEGOOD_GUIDE_URL } from '#lib/makegood.ts';
 	import type { PageProps } from './$types';
@@ -10,11 +11,10 @@
 <svelte:head><title>Terms · TMT Build Tracker</title></svelte:head>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -->
-<LegalPage title="Terms" updated="2026-11-11" signedIn={data.signedIn} other="privacy">
-	<div data-testid="terms-mode" data-mode={data.publicMode ? 'public' : 'selfhost'} hidden></div>
+<LegalPage title="Terms" updated="2026-11-19" signedIn={data.signedIn} other="privacy">
 	<p>
-		These are the ground rules for using TMT Build Tracker, in plain words. By creating an account
-		or signing in you agree to them.
+		These are the ground rules for using TMT Build Tracker, in plain words. By signing in, which
+		creates your account, or by starting the demo, you agree to them.
 	</p>
 
 	<h2>Who it is for</h2>
@@ -26,14 +26,7 @@
 	<h2>The software</h2>
 	<p>
 		TMT Build Tracker is open source under the MIT license and is provided "as is", without warranty
-		of any kind.
-		{#if data.publicMode}
-			You are using the public instance, which the TMT Build Tracker project runs.
-		{:else}
-			Whoever runs this server (the operator) is responsible for it: updates, backups and who has an
-			account. The operator may add rules of their own; ask them. The project that wrote the
-			software does not run your server.
-		{/if}
+		of any kind. You are using the public instance, which the TMT Build Tracker project runs.
 	</p>
 
 	<h2>Not medical or safety guidance</h2>
@@ -62,29 +55,39 @@
 
 	<h2>Printers</h2>
 	<p>
-		{#if data.publicMode}
-			Printer connections are switched off on the public instance.
-		{:else}
-			If you connect a printer, the app only reads its status.
-		{/if}
-		The app never starts, stops, moves, heats or otherwise controls a printer. You stay responsible for
-		your printer and for watching it.
+		You can link a printer through an OctoEverywhere shared link. The app only reads its status. It
+		never starts, stops, moves, heats or otherwise controls a printer, and it makes no connection to
+		anything on your own network. You stay responsible for your printer and for watching it.
 	</p>
 
-	{#if data.publicMode}
-		<h2>The public instance</h2>
-		<ul>
-			<li>
-				Fair-use limits apply (for example on how many builds, uploads and requests an account can
-				make).
-			</li>
-			<li>Accounts or content may be removed for abuse.</li>
-			<li>
-				The service may change or stop. If you depend on your data, download it from your account
-				page now and then.
-			</li>
-		</ul>
-	{/if}
+	<h2>The demo</h2>
+	<p>
+		The demo is a private, throwaway workspace with a sample build, for trying the app without an
+		account. Uploads, printers and teams are switched off in it. It is deleted 24 hours after you
+		start it, or when you sign out of it, and nothing in it can be moved to an account.
+	</p>
+
+	<h2>Your account</h2>
+	<ul>
+		<li>
+			You sign in with Google, GitHub or Discord. Keep that account secure; what happens in your
+			account is your responsibility.
+		</li>
+		<li>
+			You can delete your account yourself on <a href={resolve('/(app)/account')}
+				>the account page</a
+			>.
+		</li>
+		<li>
+			Fair-use limits apply (for example on how many builds, uploads and requests an account can
+			make).
+		</li>
+		<li>Accounts or content may be removed for abuse.</li>
+		<li>
+			The service may change or stop. If you depend on your data, download it from your account page
+			now and then.
+		</li>
+	</ul>
 
 	<h2>Reporting a problem</h2>
 	<p>

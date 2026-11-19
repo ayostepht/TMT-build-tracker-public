@@ -1,6 +1,6 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
-import { ApiError, type SiteAdminCandidate } from '../access.ts';
+import { ApiError, requireNotDemo, type SiteAdminCandidate } from '../access.ts';
 import { requireUserId } from '../api.ts';
 import { first, getDb, type DbOrTx } from '../db/index.ts';
 import { templates } from '../db/schema.ts';
@@ -28,6 +28,8 @@ export async function requireAdminForTemplate(
 	templateId: string
 ): Promise<string> {
 	const userId = requireUserId(event);
+	// A demo user cannot change kit files, even of a workspace copy.
+	requireNotDemo(event.locals.user);
 	await assertTemplateAdmin(getDb(), event.locals.user!, templateId);
 	return userId;
 }

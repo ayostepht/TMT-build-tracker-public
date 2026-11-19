@@ -180,20 +180,26 @@ describe('model jobs', () => {
 
 describe('model admin permissions', () => {
 	it('lets only the site admin through and hides everything else as 404', async () => {
-		await db
-			.insert(user)
-			.values({ id: 'u1', name: 'First', email: 'first@example.test', createdAt: new Date(1000) });
+		vi.stubEnv('ADMIN_EMAILS', 'first@example.test');
+		await db.insert(user).values({
+			id: 'u1',
+			name: 'First',
+			email: 'first@example.test',
+			emailVerified: true,
+			createdAt: new Date(1000)
+		});
 		await db.insert(user).values({
 			id: 'u2',
 			name: 'Second',
 			email: 'second@example.test',
+			emailVerified: true,
 			createdAt: new Date(2000)
 		});
 		await expect(
-			assertTemplateAdmin(db, { id: 'u1', email: 'first@example.test' }, tid)
+			assertTemplateAdmin(db, { id: 'u1', email: 'first@example.test', emailVerified: true }, tid)
 		).resolves.toBeUndefined();
 		await expect(
-			assertTemplateAdmin(db, { id: 'u2', email: 'second@example.test' }, tid)
+			assertTemplateAdmin(db, { id: 'u2', email: 'second@example.test', emailVerified: true }, tid)
 		).rejects.toMatchObject({ status: 404 });
 		await expect(assertTemplateAdmin(db, { id: 'u1' }, 'missing')).rejects.toBeInstanceOf(ApiError);
 	});
@@ -222,9 +228,14 @@ describe('conversion slots per user', () => {
 
 	beforeEach(async () => {
 		for (const [i, id] of ['adm', 'u1', 'u2'].entries())
-			await db
-				.insert(user)
-				.values({ id, name: id, email: `${id}@x.test`, createdAt: new Date(5 + i) });
+			await db.insert(user).values({
+				id,
+				name: id,
+				email: `${id}@x.test`,
+				emailVerified: true,
+				createdAt: new Date(5 + i)
+			});
+		vi.stubEnv('ADMIN_EMAILS', 'adm@x.test');
 	});
 
 	it('limit 1: a second queued job is refused (409 + code), other users are not', async () => {
@@ -242,7 +253,8 @@ describe('conversion slots per user', () => {
 		await expect(job(t2, 'u2', 'c.zip')).resolves.toBeDefined();
 	});
 
-	it('unlimited when unset', async () => {
+	it('unlimited when set to off', async () => {
+		vi.stubEnv('QUOTA_STEP_CONVERSIONS_PER_USER', 'off');
 		const ids = [tid, await mkTpl('t2'), await mkTpl('t3')];
 		for (const [i, t] of ids.entries()) await job(t, 'u1', `${i}.zip`);
 		expect(await countActiveConversions(db, 'u1')).toBe(3);
@@ -276,7 +288,7 @@ describe('conversion slots per user', () => {
 
 	it('site admin is exempt', async () => {
 		vi.stubEnv('QUOTA_STEP_CONVERSIONS_PER_USER', '1');
-		await job(tid, 'adm', 'a.zip'); // the earliest user is the site admin on a self-hosted install
+		await job(tid, 'adm', 'a.zip'); // adm@x.test is in ADMIN_EMAILS
 		await expect(job(await mkTpl('t2'), 'adm', 'b.zip')).resolves.toBeDefined();
 	});
 });
