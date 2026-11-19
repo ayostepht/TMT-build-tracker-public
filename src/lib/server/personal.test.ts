@@ -10,7 +10,12 @@ import { createTestDb, dropTestDb } from './db/testing';
 import { activity, builds, member, organization, templates, user } from './db/schema';
 import { templateSeeds } from './seed';
 import { seedTemplates } from './seed/run';
-import { ensurePersonalWorkspace, findPersonalWorkspace, listTeams } from './teams';
+import {
+	createTeamWithSlug,
+	ensurePersonalWorkspace,
+	findPersonalWorkspace,
+	listTeams
+} from './teams';
 
 let db: Db;
 let auth: Auth;
@@ -178,5 +183,30 @@ describe('deleting a personal workspace', () => {
 			auth.api.deleteOrganization({ body: { organizationId: personal.id }, headers: u.headers })
 		).rejects.toThrow();
 		expect(await findPersonalWorkspace(db, u.id)).not.toBeNull();
+	});
+});
+
+describe('createTeamWithSlug', () => {
+	it('parallel creates with the same name all succeed with distinct slugs', async () => {
+		const slugs = await Promise.all(
+			Array.from({ length: 12 }, (_, i) =>
+				createTeamWithSlug(db, 'Sunrise Chapter', async (slug) => {
+					await db
+						.insert(organization)
+						.values({ id: `race-${i}`, name: 'Sunrise Chapter', slug, createdAt: new Date() });
+				})
+			)
+		);
+		expect(new Set(slugs).size).toBe(12);
+		const rows = await db.select({ slug: organization.slug }).from(organization);
+		expect(rows.map((r) => r.slug).sort()).toEqual([...slugs].sort());
+	});
+
+	it('does not swallow other errors', async () => {
+		await expect(
+			createTeamWithSlug(db, 'X', async () => {
+				throw new Error('boom');
+			})
+		).rejects.toThrow('boom');
 	});
 });

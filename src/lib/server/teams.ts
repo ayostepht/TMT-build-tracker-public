@@ -101,6 +101,44 @@ async function uniqueSlug(db: DbOrTx, base: string): Promise<string> {
 	return slug;
 }
 
+/** A taken-slug failure: our own check, Better Auth's check, or the unique index (23505). */
+export function isSlugConflict(e: unknown): boolean {
+	for (let err = e, i = 0; err && typeof err === 'object' && i < 5; i++) {
+		const o = err as { code?: unknown; message?: unknown; cause?: unknown; body?: unknown };
+		if (o.code === '23505') return true;
+		const body = (o.body ?? {}) as { code?: unknown };
+		if (body.code === 'ORGANIZATION_SLUG_ALREADY_TAKEN') return true;
+		if (typeof o.message === 'string' && /slug.*(taken|exists)|organization_slug_/i.test(o.message))
+			return true;
+		err = o.cause;
+	}
+	return false;
+}
+
+/**
+ * Create a team under a free slug. Better Auth creates the organization (check, then insert, on
+ * its own connection), so the slug cannot be reserved by a lock held here. Instead pick a free
+ * slug, call `create(slug)` and, when it loses a race for the same slug (two people creating
+ * "Sunrise" at once), retry with the next random suffix. Returns the slug that was used.
+ */
+export async function createTeamWithSlug(
+	db: DbOrTx,
+	name: string,
+	create: (slug: string) => Promise<unknown>
+): Promise<string> {
+	const base = slugify(name);
+	let slug = await uniqueSlug(db, base);
+	for (let attempt = 0; ; attempt++) {
+		try {
+			await create(slug);
+			return slug;
+		} catch (e) {
+			if (attempt >= 6 || !isSlugConflict(e)) throw e;
+			slug = `${base.slice(0, 35)}-${crypto.randomUUID().slice(0, 4)}`;
+		}
+	}
+}
+
 /**
  * Create the user's personal workspace: an organization flagged `personal` in its
  * metadata, with the user as its owner. Idempotent and race-safe: the existence check and the

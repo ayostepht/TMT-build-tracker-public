@@ -3,9 +3,9 @@ import { and, eq, gt } from 'drizzle-orm';
 import { getAuth } from '#lib/server/auth-instance.ts';
 import { mayUseInvitations } from '#lib/server/auth-policy.ts';
 import { ApiError, requireNotDemo } from '#lib/server/access.ts';
-import { first, getDb } from '#lib/server/db/index.ts';
+import { getDb } from '#lib/server/db/index.ts';
 import { invitation, organization, user } from '#lib/server/db/schema.ts';
-import { slugify } from '#lib/server/teams.ts';
+import { createTeamWithSlug } from '#lib/server/teams.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -41,18 +41,11 @@ export const actions: Actions = {
 		const name = String((await request.formData()).get('name') ?? '').trim();
 		if (!name) return fail(400, { error: 'Give your team a name' });
 		const db = getDb();
-		let slug = slugify(name);
-		if (
-			await first(
-				db.select({ id: organization.id }).from(organization).where(eq(organization.slug, slug))
-			)
-		)
-			slug = `${slug}-${crypto.randomUUID().slice(0, 4)}`;
+		let slug: string;
 		try {
-			await getAuth().api.createOrganization({
-				body: { name, slug },
-				headers: request.headers
-			});
+			slug = await createTeamWithSlug(db, name, (s) =>
+				getAuth().api.createOrganization({ body: { name, slug: s }, headers: request.headers })
+			);
 		} catch (e) {
 			return fail(400, { error: (e as Error).message || 'Could not create team' });
 		}
