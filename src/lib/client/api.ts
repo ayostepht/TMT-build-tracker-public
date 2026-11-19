@@ -256,6 +256,20 @@ export const updateDesignMeta = (id: string, patch: { name?: string; isPublic?: 
 export const deleteDesign = (id: string) =>
 	call('DELETE', `/api/designs/${encodeURIComponent(id)}`);
 
+// ---- Shared design gallery
+
+/** List a design you wrote in the shared gallery (every signed-in user can then see and use it). */
+export const shareDesign = (id: string) =>
+	call('POST', `/api/designs/${encodeURIComponent(id)}/share`);
+
+/** Take a design out of the gallery (the author, or a site admin hiding it). Copies stay. */
+export const unshareDesign = (id: string) =>
+	call('DELETE', `/api/designs/${encodeURIComponent(id)}/share`);
+
+/** "Use this design": save a private copy of a gallery design as your own. */
+export const copyGalleryDesign = (id: string) =>
+	call<{ id: string; slug: string }>('POST', `/api/designs/${encodeURIComponent(id)}/copy`);
+
 export interface DesignListItem {
 	id: string;
 	name: string;

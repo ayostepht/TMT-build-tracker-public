@@ -7,11 +7,14 @@
 		createBuild,
 		deleteDesign,
 		previewApplyDesign,
+		shareDesign,
+		unshareDesign,
 		updateDesignMeta
 	} from '#lib/client/api.ts';
 	import { offerDesignUndo, snapshotBuild } from '#lib/client/design-undo.ts';
 	import type { ApplyMode } from '#lib/domain/design-apply.ts';
 	import Dialog from '#lib/components/design/share/Dialog.svelte';
+	import ShareDialog from '#lib/components/gallery/ShareDialog.svelte';
 	import StartedApplyDialog from '#lib/components/design/share/StartedApplyDialog.svelte';
 	import ModelStage from '#lib/components/design/ModelStage.svelte';
 	import Swatch from '#lib/components/Swatch.svelte';
@@ -102,7 +105,7 @@
 		});
 
 	/** Which confirmation dialog is open (replaces the browser confirm()). */
-	let asking = $state<'copy' | 'started' | 'delete' | null>(null);
+	let asking = $state<'copy' | 'started' | 'delete' | 'gallery' | null>(null);
 	const targetBuild = $derived(data.targets.builds.find((x) => x.id === target));
 
 	const askCopy = () => {
@@ -152,6 +155,21 @@
 			note = d.isPublic ? 'Now private.' : 'Now public.';
 		});
 
+	const shareToGallery = () =>
+		run(async () => {
+			await shareDesign(d.id);
+			asking = null;
+			await invalidateAll();
+			note = 'Shared to the gallery.';
+		});
+
+	const stopSharing = () =>
+		run(async () => {
+			await unshareDesign(d.id);
+			await invalidateAll();
+			note = 'No longer in the gallery.';
+		});
+
 	const remove = () =>
 		run(async () => {
 			asking = null;
@@ -171,10 +189,21 @@
 			<div class="kicker">{d.templateName}</div>
 			<h1>{d.name}</h1>
 			<p class="muted">
-				{d.authorName ? `By ${d.authorName}` : 'Included with the kit'} · {d.isPublic
-					? 'public'
-					: 'private'}
+				{d.authorName ? `By ${d.authorName}` : 'Included with the kit'} · {d.shared
+					? 'in the gallery'
+					: d.isPublic
+						? 'public'
+						: 'private'}
 			</p>
+			{#if data.credit}
+				<p class="muted" data-testid="copied-from">
+					Copied from
+					<a href={resolve('/(app)/gallery/[slug]', { slug: data.credit.slug })}
+						>{data.credit.name}</a
+					>
+					by {data.credit.sharerName}
+				</p>
+			{/if}
 		</div>
 		<button class="btn primary usebtn" data-testid="use-design" onclick={goToUse}
 			>Use this design</button
@@ -266,10 +295,35 @@
 			</section>
 
 			{#if d.mine}
+				<section class="ds-card" data-testid="gallery-card">
+					<h2>Gallery</h2>
+					{#if d.shared}
+						<p class="muted small">
+							In the shared gallery: every signed-in user can see it and save a copy. Used by {data.copies}
+							other {data.copies === 1 ? 'maker' : 'makers'}.
+						</p>
+						<div class="acts">
+							<a class="btn" href={resolve('/(app)/gallery/[slug]', { slug: d.slug })}
+								>View in the gallery</a
+							>
+							<button class="btn" disabled={busy} onclick={stopSharing}>Stop sharing</button>
+						</div>
+					{:else}
+						<p class="muted small">
+							Share this design so every signed-in user can see it in the gallery and use it. You
+							see what becomes visible before it goes live.
+						</p>
+						<div class="acts">
+							<button class="btn" disabled={busy} onclick={() => (asking = 'gallery')}
+								>Share to the gallery…</button
+							>
+						</div>
+					{/if}
+				</section>
 				<section class="ds-card">
 					<h2>Sharing</h2>
 					<p class="muted small">
-						{d.isPublic
+						{d.isPublic || d.shared
 							? 'Anyone signed in with this link can see and use this design.'
 							: 'Only you can see this design. Share it publicly to give others the link.'}
 					</p>
@@ -295,7 +349,17 @@
 	</div>
 </section>
 
-{#if asking === 'copy' && targetBuild}
+{#if asking === 'gallery'}
+	<ShareDialog
+		name={d.name}
+		roles={d.roles}
+		sharerName={data.sharerName}
+		hasSnapshot={d.hasSnapshot}
+		{busy}
+		onconfirm={shareToGallery}
+		oncancel={() => (asking = null)}
+	/>
+{:else if asking === 'copy' && targetBuild}
 	<Dialog title="Replace colors?" onclose={() => (asking = null)} testid="copy-design-dialog">
 		<div class="confirm">
 			<p>

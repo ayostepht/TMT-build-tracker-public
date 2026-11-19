@@ -42,6 +42,10 @@ export interface DesignSummary {
 	authorUserId: string | null;
 	authorName: string | null;
 	isPublic: boolean;
+	/** Listed in the shared gallery. */
+	shared: boolean;
+	/** The gallery design this was copied from, when it was. */
+	copiedFromId: string | null;
 	mine: boolean;
 	createdAt: string;
 	roles: DesignRole[];
@@ -76,7 +80,7 @@ function slugBase(name: string): string {
 	);
 }
 
-async function uniqueSlug(db: DbOrTx, name: string): Promise<string> {
+export async function uniqueSlug(db: DbOrTx, name: string): Promise<string> {
 	const base = slugBase(name);
 	let slug = base;
 	while (
@@ -152,6 +156,8 @@ async function summarize(db: DbOrTx, rows: DesignRow[], userId: string): Promise
 				authorUserId: d.authorUserId,
 				authorName: d.authorUserId ? (authors.get(d.authorUserId) ?? null) : null,
 				isPublic: d.isPublic,
+				shared: d.sharedAt !== null,
+				copiedFromId: d.copiedFromDesignId,
 				mine: d.authorUserId === userId,
 				createdAt: d.createdAt.toISOString(),
 				roles: d.roles,
