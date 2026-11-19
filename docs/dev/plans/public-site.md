@@ -40,6 +40,11 @@ container. Three parts:
 - Per-account limits, all env-configurable: 10 teams per user, 50 active builds per team, 95 MB per 3MF, 1 GB uploads per team.
 - **Shared design gallery**: a team can share a color design to a site-wide gallery that any signed-in user can browse and copy into their own team (copies keep provenance). Built in wave 3 (`design-studio-ui` + server access checks), schema columns in the wave 1 baseline.
 
+### Positioning and home visuals (2026-11-19, late)
+
+- **Positioning:** the tracker is the product: planning the parts, tracking every part and plate from printed to assembled across a team, and the hand-off. Many TMT design tools already exist; the design studio and gallery are a bonus so everything lives under one roof. Public pages lead with tracking and organizing; colors/gallery come later and smaller.
+- **Home visuals:** the hand-drawn SVG chairs are placeholders and get replaced. The hero shows the real MakeGood chair model, loaded lazily and turnable, with a still image as fallback. The colors section uses renders from the app's own viewer, credited to MakeGood (CC0). Plate and part visuals use the app's real components.
+
 ## Waves
 
 Each wave's agents own disjoint files. Parallel agents in wave 1 get their own worktrees.
