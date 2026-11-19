@@ -3,7 +3,7 @@ import { and, eq, gt } from 'drizzle-orm';
 import { getAuth } from '#lib/server/auth-instance.ts';
 import { mayUseInvitations } from '#lib/server/auth-policy.ts';
 import { ApiError, requireNotDemo } from '#lib/server/access.ts';
-import { first, getDb } from '#lib/server/db/index.ts';
+import { getDb } from '#lib/server/db/index.ts';
 import { invitation, organization, user } from '#lib/server/db/schema.ts';
 import { createTeamWithSlug } from '#lib/server/teams.ts';
 import type { Actions, PageServerLoad } from './$types';
