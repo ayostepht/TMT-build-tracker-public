@@ -1,16 +1,18 @@
 /**
  * 3MF export of a build for a slicer (see `plan.ts`, `writer.ts`, `plate-grid.ts`).
  *
- * Plates come from the build's arranged plates; when the build is not arranged (or its
- * arrangement is out of date after a color change) a fresh arrangement is computed in
- * memory and used instead, with a note. Nothing is written to the database. Meshes come from
+ * Plates come from the build's arranged plates. A MakeGood layout chosen for the export's bed is
+ * followed too: same plates and numbers as the Print tab, parts placed flat on each bed
+ * (`placeOnPlates`). Otherwise (not arranged, a layout for another bed, an uploaded file, or an
+ * arrangement out of date after a color change) a fresh arrangement is computed in memory and
+ * used instead, with a note. Nothing is written to the database. Meshes come from
  * the print geometry imported in the kit admin page (`template_print_geometry`).
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { ApiError } from '../access';
-import { buildArrangement } from '../builds/plates';
-import { loadFootprints, planArrangement } from '../builds/arrange-plan';
+import { buildArrangement, buildLayouts } from '../builds/plates';
+import { loadFootprints, placeOnPlates, planArrangement } from '../builds/arrange-plan';
 import { loadBuildView } from '../builds/view';
 import type { DbOrTx } from '../db';
 import { printDir, readPieceMesh } from '../print-geometry/store';
@@ -26,8 +28,9 @@ import { checkPlacement } from './check';
 import { slug, writePlainZip, writeThreeMf, type WriteOptions } from './writer';
 import type { ArrangedPlate } from '#lib/domain/arrange.ts';
 import type { PrintFootprint } from '#lib/domain/print-footprint.ts';
-import type { BuildView } from '#lib/domain/types.ts';
+import type { BuildPrinter, BuildView } from '#lib/domain/types.ts';
 import type { ExportPreview } from '#lib/domain/export-types.ts';
+import { layoutBed } from '#lib/printers/layout-bed.ts';
 
 export * from './plan';
 export { plateColumns, plateOrigin } from './plate-grid';
@@ -58,6 +61,30 @@ export function parsePlates(v: string | null | undefined): number[] | undefined 
 	return [...new Set(out)];
 }
 
+/**
+ * The MakeGood layout the build's plates come from, when the plates are that layout's (not an
+ * uploaded file's), and whether its bed is the export printer's bed.
+ */
+async function kitLayoutFor(
+	db: DbOrTx,
+	buildId: string,
+	userId: string,
+	view: BuildView
+): Promise<{ name: string; bed: BuildPrinter; fits: boolean } | null> {
+	if (!view.plates.length || !view.printer) return null;
+	if (!view.plates.every((p) => p.source === 'template' || p.source.startsWith('layout:')))
+		return null;
+	const { layouts, current } = await buildLayouts(db, buildId, userId);
+	const bed = layoutBed(current);
+	if (!bed) return null;
+	const same = (a: number, b: number) => Math.abs(a - b) < 0.5;
+	return {
+		name: layouts.find((l) => l.key === current)?.name ?? bed.name,
+		bed,
+		fits: same(bed.bedX, view.printer.bedX) && same(bed.bedY, view.printer.bedY)
+	};
+}
+
 /** Resolve the plan for a build: access check, arrangement, geometry. Throws ApiError. */
 export async function prepareExport(
 	db: DbOrTx,
@@ -80,18 +107,37 @@ export async function prepareExport(
 	const hasPose = plates.some((pl) =>
 		pl.items.some((i) => typeof i === 'object' && i !== null && 'pose' in i)
 	);
-	if (info.layout !== 'arranged' || !plates.length || info.stale || hasPose) {
-		const plan = planArrangement(view, footprints, null);
-		if (!plan) throw new ApiError(400, 'Choose a printer first.');
-		plates = plan.result.plates;
-		notes.push({
-			code: 'arrangement',
-			severity: 'info',
-			message:
-				info.layout !== 'arranged'
-					? `The build's plates are not arranged for ${view.printer.name} yet, so the file uses a fresh arrangement (plate numbers may differ from the Print tab).`
-					: `The colors changed since the plates were arranged, so the file uses a fresh arrangement (plate numbers may differ). Re-arrange on the Print tab to match.`
-		});
+	const arrangedOk = info.layout === 'arranged' && plates.length > 0 && !info.stale && !hasPose;
+	if (!arrangedOk) {
+		// A MakeGood layout chosen for this bed: the file keeps the Print tab's plates (same numbers,
+		// names and parts) and only places the parts on each bed.
+		const kit = info.layout === 'arranged' ? null : await kitLayoutFor(db, buildId, userId, view);
+		const placed = kit?.fits ? placeOnPlates(view, footprints, null) : null;
+		if (kit?.fits && placed?.plates.length) {
+			plates = placed.plates;
+			for (const o of placed.overflow)
+				notes.push({
+					code: 'arrangement',
+					severity: 'info',
+					plate: o.number,
+					message: `Plate ${o.number} (${o.name}) does not fit one ${view.printer.bedX} × ${view.printer.bedY} mm bed on ${view.printer.name}, so ${o.extra === 1 ? 'one extra plate' : `${o.extra} extra plates`} ${o.extra === 1 ? 'was' : 'were'} added at the end ("${o.name} (continued)"). The other plates match the Print tab.`
+				});
+		} else {
+			const plan = planArrangement(view, footprints, null);
+			if (!plan) throw new ApiError(400, 'Choose a printer first.');
+			plates = plan.result.plates;
+			const how = `On the Files tab choose "Arrange for my bed" (or "Re-arrange plates") to match`;
+			notes.push({
+				code: 'arrangement',
+				severity: 'info',
+				message:
+					info.layout === 'arranged'
+						? `The colors changed since the plates were arranged, so the file uses a fresh arrangement (plate numbers may differ). Re-arrange on the Print tab to match.`
+						: kit && !kit.fits
+							? `The plates use MakeGood's ${kit.name} layout, made for a ${kit.bed.bedX} × ${kit.bed.bedY} mm bed, not for ${view.printer.name} (${view.printer.bedX} × ${view.printer.bedY} mm), so the file uses a fresh arrangement (plate numbers may differ). ${how} the Print tab.`
+							: `The build's plates are not arranged for ${view.printer.name}, so the file uses a fresh arrangement (plate numbers may differ from the Print tab). ${how} the Print tab.`
+			});
+		}
 	}
 	try {
 		const plan = buildExportPlan({

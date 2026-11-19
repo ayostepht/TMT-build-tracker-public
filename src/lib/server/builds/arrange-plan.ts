@@ -10,6 +10,7 @@ import { and, eq } from 'drizzle-orm';
 import {
 	arrange,
 	type ArrangeOptions,
+	type ArrangeInput,
 	type ArrangePart,
 	type ArrangeResult,
 	type ArrangeRole,
@@ -76,12 +77,13 @@ function roleLabel(f: BuildView['filaments'][number]): string {
 	return TEMPLATE_ROLE_NAMES.test(f.key) && f.key.length <= 12 ? cap(f.key) : f.name;
 }
 
-export function planArrangement(
+/** `arrange()` input for a build view: its parts, filament roles and printer. Null without a printer. */
+function arrangeInputFor(
 	view: BuildView,
 	footprints: Map<string, PrintFootprint>,
-	layoutHint: string | null = null,
+	layoutHint: string | null,
 	options?: ArrangeOptions
-): Plan | null {
+): ArrangeInput | null {
 	const p = view.printer;
 	if (!p) return null;
 	const roles: ArrangeRole[] = view.filaments.map((f) => ({
@@ -130,7 +132,7 @@ export function planArrangement(
 			hint: bits.join(' ') || null
 		});
 	}
-	const result = arrange({
+	return {
 		parts,
 		unsized,
 		roles,
@@ -146,8 +148,81 @@ export function planArrangement(
 		// TMT_ARRANGE_OPTIMIZE=off: diagnostic switch to compare with the packer-only layout (screenshots, bug reports)
 		options:
 			options ?? (process.env.TMT_ARRANGE_OPTIMIZE === 'off' ? { optimize: false } : undefined)
-	});
-	return { result, unsized: unsized.map((u) => u.slug), learned: learnedOf(view) };
+	};
+}
+
+export function planArrangement(
+	view: BuildView,
+	footprints: Map<string, PrintFootprint>,
+	layoutHint: string | null = null,
+	options?: ArrangeOptions
+): Plan | null {
+	const input = arrangeInputFor(view, footprints, layoutHint, options);
+	if (!input) return null;
+	return {
+		result: arrange(input),
+		unsized: (input.unsized ?? []).map((u) => u.slug),
+		learned: learnedOf(view)
+	};
+}
+
+export interface LayoutPlacement {
+	/** The build's plates (same numbers, names, runs and parts as the Print tab), with positions. */
+	plates: ArrangedPlate[];
+	/** Plates whose parts needed more than one bed here: the number, name and how many extra plates were added. */
+	overflow: { number: number; name: string; extra: number }[];
+}
+
+/**
+ * Place the parts of each of the build's existing plates (a MakeGood layout carries membership
+ * only, no positions) flat on the bed, one plate at a time: the plate numbers, names, runs and
+ * part grouping stay exactly as on the Print tab. Only flat Z rotations (see `arrange.ts`). A
+ * plate whose parts do not fit one bed (other bed keep-outs, a recolor, parts bigger than the
+ * bed) keeps its own number for the first bed; the rest goes to extra plates numbered after the
+ * last, listed in `overflow`. Null without a printer.
+ */
+export function placeOnPlates(
+	view: BuildView,
+	footprints: Map<string, PrintFootprint>,
+	layoutHint: string | null = null
+): LayoutPlacement | null {
+	const input = arrangeInputFor(view, footprints, layoutHint);
+	if (!input) return null;
+	const bySlug = new Map(input.parts.map((p) => [p.slug, p]));
+	const out: ArrangedPlate[] = [];
+	const extras: { from: ArrangedPlate; src: number }[] = [];
+	const overflow: LayoutPlacement['overflow'] = [];
+	const roleOf = new Map(view.parts.map((p) => [p.slug, p.role]));
+	for (const pl of view.plates) {
+		const parts = pl.parts.map((s) => bySlug.get(s)).filter((p) => !!p);
+		if (!parts.length) {
+			// no part of this plate has a footprint: keep the plate so the export names the missing geometry
+			out.push({
+				number: pl.number,
+				name: pl.name,
+				items: [],
+				parts: pl.parts,
+				roles: [...new Set(pl.parts.map((s) => roleOf.get(s)).filter((r): r is string => !!r))],
+				runs: pl.runs,
+				estGrams: {},
+				utilisation: 0,
+				bed: { x: input.printer.bedX, y: input.printer.bedY, margin: input.printer.margin }
+			});
+			continue;
+		}
+		const r = arrange({ ...input, parts, unsized: [] });
+		const [first, ...rest] = r.plates;
+		if (!first) continue;
+		out.push({ ...first, number: pl.number, name: pl.name, runs: pl.runs });
+		if (rest.length) overflow.push({ number: pl.number, name: pl.name, extra: rest.length });
+		for (const x of rest) extras.push({ from: x, src: pl.number });
+	}
+	let next = Math.max(0, ...view.plates.map((p) => p.number)) + 1;
+	for (const { from, src } of extras) {
+		const base = view.plates.find((p) => p.number === src)!;
+		out.push({ ...from, number: next++, name: `${base.name} (continued)`, runs: base.runs });
+	}
+	return { plates: out.sort((a, b) => a.number - b.number), overflow };
 }
 
 /** Stable identity of a plate set: what is on each plate in which color, no positions. */

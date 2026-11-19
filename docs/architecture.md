@@ -240,6 +240,16 @@ Sections match the subagents in `.claude/agents/`:
   export (`buildExportPlan`, `prepareExport`) fall back to it; arranging, re-arranging,
   printer jobs and uploaded 3MFs still need `view.printer`. A new tuned layout gets an
   implied bed by adding it to `LAYOUT_BEDS`.
+- **Export follows the chosen layout:** `prepareExport` uses the stored arrangement when the
+  build is arranged; when the build's plates are a MakeGood layout whose bed equals the export
+  printer's (`kitLayoutFor`: `layoutBed(current key)`, 0.5 mm), it follows the Print tab's plates
+  (same numbers, names, runs, parts) and places each plate's parts flat with `placeOnPlates`
+  (`builds/arrange-plan.ts`; one `arrange()` per plate, Z rotation only). A plate that needs more
+  than one bed keeps its number for the first bed; the rest goes to "<name> (continued)" plates
+  numbered after the last, with a note naming the plate. Only a layout for another bed, an
+  uploaded file, no plates, or a stale arrangement gives the "fresh arrangement" note, which says
+  to use "Arrange for my bed" / "Re-arrange plates" on the Files tab. No separate "arrange now"
+  button: choosing the layout is enough.
 - **Arranger:** `domain/arrange.ts` (see `arrange.README.md`). Flat rotations only
   (no 3D re-orientation code exists: removed 2026-11-11; `seed/arrange-tmt-snapshot.test.ts` pins the flat arranger's output); 1 mm default edge margin, 8 mm between parts, max
   clearance to edges and keep-outs; rigid source groups only when per-piece packing would
