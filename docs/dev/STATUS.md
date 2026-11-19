@@ -62,8 +62,8 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - No e2e seam for link printers: the live-mock printer specs were removed; logic is covered
   by unit tests only [printers, e2e-playwright].
 - `printers.host` only holds the placeholders `octoeverywhere` / `manual` now, and the
-  `printers.kind` comment in `app.schema.ts` still lists `bambu-lan`; decide before the
-  decide whether to drop or rename the column (a new migration now that the baseline is frozen) [kit-and-startup, printers].
+  `printers.kind` comment in `app.schema.ts` still lists `bambu-lan`; decide whether to drop or rename the column (a new migration now that the
+  baseline is frozen) [kit-and-startup, printers].
 - Team quotas (members, pending invites, teams per user) run inside Better Auth hooks outside
   our transactions: best-effort under concurrency. Acceptable for launch [app-shell].
 - `pendingInvitationCount` loads every pending invitation per page (fine at launch scale).
