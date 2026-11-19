@@ -84,14 +84,23 @@ verifier close each wave.
 - Wave 3b merged: tracking-first home with the real MakeGood chair (lazy three.js, still images first, CC0 credit), "team" wording everywhere, gallery cards render the design on the chair, the per-design public flag retired (sharing = the gallery).
 - Security review (2026-11-20): auth, access, linking, test sign-in seam, SSRF guard, CSP and secrets sound. Fixes on this branch: gallery (no sharing from a team's own kit copy, public author names only, sticky admin hide, share-event cap, scoped design list). Further hardening is held back until it can be coordinated with the self-hosted line (maintainer decision pending).
 
+- Second security review (2026-11-20): nothing High; earlier findings confirmed fixed. Gallery limited to built-in kits end to end, seeded examples marked explicitly, built-in kit model cacheable by Cloudflare, share-event pruning (all on this branch).
+- Final gate on the combined tree: check, lint, 1901 unit tests (twice), build, production start from an empty database (twice, idempotent) green; full e2e 244/245 with the one failure fixed and its specs re-run green.
+
+### Rules from now on
+
+- **Migrations:** until the first real deploy, schema changes regenerate the single `drizzle/0000_baseline.sql`. From the first deploy on, never edit an applied migration: add `0001_…` and later.
+
 ### Waiting on the maintainer
 
-- Coordinated release of the held hardening (see the private note in the session).
-- Real accounts: Supabase project, Google/GitHub/Discord OAuth apps, Cloudflare, Fly.io/Railway or self-host + Tunnel, analytics provider (all steps in `docs/guides/hosting.md`).
+- Coordinated release of the held hardening (private note in the session).
+- Real accounts: Supabase project, Google/GitHub/Discord OAuth apps, Cloudflare, Fly.io/Railway or self-host + Tunnel, analytics provider (all steps in `docs/guides/hosting.md`). Check the Supabase lockdown step on the real project (it is tested on plain Postgres only).
 - Review the screenshots and the demo.
-- Small UI choice: an "Allow sharing again" admin button for designs hidden from the gallery (API exists).
+- Choices: an "Allow sharing again" admin button for designs hidden from the gallery (the API exists); Cloudflare Turnstile on `/demo` against slot-filling by many addresses; whether the service worker should drop cached kit models on sign-out (shared devices).
 
 ### Follow-ups noted
+
+- `pendingInvitationCount` loads every pending invitation per page (fine at launch scale).
 
 - Team quotas (`membersPerChapter`, `pendingInvitesPerChapter`, teams per user) run inside Better Auth hooks outside our transactions, so they are best-effort under concurrency. Acceptable for launch; atomic version would wrap Better Auth's inserts.
 - Audit other unordered selects on composite-key tables for SQLite-index-order assumptions.
