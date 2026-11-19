@@ -24,14 +24,14 @@ If you try one of these, please report what worked and what did not in the [issu
 
 The app reads status. It never moves, heats, pauses, stops or starts anything, and it never sends a file to a printer. The only messages it sends, per printer type:
 
-| Printer type        | What the app sends                                                                                                               |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Elegoo (SDCP)       | Status refresh (Cmd 0) and attributes refresh (Cmd 1), both with empty data, and one command, Cmd 386 `{"Enable":1}`: camera on. |
-| Klipper (Moonraker) | A `printer.objects.subscribe` request and `server.info`: both only read.                                                         |
-| OctoPrint           | HTTP `GET` requests (`/api/job`, `/api/printer`) with your API key.                                                              |
-| Not connected       | Nothing. The app never contacts it.                                                                                              |
+| Printer type        | What the app sends                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------ |
+| Elegoo (SDCP)       | Status refresh (Cmd 0) and attributes refresh (Cmd 1), both with empty data. Nothing else. |
+| Klipper (Moonraker) | A `printer.objects.subscribe` request and `server.info`: both only read.                   |
+| OctoPrint           | HTTP `GET` requests (`/api/job`, `/api/printer`) with your API key.                        |
+| Not connected       | Nothing. The app never contacts it.                                                        |
 
-The camera-on command is sent only to an Elegoo printer. These rules are enforced in code (`src/lib/server/printers/adapters/`); the Elegoo adapter refuses to build any other command.
+The app sends no write command to any printer, not even to switch a camera on. These rules are enforced in code (`src/lib/server/printers/adapters/`); the Elegoo adapter refuses to build any command other than the two reads.
 
 Starting a plate in the app (the plate's status badge, then **Where is it printing?**) only tells the app which printer to follow and starts the clock. You start the print at the printer itself.
 
@@ -47,7 +47,7 @@ Centauri Carbon and other printers that speak SDCP.
 
 ### Through an OctoEverywhere shared link
 
-On the **Integrations** page choose **Add a printer**, then **OctoEverywhere link**, pick Elegoo and paste the **shared link**. No address, port or camera address is needed. Status uses the link's WebSocket (`wss://shared-<token>.octoeverywhere.com/websocket`) and the camera is the stream at `/video` on the same host; the app sends the one camera-on command (Cmd 386) before reading it.
+On the **Integrations** page choose **Add a printer**, then **OctoEverywhere link**, pick Elegoo and paste the **shared link**. No address, port or camera address is needed. Status uses the link's WebSocket (`wss://shared-<token>.octoeverywhere.com/websocket`) and the camera is the stream at `/video` on the same host. The app never switches the camera on; if the printer's camera is off, the stream stays empty.
 
 The printer allows only a few simultaneous connections (about five on the Centauri Carbon; observed, not from Elegoo's documentation). The link uses OctoEverywhere's existing connection, not one of the printer's own.
 
@@ -85,4 +85,4 @@ The demo cannot add printers.
 
 - **A link printer shows offline:** check in OctoEverywhere that the printer is online and the shared connection still exists. If you deleted and recreated it, edit the printer and paste the new link.
 - **"The OctoEverywhere shared link is missing":** edit the printer and enter the link again.
-- **No camera:** Elegoo's camera needs the printer to accept the camera-on command; Klipper and OctoPrint take the camera address from their own webcam settings.
+- **No camera:** the app shows an Elegoo camera only while the printer itself has it on (the app never sends a command to switch it on); Klipper and OctoPrint take the camera address from their own webcam settings.

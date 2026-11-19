@@ -16,7 +16,7 @@ This is a volunteer project: expect an acknowledgement within a few days and a f
 
 - Sign-in (Google, GitHub, Discord), sessions, accounts, teams, invitations, the demo sandbox and the roles owner, editor and viewer: getting access you should not have, acting as someone else, changing another team's data, or doing from a demo what a demo is refused.
 - The HTTP API and uploads: missing permission checks, path traversal, unsafe file handling, request smuggling or limits that can be bypassed to exhaust the server.
-- Printer and camera connections: reaching addresses the app should refuse (the only outbound destination for printers is an OctoEverywhere shared-link host that resolves to public addresses), leaking printer access codes, API keys or shared links, or making the app send printer commands (it only reads status; the single exception is Elegoo's camera-on command).
+- Printer and camera connections: reaching addresses the app should refuse (the only outbound destination for printers is an OctoEverywhere shared-link host that resolves to public addresses), leaking printer access codes, API keys or shared links, or making the app send any printer command (it only reads status and sends no write command at all).
 - The Docker image and its startup: secrets or personal data in the image, unsafe defaults.
 
 ## Out of scope and known gaps
