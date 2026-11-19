@@ -5,6 +5,7 @@ import { ApiError, requireEditor } from '../access';
 import { canSeeDesign } from '../designs/access';
 import { arrangeForPrinter } from './plates';
 import { first, one, type Db } from '../db';
+import { BUILD_HOSPITAL_MAX, BUILD_NAME_MAX, BUILD_RECIPIENT_MAX } from './limits';
 import { assertUnder, countBuilds, countDrafts } from '../quota';
 import {
 	activity,
@@ -40,6 +41,13 @@ export interface CreateBuildInput {
 	setup?: boolean;
 }
 
+function freeText(v: unknown, field: string, max: number): string | null {
+	if (v === undefined || v === null) return null;
+	if (typeof v !== 'string' || v.length > max)
+		throw new ApiError(400, `${field} must be text of at most ${max} characters`);
+	return v.trim() || null;
+}
+
 /** Create a build from a template (and optional color design) in one transaction. Returns the new id. */
 export async function createBuild(
 	db: Db,
@@ -47,8 +55,11 @@ export async function createBuild(
 	userId: string
 ): Promise<string> {
 	await requireEditor(db, input.organizationId, userId);
-	const name = input.name.trim();
+	if (typeof input.name !== 'string') throw new ApiError(400, 'Name is required');
+	const name = input.name.trim().slice(0, BUILD_NAME_MAX);
 	if (!name) throw new ApiError(400, 'Name is required');
+	const recipient = freeText(input.recipient, 'recipient', BUILD_RECIPIENT_MAX);
+	const hospital = freeText(input.hospital, 'hospital', BUILD_HOSPITAL_MAX);
 	if (input.deliveryDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.deliveryDate))
 		throw new ApiError(400, 'Delivery date must be YYYY-MM-DD');
 
@@ -102,8 +113,8 @@ export async function createBuild(
 					organizationId: input.organizationId,
 					templateId: tpl.id,
 					name,
-					recipient: input.recipient?.trim() || null,
-					hospital: input.hospital?.trim() || null,
+					recipient,
+					hospital,
 					deliveryDate: input.deliveryDate || null,
 					design: design
 						? {

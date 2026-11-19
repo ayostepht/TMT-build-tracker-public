@@ -34,14 +34,45 @@ export function authRequestHeaders(
  * IPv6 zone ids such as `fe80::1%eth0` even though `net.isIP` accepts them, and an address it
  * rejects silently skips rate limiting, so any `%` is refused here. An IPv4-mapped IPv6
  * address (`::ffff:203.0.113.5`, how Node reports IPv4 peers on a dual-stack socket) is passed
- * on as plain IPv4, so one client has one bucket however the socket reported it.
+ * on as plain IPv4, so one client has one bucket however the socket reported it. Other IPv6
+ * addresses are reduced to their /64 prefix (`2001:db8:1:2::`), one bucket per network.
  */
 export function normaliseClientAddress(raw: string): string | null {
 	const address = raw.trim();
 	if (!address || address.includes('%') || !isIP(address)) return null;
 	const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(address);
 	if (mapped && isIP(mapped[1]) === 4) return mapped[1];
+	if (isIP(address) === 6) return ipv6Prefix64(address);
 	return address;
+}
+
+/**
+ * The /64 network of an IPv6 address, written as `a:b:c:d::`. One subscriber normally holds a
+ * whole /64 (often a /56 or more), so per-address limits would otherwise be free to dodge by
+ * changing the low bits. Returns the input unchanged if it cannot be expanded.
+ */
+function ipv6Prefix64(address: string): string {
+	let text = address.toLowerCase();
+	const tail = /(\d{1,3}(?:\.\d{1,3}){3})$/.exec(text);
+	if (tail) {
+		const o = tail[1].split('.').map(Number);
+		if (o.some((n) => n > 255)) return address;
+		text =
+			text.slice(0, -tail[1].length) +
+			((o[0] << 8) | o[1]).toString(16) +
+			':' +
+			((o[2] << 8) | o[3]).toString(16);
+	}
+	const halves = text.split('::');
+	if (halves.length > 2) return address;
+	const head = halves[0] ? halves[0].split(':') : [];
+	const rest = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+	const fill = halves.length === 2 ? 8 - head.length - rest.length : 0;
+	if (fill < 0 || (halves.length === 1 && head.length !== 8)) return address;
+	const groups = [...head, ...Array<string>(fill).fill('0'), ...rest];
+	if (groups.length !== 8) return address;
+	const first = groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16));
+	return first.join(':') + '::';
 }
 
 /** `TRUST_CLOUDFLARE=1` (or `true`): the origin is only reachable through Cloudflare, so `CF-Connecting-IP` is the client. */

@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
-FROM node:22-bookworm-slim AS builder
+# Base image pinned by digest (node:22-bookworm-slim); bump it deliberately to take Node/Debian updates.
+FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS builder
 WORKDIR /app
 # No native build tools: every dependency is pure JavaScript or WebAssembly (postgres-js, occt-import-js).
 COPY package.json package-lock.json .npmrc ./
@@ -13,7 +14,7 @@ RUN npm run build && npm prune --omit=dev
 # gh_token (`--secret id=gh_token,...`; needed only for a private fork, the plain release URL works
 # on the public repository). If the download fails the build fails,
 # unless --build-arg KITPACK_OPTIONAL=1 (the app then tries again at first start).
-FROM node:22-bookworm-slim AS kitpack
+FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS kitpack
 ARG KITPACK_URL=""
 ARG KITPACK_OPTIONAL=0
 ARG KITPACK_REPO=ayostepht/TMT-Build-Tracker
@@ -26,7 +27,7 @@ RUN --mount=type=secret,id=gh_token,required=false \
     GH_TOKEN_FILE=/run/secrets/gh_token \
     fetch-kitpacks /kitpacks-context/index.json /kitpacks-context /kitpacks
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS runtime
 # Hosted-site image. Settings that belong to the host (DATABASE_URL, BETTER_AUTH_SECRET, PUBLIC_URL,
 # ADMIN_EMAILS, OAuth keys) are never baked in: set them in the host's secret store.
 # BODY_SIZE_LIMIT / MAX_3MF_MB: Cloudflare's free plan refuses request bodies over 100 MB, so a

@@ -75,7 +75,7 @@ Generate the session secret on any computer with OpenSSL (or any password genera
 openssl rand -hex 32
 ```
 
-That is `BETTER_AUTH_SECRET`. Keep a copy in a password manager. If it changes, everyone is signed out (no data is lost).
+That is `BETTER_AUTH_SECRET`. Keep a copy in a password manager. If it changes, everyone is signed out. Printer secrets are derived from it too, so every saved OctoEverywhere printer link becomes unreadable and makers must re-add their printer links after a rotation (other data is not lost).
 
 The settings you need, all described in [`.env.example`](../../.env.example):
 
@@ -258,9 +258,11 @@ All three are cookieless. Only the chosen provider's script is loaded and only i
 - [ ] `TRUST_CLOUDFLARE=1` only when the container cannot be reached except through Cloudflare (Tunnel, or a firewall allowing only [Cloudflare's published address ranges](https://www.cloudflare.com/ips/)). Otherwise anybody can invent their own client address with a `CF-Connecting-IP` header. The effect is limited to evading per-address rate limits (sign-in attempts, demo and write limits); it does not give anyone access to accounts or data. Without Cloudflare, use `ADDRESS_HEADER` for a header your own proxy overwrites.
 - [ ] Cloudflare SSL mode is **Full (strict)** and Always Use HTTPS is on.
 - [ ] The Supabase database password is strong and only in `DATABASE_URL`. Do not put the Supabase "service role" or "anon" keys anywhere: the app does not use them.
+- [ ] `DATABASE_URL` for Supabase ends in `?sslmode=require`. The app logs a warning at boot when it does not.
+- [ ] Supabase's automatic REST access is off for the app's tables: the app turns it off itself at startup (it revokes the `anon` and `authenticated` roles' access to them). Converting STEP models into the 3D view is limited to the site admin on the hosted site.
 - [ ] The container runs as a normal user (it does) and only one replica runs.
 - [ ] `ADMIN_EMAILS` lists only people you trust, and you signed in as the admin first.
-- [ ] Rotate secrets when someone leaves or a secret may have leaked: reset the Supabase database password (then update `DATABASE_URL`), generate a new client secret at the provider, and change `BETTER_AUTH_SECRET` (signs everyone out).
+- [ ] Rotate secrets when someone leaves or a secret may have leaked: reset the Supabase database password (then update `DATABASE_URL`), generate a new client secret at the provider, and change `BETTER_AUTH_SECRET` (signs everyone out and breaks saved printer links: makers re-add them).
 - [ ] Turn on Supabase's and Cloudflare's account two-factor sign-in.
 - [ ] You have restored a backup once, so you know it works.
 

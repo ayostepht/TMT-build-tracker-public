@@ -14,10 +14,62 @@ export function databaseUrl(): string {
 	return env.DATABASE_URL || (isProd ? '' : 'postgres://tmt:tmt@localhost:5432/tmt_dev');
 }
 
-/** Connections held by this process (`DATABASE_POOL_MAX`, default 10, clamped to 1-100). */
+/** The smallest pool that cannot starve itself: one transaction plus one query running beside it. */
+export const MIN_POOL_MAX = 2;
+
+/** Connections held by this process (`DATABASE_POOL_MAX`, default 10, clamped to 2-100). */
 export function databasePoolMax(): number {
 	const n = Number.parseInt(env.DATABASE_POOL_MAX ?? '', 10);
-	return Number.isFinite(n) ? Math.min(100, Math.max(1, n)) : 10;
+	return Number.isFinite(n) ? Math.min(100, Math.max(MIN_POOL_MAX, n)) : 10;
+}
+
+/** Whether the URL points at a Supabase-style transaction pooler (startup parameters are refused there). */
+function behindPooler(url: URL): boolean {
+	return url.port === '6543' || /(^|\.)pooler\./i.test(url.hostname);
+}
+
+/**
+ * Server-side `statement_timeout` for every connection, in ms (`DATABASE_STATEMENT_TIMEOUT_MS`,
+ * default 30000, `0` = none): a stuck query errors instead of hanging the app. Sent as a startup
+ * parameter, which a transaction pooler (port 6543, or a `pooler.` host) may refuse, so it
+ * defaults to off there; set the variable to force it.
+ */
+export function databaseStatementTimeoutMs(url: string = databaseUrl()): number {
+	const raw = (env.DATABASE_STATEMENT_TIMEOUT_MS ?? '').trim();
+	if (/^\d+$/.test(raw)) return Math.min(Number(raw), 3_600_000);
+	try {
+		if (behindPooler(new URL(url))) return 0;
+	} catch {
+		/* an unparseable URL fails where it is used */
+	}
+	return 30_000;
+}
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '']);
+
+/**
+ * Non-fatal problems with the database settings, never containing the connection string. Logged
+ * once when the pool opens.
+ */
+export function databaseWarnings(url: string = databaseUrl()): string[] {
+	const out: string[] = [];
+	const raw = Number.parseInt(env.DATABASE_POOL_MAX ?? '', 10);
+	if (Number.isFinite(raw) && raw < MIN_POOL_MAX)
+		out.push(`DATABASE_POOL_MAX=${raw} is too small for the app; using ${MIN_POOL_MAX}.`);
+	try {
+		const u = new URL(url);
+		const host = u.hostname.toLowerCase();
+		const local =
+			LOCAL_HOSTS.has(host) || host.endsWith('.localhost') || host.startsWith('/') || !host;
+		const mode = (u.searchParams.get('sslmode') ?? '').toLowerCase();
+		if (!local && !['require', 'verify-ca', 'verify-full'].includes(mode))
+			out.push(
+				'DATABASE_URL points to a remote database without sslmode=require (or verify-full): the connection is not encrypted.'
+			);
+	} catch {
+		/* an unparseable URL fails where it is used */
+	}
+	return out;
 }
 
 const PUBLIC_URL_VARS = ['PUBLIC_URL', 'BETTER_AUTH_URL', 'ORIGIN'] as const;
@@ -200,12 +252,14 @@ export function e2eAuthEnabled(): boolean {
 
 /**
  * Demo sandbox limits, all env-configurable (digits, or `off` where a limit may be removed):
- * `DEMO_MAX_LIVE` (live demo users, default 500), `DEMO_PER_IP_PER_HOUR` (default 5),
+ * `DEMO_MAX_LIVE` (live demo users, default 500), `DEMO_PER_IP_PER_HOUR` (default 5), `DEMO_STARTS_PER_MINUTE` (all addresses together, default 20),
  * `DEMO_TTL_HOURS` (default 24, 1 to 72) and `DEMO_BUILDS` (builds one demo may hold, default 2).
  */
 export interface DemoConfig {
 	maxLive: number;
 	perIpPerHour: number;
+	/** Demo starts from all addresses together per minute. */
+	startsPerMinute: number;
 	ttlMs: number;
 	buildsPerDemo: number;
 }
@@ -222,6 +276,7 @@ export function demoConfig(): DemoConfig {
 	return {
 		maxLive: demoInt('DEMO_MAX_LIVE', 500, 0, 100_000),
 		perIpPerHour: demoInt('DEMO_PER_IP_PER_HOUR', 5, 0, 1000),
+		startsPerMinute: demoInt('DEMO_STARTS_PER_MINUTE', 20, 0, 10_000),
 		ttlMs: demoInt('DEMO_TTL_HOURS', 24, 1, 72) * 3600 * 1000,
 		buildsPerDemo: demoInt('DEMO_BUILDS', 2, 1, 10)
 	};

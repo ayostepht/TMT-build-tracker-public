@@ -24,7 +24,7 @@ describe('Cloudflare mode (TRUST_CLOUDFLARE)', () => {
 
 	it('accepts IPv6 and normalises a mapped IPv4', () => {
 		expect(clientAddress(new Headers({ 'cf-connecting-ip': '2001:db8::7' }), sock, cf)).toBe(
-			'2001:db8::7'
+			'2001:db8:0:0::'
 		);
 		expect(clientAddress(new Headers({ 'cf-connecting-ip': '::ffff:203.0.113.5' }), sock, cf)).toBe(
 			'203.0.113.5'

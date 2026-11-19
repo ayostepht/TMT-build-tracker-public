@@ -2,7 +2,13 @@ import { sql } from 'drizzle-orm';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres, { type Sql } from 'postgres';
-import { databasePoolMax, databaseUrl } from '../config';
+import {
+	databasePoolMax,
+	databaseStatementTimeoutMs,
+	databaseUrl,
+	databaseWarnings,
+	MIN_POOL_MAX
+} from '../config';
 import * as schema from './schema';
 
 export type Schema = typeof schema;
@@ -22,8 +28,10 @@ export const MIGRATIONS_FOLDER = './drizzle';
 const MIGRATION_LOCK_KEY = 7_346_201_001;
 
 export interface OpenDbOptions {
-	/** Connections in the pool (default `DATABASE_POOL_MAX` or 10). */
+	/** Connections in the pool (default `DATABASE_POOL_MAX` or 10; at least 2). */
 	max?: number;
+	/** Server-side statement timeout in ms (default `DATABASE_STATEMENT_TIMEOUT_MS`, 30 s; 0 = none). */
+	statementTimeoutMs?: number;
 }
 
 /**
@@ -32,11 +40,17 @@ export interface OpenDbOptions {
  * `sslmode=require` in the URL turns TLS on (postgres-js reads it).
  */
 export function openDb(url: string, opts: OpenDbOptions = {}): Db {
+	const timeout = opts.statementTimeoutMs ?? databaseStatementTimeoutMs(url);
 	const client = postgres(url, {
-		max: opts.max ?? databasePoolMax(),
+		max: Math.max(MIN_POOL_MAX, opts.max ?? databasePoolMax()),
 		prepare: false,
 		onnotice: () => {},
-		connect_timeout: 15
+		connect_timeout: 15,
+		// Idle connections are returned after 30 s and every connection is recycled within the hour,
+		// so a dropped or half-open one does not stay in the pool.
+		idle_timeout: 30,
+		max_lifetime: 60 * 60,
+		...(timeout > 0 ? { connection: { statement_timeout: timeout } } : {})
 	});
 	return drizzle(client, { schema }) as Db;
 }
@@ -49,6 +63,8 @@ export function openDb(url: string, opts: OpenDbOptions = {}): Db {
 export async function runMigrations(db: Db, folder: string = MIGRATIONS_FOLDER): Promise<void> {
 	await db.$client.begin(async (tx) => {
 		await tx`select pg_advisory_xact_lock(${MIGRATION_LOCK_KEY})`;
+		// A long migration (index build, backfill) is not cut off by the app's statement timeout.
+		await tx`set local statement_timeout = 0`;
 		// A TransactionSql carries no `options`/`parameters`, which drizzle's postgres-js driver reads.
 		const handle = tx as unknown as Sql;
 		handle.options ??= db.$client.options;
@@ -64,6 +80,7 @@ export function getDb(): Db {
 	if (!instance) {
 		const url = databaseUrl();
 		if (!url) throw new Error('DATABASE_URL is not set (a Postgres connection string).');
+		for (const w of databaseWarnings(url)) console.warn(`[tmt] ${w}`);
 		instance = openDb(url);
 	}
 	return instance;

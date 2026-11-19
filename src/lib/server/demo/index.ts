@@ -9,7 +9,7 @@ export { cleanupExpiredDemos, deleteDemoUser, liveDemoCount, startDemoCleanup } 
 export { resetDemoLimits } from './limits';
 export { seedDemoBuild } from './seed';
 
-/** The per-IP limit was reached; `retryAfter` is in seconds. */
+/** The per-IP or global start limit was reached; `retryAfter` is in seconds. */
 export class DemoRateError extends Error {
 	constructor(public retryAfter: number) {
 		super('Too many demos from this address. Try again later.');
@@ -28,7 +28,7 @@ export interface CookieJar {
  */
 export async function startDemo(auth: Auth, ip: string, cookies: CookieJar): Promise<string> {
 	const cfg = demoConfig();
-	const wait = takeDemoStart(ip, cfg.perIpPerHour);
+	const wait = takeDemoStart(ip, cfg.perIpPerHour, Date.now(), cfg.startsPerMinute);
 	if (wait > 0) throw new DemoRateError(wait);
 	let res;
 	try {

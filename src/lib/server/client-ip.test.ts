@@ -31,7 +31,7 @@ describe('authRequestHeaders', () => {
 	});
 	it('accepts IPv6', () => {
 		expect(authRequestHeaders(new Headers(), () => '2001:db8::1')?.get('x-forwarded-for')).toBe(
-			'2001:db8::1'
+			'2001:db8:0:0::'
 		);
 	});
 	it('fails closed when getClientAddress throws', () => {
@@ -59,8 +59,22 @@ describe('zone ids and mapped addresses', () => {
 		expect(normaliseClientAddress('::FFFF:203.0.113.5')).toBe('203.0.113.5');
 	});
 	it('leaves other IPv6 addresses alone', () => {
-		expect(normaliseClientAddress('::1')).toBe('::1');
-		expect(normaliseClientAddress('2001:db8::ffff:1')).toBe('2001:db8::ffff:1');
+		expect(normaliseClientAddress('::1')).toBe('0:0:0:0::');
+		expect(normaliseClientAddress('2001:db8::ffff:1')).toBe('2001:db8:0:0::');
+		expect(normaliseClientAddress('2001:DB8:1:2:aaaa:bbbb:cccc:dddd')).toBe('2001:db8:1:2::');
+		expect(normaliseClientAddress('64:ff9b::198.51.100.7')).toBe('64:ff9b:0:0::');
+	});
+});
+
+describe('IPv6 /64 bucketing', () => {
+	it('gives addresses in one /64 the same key and different /64s different keys', () => {
+		const a = normaliseClientAddress('2001:db8:1:2::1');
+		expect(normaliseClientAddress('2001:db8:1:2:ffff:ffff:ffff:ffff')).toBe(a);
+		expect(normaliseClientAddress('2001:db8:1:3::1')).not.toBe(a);
+	});
+	it('puts the bucketed value in the header handed to Better Auth', () => {
+		const h = authRequestHeaders(new Headers(), () => '2001:db8:1:2:1:2:3:4');
+		expect(h?.get('x-forwarded-for')).toBe('2001:db8:1:2::');
 	});
 });
 

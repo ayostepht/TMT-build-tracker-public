@@ -15,28 +15,38 @@ const BATCH = 200;
 /** Arbitrary constant: instances take turns, the one that gets the lock cleans. */
 const CLEANUP_LOCK = 7_346_201_077;
 
+let cleaning = false;
+
 /**
  * Delete demo users older than the demo lifetime (`DEMO_TTL_HOURS`, default 24). Idempotent and
- * safe with several app instances: a session-level try-lock on one connection lets only one run at a
- * time, the others return 0. Each user is deleted on its own, so one failure does not stop the rest.
+ * safe with several app instances: one run at a time per process, and a
+ * try-lock on the listing across instances. Each user is deleted on its own, so one failure does not stop the rest.
  */
 export async function cleanupExpiredDemos(
 	db: Db,
 	now = new Date(),
 	ttlMs = demoConfig().ttlMs
 ): Promise<number> {
-	const cutoff = new Date(now.getTime() - ttlMs);
-	return db.$client.begin(async (tx) => {
-		const [{ got }] = await tx<
-			{ got: boolean }[]
-		>`select pg_try_advisory_xact_lock(${CLEANUP_LOCK}) as got`;
-		if (!got) return 0;
-		const rows = await db
-			.select({ id: user.id })
-			.from(user)
-			.where(and(eq(user.isDemo, true), lt(user.createdAt, cutoff)))
-			.orderBy(user.createdAt)
-			.limit(BATCH);
+	// One run at a time in this process: a second call returns 0 while one is going.
+	if (cleaning) return 0;
+	cleaning = true;
+	try {
+		const cutoff = new Date(now.getTime() - ttlMs);
+		// Other instances: a transaction-level try-lock around the short listing only, so no pool
+		// connection is held while the deletes (which use the pool) run. If two instances still list the
+		// same user, the second delete finds it gone (404) and is not counted.
+		const rows = await db.transaction(async (tx) => {
+			const res = (await tx.execute(
+				sql`select pg_try_advisory_xact_lock(${CLEANUP_LOCK}) as got`
+			)) as unknown as { got: boolean }[];
+			if (!res[0]?.got) return [];
+			return tx
+				.select({ id: user.id })
+				.from(user)
+				.where(and(eq(user.isDemo, true), lt(user.createdAt, cutoff)))
+				.orderBy(user.createdAt)
+				.limit(BATCH);
+		});
 		let n = 0;
 		for (const r of rows) {
 			try {
@@ -49,7 +59,9 @@ export async function cleanupExpiredDemos(
 			}
 		}
 		return n;
-	}) as Promise<number>;
+	} finally {
+		cleaning = false;
+	}
 }
 
 /** Live demo users. */
