@@ -53,8 +53,8 @@ describe.skipIf(!packFile || !existsSync(packFile))('the real kit pack', () => {
 				})
 			);
 			writeFileSync(join(packs, basename(packFile!)), bytes);
-			process.env.DATABASE_URL = join(dir, 'tmt.db');
-			const { openDb, runMigrations } = await import('../db');
+			process.env.DATA_DIR = dir;
+			const { createTestDb } = await import('../db/testing');
 			const schema = await import('../db/schema');
 			const { templateSeeds } = await import('../seed');
 			const { seedTemplates } = await import('../seed/run');
@@ -65,24 +65,25 @@ describe.skipIf(!packFile || !existsSync(packFile))('the real kit pack', () => {
 			const { printDir } = await import('../print-geometry/store');
 			const { templateModelPath, templateHardwarePath } = await import('../config');
 
-			const db = openDb(process.env.DATABASE_URL);
-			runMigrations(db);
-			seedTemplates(db, templateSeeds);
-			const tpl = db
-				.select()
-				.from(schema.templates)
-				.where(eq(schema.templates.slug, manifest.templateSlug))
-				.get()!;
+			const db = await createTestDb();
+			await seedTemplates(db, templateSeeds);
+			const tpl = (
+				await db
+					.select()
+					.from(schema.templates)
+					.where(eq(schema.templates.slug, manifest.templateSlug))
+			)[0]!;
 			const out = await installKitPacks(db, { dir: packs, download: false });
 			expect(out[0].status).toBe('installed');
 
 			// model + hardware
 			expect(
-				db
-					.select()
-					.from(schema.templateModels)
-					.where(eq(schema.templateModels.templateId, tpl.id))
-					.get()
+				(
+					await db
+						.select()
+						.from(schema.templateModels)
+						.where(eq(schema.templateModels.templateId, tpl.id))
+				)[0]
 			).toBeDefined();
 			expect(existsSync(templateModelPath(tpl.id))).toBe(true);
 			expect(existsSync(templateHardwarePath(tpl.id))).toBe(manifest.contents.hardware);
@@ -91,8 +92,8 @@ describe.skipIf(!packFile || !existsSync(packFile))('the real kit pack', () => {
 			expect(status.installing).toBe(false);
 
 			// print geometry: every part, all from the pack
-			const fps0 = loadFootprints(db, tpl.id);
-			const rows = listPrintGeometry(db, tpl.id);
+			const fps0 = await loadFootprints(db, tpl.id);
+			const rows = await listPrintGeometry(db, tpl.id);
 			expect(rows.length).toBe(41);
 			expect(rows.filter((r) => r.source.startsWith('kitpack:') && r.hasMesh).length).toBe(41);
 			expect(status.print.withGeometry).toBe(41);
@@ -107,11 +108,12 @@ describe.skipIf(!packFile || !existsSync(packFile))('the real kit pack', () => {
 				sparse_infill_density: '5%'
 			});
 			expect(
-				db
-					.select()
-					.from(schema.templateModels)
-					.where(eq(schema.templateModels.templateId, tpl.id))
-					.get()!.slugs
+				(
+					await db
+						.select()
+						.from(schema.templateModels)
+						.where(eq(schema.templateModels.templateId, tpl.id))
+				)[0]!.slugs
 			).toContain('push-handle-one-piece');
 			expect(manifest.otherLicenses?.[0]).toMatchObject({
 				holder: 'jeepxj',
@@ -120,7 +122,7 @@ describe.skipIf(!packFile || !existsSync(packFile))('the real kit pack', () => {
 			expect(manifest.license.holder).toBe('MakeGood');
 
 			// painted faces equal the import's (counted in the pack manifest at build time)
-			const fps = loadFootprints(db, tpl.id);
+			const fps = await loadFootprints(db, tpl.id);
 			let painted = 0;
 			for (const fp of fps.values())
 				for (const pc of fp.pieces)

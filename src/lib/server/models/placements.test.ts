@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { ApiError } from '../access';
-import { openDb, runMigrations, type Db } from '../db';
+import { type Db } from '../db';
+import { createTestDb } from '../db/testing';
 import { templatePartPlacements, templateParts, templates } from '../db/schema';
 import { templateSeeds } from '../seed';
 import { seedTemplates } from '../seed/run';
@@ -10,7 +11,7 @@ import { applyPlacementPatch, IDENTITY, parsePlacementPatch } from './placements
 const m = (x = 0) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1];
 
 describe('parsePlacementPatch', () => {
-	it('accepts matrix, instances and placed', () => {
+	it('accepts matrix, instances and placed', async () => {
 		const p = parsePlacementPatch({ matrix: m(5), instances: [m(1), m(2)], placed: true });
 		expect(p.instances).toHaveLength(2);
 		expect(p.placed).toBe(true);
@@ -31,7 +32,7 @@ describe('parsePlacementPatch', () => {
 	])('rejects %s', (_n, body) => {
 		expect(() => parsePlacementPatch(body)).toThrowError(ApiError);
 	});
-	it('allows exactly 64 instances', () => {
+	it('allows exactly 64 instances', async () => {
 		expect(
 			parsePlacementPatch({ instances: Array.from({ length: 64 }, () => m()) }).instances
 		).toHaveLength(64);
@@ -41,25 +42,27 @@ describe('parsePlacementPatch', () => {
 describe('applyPlacementPatch', () => {
 	let db: Db;
 	let tid: string;
-	beforeEach(() => {
-		db = openDb(':memory:');
-		runMigrations(db);
-		seedTemplates(db, templateSeeds);
-		tid = db.select().from(templates).get()!.id;
+	beforeEach(async () => {
+		db = await createTestDb();
+		await seedTemplates(db, templateSeeds);
+		tid = (await db.select().from(templates))[0]!.id;
 	});
-	it('creates a row for a part without one and merges later patches', () => {
-		const slug = db.select().from(templateParts).where(eq(templateParts.templateId, tid)).get()!
-			.slug;
-		db.delete(templatePartPlacements).where(eq(templatePartPlacements.slug, slug)).run();
-		const a = applyPlacementPatch(db, tid, slug, { placed: true }, null);
+	it('creates a row for a part without one and merges later patches', async () => {
+		const slug = (
+			await db.select().from(templateParts).where(eq(templateParts.templateId, tid))
+		)[0]!.slug;
+		await db.delete(templatePartPlacements).where(eq(templatePartPlacements.slug, slug));
+		const a = await applyPlacementPatch(db, tid, slug, { placed: true }, null);
 		expect(a).toEqual({ slug, matrix: IDENTITY, instances: [], placed: true });
-		const b = applyPlacementPatch(db, tid, slug, { matrix: m(7) }, null);
+		const b = await applyPlacementPatch(db, tid, slug, { matrix: m(7) }, null);
 		expect(b.matrix[12]).toBe(7);
 		expect(b.placed).toBe(true);
 	});
-	it('404s for a slug that is not a part of the template', () => {
-		expect(() => applyPlacementPatch(db, tid, 'nope', { placed: true }, null)).toThrowError(
-			expect.objectContaining({ status: 404 })
-		);
+	it('404s for a slug that is not a part of the template', async () => {
+		await expect(
+			applyPlacementPatch(db, tid, 'nope', { placed: true }, null)
+		).rejects.toMatchObject({
+			status: 404
+		});
 	});
 });

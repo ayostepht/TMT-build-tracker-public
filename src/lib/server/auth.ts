@@ -136,7 +136,7 @@ export function createAuth(db: Db) {
 		...(url ? { baseURL: url } : { trustedOrigins: sameOrigin }),
 		advanced: { useSecureCookies: url ? url.startsWith('https://') : false },
 		secret: authSecret(),
-		database: drizzleAdapter(db, { provider: 'sqlite', schema }),
+		database: drizzleAdapter(db, { provider: 'pg', schema }),
 		// Public mode is SSO-only (Google, GitHub): no passwords, no generic OIDC.
 		// Reset links are minted only by the operator CLI (scripts/reset-password-link.mjs); finishing
 		// one also signs the user out everywhere.

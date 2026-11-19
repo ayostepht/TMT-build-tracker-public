@@ -27,7 +27,7 @@ export async function convertModel(
 	zipPath: string,
 	onProgress: (pct: number, message: string) => void
 ): Promise<{ slugs: number; missing: number; failed: number }> {
-	const parts = db
+	const parts = await db
 		.select({
 			slug: templateParts.slug,
 			sourceFile: templateParts.sourceFile,
@@ -35,8 +35,7 @@ export async function convertModel(
 		})
 		.from(templateParts)
 		.where(eq(templateParts.templateId, templateId))
-		.orderBy(asc(templateParts.sort))
-		.all();
+		.orderBy(asc(templateParts.sort));
 	const result = await convertStepZip(zipPath, { id: templateId, parts }, onProgress);
 	const sourceNote = `${zipPath.split('/').pop()}: ${result.slugs.length} parts`;
 	const values = {
@@ -46,13 +45,13 @@ export async function convertModel(
 		slugs: result.slugs,
 		sourceNote
 	};
-	db.insert(templateModels)
+	await db
+		.insert(templateModels)
 		.values({ templateId, ...values })
 		.onConflictDoUpdate({
 			target: templateModels.templateId,
 			set: { ...values, createdAt: new Date() }
-		})
-		.run();
+		});
 	return {
 		slugs: result.slugs.length,
 		missing: result.report.filter((r) => r.status === 'missing').length,

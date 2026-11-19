@@ -8,7 +8,7 @@ import { zipSync, type Zippable } from 'fflate';
 import { eq } from 'drizzle-orm';
 import type { PrintFootprint, PrintPiece } from '#lib/domain/print-footprint.ts';
 import { templateHardwarePath, templateModelPath } from '../config';
-import type { Db } from '../db';
+import { first, type DbOrTx } from '../db';
 import {
 	templateModels,
 	templatePartPlacements,
@@ -153,21 +153,23 @@ export function checkRoundTrip(a: PrintMesh, b: PrintMesh, what: string): number
 	return max;
 }
 
-export function buildKitPack(db: Db, opt: BuildOptions): BuildResult {
+export async function buildKitPack(db: DbOrTx, opt: BuildOptions): Promise<BuildResult> {
 	const log = opt.log ?? (() => {});
 	const scale = opt.scale ?? DEFAULT_SCALE;
-	const tpl = db.select().from(templates).where(eq(templates.slug, opt.templateSlug)).get();
+	const tpl = await first(db.select().from(templates).where(eq(templates.slug, opt.templateSlug)));
 	if (!tpl) throw new KitPackError(`No template "${opt.templateSlug}" in the database`);
-	const model = db.select().from(templateModels).where(eq(templateModels.templateId, tpl.id)).get();
+	const model = await first(
+		db.select().from(templateModels).where(eq(templateModels.templateId, tpl.id))
+	);
 	const glbPath = templateModelPath(tpl.id);
 	if (!model || !existsSync(glbPath))
 		throw new KitPackError('The template has no 3D model yet (import the STEP zip first)');
-	const rows = db
-		.select()
-		.from(templatePrintGeometry)
-		.where(eq(templatePrintGeometry.templateId, tpl.id))
-		.all()
-		.filter((r) => r.sourceNote !== SEED_NOTE);
+	const rows = (
+		await db
+			.select()
+			.from(templatePrintGeometry)
+			.where(eq(templatePrintGeometry.templateId, tpl.id))
+	).filter((r) => r.sourceNote !== SEED_NOTE);
 	if (!rows.length) throw new KitPackError('The template has no imported print geometry');
 
 	const files: Record<string, { data: Uint8Array; role: SourceRole; level: number }> = {};
@@ -182,11 +184,12 @@ export function buildKitPack(db: Db, opt: BuildOptions): BuildResult {
 	const hasHardware = existsSync(hwPath) && statSync(hwPath).isFile();
 	if (hasHardware) add(HARDWARE_FILE, readFileSync(hwPath), 'hardware', 0);
 
-	const placements = db
-		.select()
-		.from(templatePartPlacements)
-		.where(eq(templatePartPlacements.templateId, tpl.id))
-		.all()
+	const placements = (
+		await db
+			.select()
+			.from(templatePartPlacements)
+			.where(eq(templatePartPlacements.templateId, tpl.id))
+	)
 		.sort((a, b) => a.slug.localeCompare(b.slug))
 		.map((p) => ({ slug: p.slug, matrix: p.matrix, instances: p.instances, placed: p.placed }));
 	add(PLACEMENTS_FILE, json(placements), 'placements');

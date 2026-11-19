@@ -2,7 +2,7 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { ApiError, type SiteAdminCandidate } from '../access.ts';
 import { requireUserId } from '../api.ts';
-import { getDb, type Db } from '../db/index.ts';
+import { first, getDb, type DbOrTx } from '../db/index.ts';
 import { templates } from '../db/schema.ts';
 import { canManageTemplate } from '../templates/fork.ts';
 
@@ -11,18 +11,25 @@ import { canManageTemplate } from '../templates/fork.ts';
  * site admins for the global kits, owners and editors of the owning workspace for a workspace's
  * own copy (made from "Upload your own files" in the setup wizard).
  */
-export function assertTemplateAdmin(db: Db, user: SiteAdminCandidate, templateId: string): void {
-	const t = db
-		.select({ id: templates.id })
-		.from(templates)
-		.where(eq(templates.id, templateId))
-		.get();
-	if (!t || !canManageTemplate(db, user, templateId)) throw new ApiError(404, 'Not found');
+export async function assertTemplateAdmin(
+	db: DbOrTx,
+	user: SiteAdminCandidate,
+	templateId: string
+): Promise<void> {
+	const t = await first(
+		db.select({ id: templates.id }).from(templates).where(eq(templates.id, templateId))
+	);
+	// canManageTemplate is ported to async in the next wave; awaiting a sync value is harmless.
+	if (!t || !(await canManageTemplate(db as never, user, templateId)))
+		throw new ApiError(404, 'Not found');
 }
 
 /** Request-handler version: 401 when signed out. Returns the user id. */
-export function requireAdminForTemplate(event: RequestEvent, templateId: string): string {
+export async function requireAdminForTemplate(
+	event: RequestEvent,
+	templateId: string
+): Promise<string> {
 	const userId = requireUserId(event);
-	assertTemplateAdmin(getDb(), event.locals.user!, templateId);
+	await assertTemplateAdmin(getDb(), event.locals.user!, templateId);
 	return userId;
 }

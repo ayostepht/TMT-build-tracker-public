@@ -1,7 +1,8 @@
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { applyPlacementPatch } from '../models/placements';
-import { openDb, runMigrations, type Db } from '../db';
+import { first, type Db } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import { templatePartPlacements, templates, user } from '../db/schema';
 import { tmtTemplate } from './tmt';
 import { seedTemplates, shouldUpdatePlacement } from './run';
@@ -12,18 +13,18 @@ const moved = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 9, 9, 9, 1];
 describe('shouldUpdatePlacement', () => {
 	const seed = { slug: 'x', matrix: moved, instances: [ID], placed: true };
 	const row = { matrix: moved, instances: [ID], placed: true, updatedBy: null };
-	it('leaves an identical row alone', () => {
+	it('leaves an identical row alone', async () => {
 		expect(shouldUpdatePlacement(row, seed)).toBe(false);
 	});
-	it('updates a differing row nobody edited', () => {
+	it('updates a differing row nobody edited', async () => {
 		expect(shouldUpdatePlacement({ ...row, matrix: ID }, seed)).toBe(true);
 		expect(shouldUpdatePlacement({ ...row, instances: [] }, seed)).toBe(true);
 		expect(shouldUpdatePlacement({ ...row, placed: false }, seed)).toBe(true);
 	});
-	it('never touches a row an admin edited', () => {
+	it('never touches a row an admin edited', async () => {
 		expect(shouldUpdatePlacement({ ...row, matrix: ID, updatedBy: 'u1' }, seed)).toBe(false);
 	});
-	it('treats a seed without a matrix as identity', () => {
+	it('treats a seed without a matrix as identity', async () => {
 		expect(
 			shouldUpdatePlacement(
 				{ matrix: ID, instances: [], placed: false, updatedBy: null },
@@ -36,41 +37,47 @@ describe('shouldUpdatePlacement', () => {
 describe('placement reconcile on startup', () => {
 	let db: Db;
 	let tid: string;
-	const rowOf = (slug: string) =>
-		db
-			.select()
-			.from(templatePartPlacements)
-			.where(and(eq(templatePartPlacements.templateId, tid), eq(templatePartPlacements.slug, slug)))
-			.get()!;
-	beforeEach(() => {
-		db = openDb(':memory:');
-		runMigrations(db);
-		seedTemplates(db, [tmtTemplate]);
-		tid = db.select().from(templates).get()!.id;
+	const rowOf = async (slug: string) =>
+		(await first(
+			db
+				.select()
+				.from(templatePartPlacements)
+				.where(
+					and(eq(templatePartPlacements.templateId, tid), eq(templatePartPlacements.slug, slug))
+				)
+		))!;
+	beforeAll(async () => {
+		db = await createTestDb();
+	});
+	afterAll(() => dropTestDb(db));
+	beforeEach(async () => {
+		await db.delete(templates); // cascades; each test starts from a fresh seed
+		await seedTemplates(db, [tmtTemplate]);
+		tid = (await first(db.select().from(templates)))!.id;
 	});
 
-	it('every seeded part has a row and the new parts are placed', () => {
+	it('every seeded part has a row and the new parts are placed', async () => {
 		for (const s of ['push-grip', 'soft-headrest', 'tires', 'rims-1-4', 'front-caster-mount'])
-			expect(rowOf(s).placed, s).toBe(true);
-		expect(rowOf('tires').instances).toHaveLength(15);
-		expect(rowOf('harness').placed).toBe(false); // procedural stand-in, not a STEP placement
+			expect((await rowOf(s)).placed, s).toBe(true);
+		expect((await rowOf('tires')).instances).toHaveLength(15);
+		expect((await rowOf('harness')).placed).toBe(false); // procedural stand-in, not a STEP placement
 	});
 
-	it('moves an unedited placement to the new seed value', () => {
+	it('moves an unedited placement to the new seed value', async () => {
 		// Simulate an older seed: tires unplaced at identity, written by the seed (no editor).
-		db.update(templatePartPlacements)
+		await db
+			.update(templatePartPlacements)
 			.set({ matrix: ID, instances: [], placed: false })
-			.where(eq(templatePartPlacements.slug, 'tires'))
-			.run();
-		seedTemplates(db, [tmtTemplate]);
-		const r = rowOf('tires');
+			.where(eq(templatePartPlacements.slug, 'tires'));
+		await seedTemplates(db, [tmtTemplate]);
+		const r = await rowOf('tires');
 		expect(r.placed).toBe(true);
 		expect(r.instances).toHaveLength(15);
 		expect(r.updatedBy).toBeNull();
 	});
 
-	it('seats the front caster mount level in the wing recess, both sides', () => {
-		const r = rowOf('front-caster-mount');
+	it('seats the front caster mount level in the wing recess, both sides', async () => {
+		const r = await rowOf('front-caster-mount');
 		expect(r.instances).toHaveLength(1);
 		const apply = (m: number[], v: number[]) => [
 			m[0] * v[0] + m[4] * v[1] + m[8] * v[2] + m[12],
@@ -99,26 +106,26 @@ describe('placement reconcile on startup', () => {
 		}
 	});
 
-	it('moves an unedited front caster mount from the old identity pose', () => {
-		db.update(templatePartPlacements)
+	it('moves an unedited front caster mount from the old identity pose', async () => {
+		await db
+			.update(templatePartPlacements)
 			.set({ matrix: ID, instances: [[-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]] })
-			.where(eq(templatePartPlacements.slug, 'front-caster-mount'))
-			.run();
-		seedTemplates(db, [tmtTemplate]);
-		expect(rowOf('front-caster-mount').matrix).not.toEqual(ID);
-		expect(rowOf('front-caster-mount').updatedBy).toBeNull();
+			.where(eq(templatePartPlacements.slug, 'front-caster-mount'));
+		await seedTemplates(db, [tmtTemplate]);
+		expect((await rowOf('front-caster-mount')).matrix).not.toEqual(ID);
+		expect((await rowOf('front-caster-mount')).updatedBy).toBeNull();
 	});
 
-	it('never overwrites an admin edit', () => {
-		db.insert(user).values({ id: 'adm', name: 'Adm', email: 'adm@example.test' }).run();
-		applyPlacementPatch(db, tid, 'push-grip', { matrix: moved, placed: true }, 'adm');
-		const second = seedTemplates(db, [tmtTemplate]);
-		expect(rowOf('push-grip').matrix).toEqual(moved);
-		expect(rowOf('push-grip').updatedBy).toBe('adm');
+	it('never overwrites an admin edit', async () => {
+		await db.insert(user).values({ id: 'adm', name: 'Adm', email: 'adm@example.test' });
+		await applyPlacementPatch(db, tid, 'push-grip', { matrix: moved, placed: true }, 'adm');
+		const second = await seedTemplates(db, [tmtTemplate]);
+		expect((await rowOf('push-grip')).matrix).toEqual(moved);
+		expect((await rowOf('push-grip')).updatedBy).toBe('adm');
 		expect(second.updated).not.toContain(tmtTemplate.slug);
 	});
 
-	it('is idempotent: a second run changes nothing', () => {
-		expect(seedTemplates(db, [tmtTemplate]).updated).toEqual([]);
+	it('is idempotent: a second run changes nothing', async () => {
+		expect((await seedTemplates(db, [tmtTemplate])).updated).toEqual([]);
 	});
 });

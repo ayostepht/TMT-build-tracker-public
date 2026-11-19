@@ -40,7 +40,7 @@ import {
 	templateModelPath,
 	uploadsDir
 } from '../config';
-import type { Db } from '../db';
+import { first, one, type Db } from '../db';
 import {
 	templateModels,
 	templatePartPlacements,
@@ -226,13 +226,8 @@ async function run(db: Db, opt: InstallOptions): Promise<InstallOutcome[]> {
 		return [];
 	}
 	const slugs =
-		opt.slugs ??
-		db
-			.select({ slug: templates.slug })
-			.from(templates)
-			.all()
-			.map((t) => t.slug);
-	// Decide synchronously which templates have work, so the status shows "installing" at once.
+		opt.slugs ?? (await db.select({ slug: templates.slug }).from(templates)).map((t) => t.slug);
+	// Decide up front which templates have work, so the status shows "installing" at once.
 	const todo: { slug: string; entry: IndexEntry }[] = [];
 	for (const slug of slugs) {
 		const entry = latestEntry(index, slug);
@@ -240,18 +235,17 @@ async function run(db: Db, opt: InstallOptions): Promise<InstallOutcome[]> {
 			out.push({ slug, status: 'none' });
 			continue;
 		}
-		const tpl = db
-			.select({ id: templates.id })
-			.from(templates)
-			.where(eq(templates.slug, slug))
-			.get();
+		const tpl = await first(
+			db.select({ id: templates.id }).from(templates).where(eq(templates.slug, slug))
+		);
 		if (!tpl) continue;
 		const marker = readMarker(slug);
-		const hasModel = db
-			.select({ id: templateModels.templateId })
-			.from(templateModels)
-			.where(eq(templateModels.templateId, tpl.id))
-			.get();
+		const hasModel = await first(
+			db
+				.select({ id: templateModels.templateId })
+				.from(templateModels)
+				.where(eq(templateModels.templateId, tpl.id))
+		);
 		if (marker && marker.version === entry.version && marker.sha256 === entry.sha256 && hasModel) {
 			out.push({ slug, status: 'current', version: entry.version });
 			continue;
@@ -392,21 +386,23 @@ async function applyPack(
 	placements: number;
 	keptAdmin: number;
 }> {
-	const tpl = db.select().from(templates).where(eq(templates.slug, slug)).get()!;
+	const tpl = await one(db.select().from(templates).where(eq(templates.slug, slug)), 'template');
 	const tid = tpl.id;
 	const note = `${KITPACK_NOTE}${manifest.version}`;
 	const partSlugs = new Set(
-		db
-			.select({ slug: templateParts.slug })
-			.from(templateParts)
-			.where(eq(templateParts.templateId, tid))
-			.all()
-			.map((p) => p.slug)
+		(
+			await db
+				.select({ slug: templateParts.slug })
+				.from(templateParts)
+				.where(eq(templateParts.templateId, tid))
+		).map((p) => p.slug)
 	);
 	let keptAdmin = 0;
 
 	// -- model + hardware
-	const curModel = db.select().from(templateModels).where(eq(templateModels.templateId, tid)).get();
+	const curModel = await first(
+		db.select().from(templateModels).where(eq(templateModels.templateId, tid))
+	);
 	let installModel = false;
 	if (!curModel) installModel = true;
 	else if (isPack(curModel.sourceNote)) {
@@ -429,7 +425,8 @@ async function applyPack(
 		}
 		const version = sha256Hex(glb).slice(0, 16);
 		const sourceNote = `${note}: MakeGood 3D model, ${slugs.length} parts`;
-		db.insert(templateModels)
+		await db
+			.insert(templateModels)
 			.values({
 				templateId: tid,
 				glbPath: templateModelPath(tid),
@@ -450,8 +447,7 @@ async function applyPack(
 					createdBy: null,
 					createdAt: new Date()
 				}
-			})
-			.run();
+			});
 		await tick();
 	}
 
@@ -465,14 +461,14 @@ async function applyPack(
 			placed: boolean;
 		}[];
 		const have = new Map(
-			db
-				.select()
-				.from(templatePartPlacements)
-				.where(eq(templatePartPlacements.templateId, tid))
-				.all()
-				.map((r) => [r.slug, r])
+			(
+				await db
+					.select()
+					.from(templatePartPlacements)
+					.where(eq(templatePartPlacements.templateId, tid))
+			).map((r) => [r.slug, r])
 		);
-		db.transaction((tx) => {
+		await db.transaction(async (tx) => {
 			for (const p of rows) {
 				if (!partSlugs.has(p.slug) || !Array.isArray(p.matrix) || p.matrix.length !== 16) continue;
 				const cur = have.get(p.slug);
@@ -482,24 +478,24 @@ async function applyPack(
 					placed: !!p.placed
 				};
 				if (!cur) {
-					tx.insert(templatePartPlacements)
-						.values({ templateId: tid, slug: p.slug, ...values })
-						.run();
+					await tx
+						.insert(templatePartPlacements)
+						.values({ templateId: tid, slug: p.slug, ...values });
 					placements++;
 				} else if (cur.updatedBy === null) {
 					if (
 						JSON.stringify([cur.matrix, cur.instances, cur.placed]) !==
 						JSON.stringify([values.matrix, values.instances, values.placed])
 					) {
-						tx.update(templatePartPlacements)
+						await tx
+							.update(templatePartPlacements)
 							.set(values)
 							.where(
 								and(
 									eq(templatePartPlacements.templateId, tid),
 									eq(templatePartPlacements.slug, p.slug)
 								)
-							)
-							.run();
+							);
 						placements++;
 					}
 				} else keptAdmin++;
@@ -517,12 +513,9 @@ async function applyPack(
 		settings: Record<string, string>;
 	}[];
 	const existing = new Map(
-		db
-			.select()
-			.from(templatePrintGeometry)
-			.where(eq(templatePrintGeometry.templateId, tid))
-			.all()
-			.map((r) => [r.slug, r])
+		(
+			await db.select().from(templatePrintGeometry).where(eq(templatePrintGeometry.templateId, tid))
+		).map((r) => [r.slug, r])
 	);
 	let geometry = 0;
 	for (const r of rows) {
@@ -562,13 +555,13 @@ async function applyPack(
 			sourceNote: note,
 			updatedAt: new Date()
 		};
-		db.insert(templatePrintGeometry)
+		await db
+			.insert(templatePrintGeometry)
 			.values({ templateId: tid, slug: r.slug, ...row })
 			.onConflictDoUpdate({
 				target: [templatePrintGeometry.templateId, templatePrintGeometry.slug],
 				set: row
-			})
-			.run();
+			});
 		geometry++;
 	}
 	if (!installModel && !geometry) log(`${slug}: nothing to install`);

@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import type { PartPlacement } from '#lib/domain/types.ts';
 import { ApiError } from '../access.ts';
-import type { Db } from '../db/index.ts';
+import { first, type DbOrTx } from '../db/index.ts';
 import { templateParts, templatePartPlacements } from '../db/schema.ts';
 
 export const MAX_INSTANCES = 64;
@@ -52,38 +52,39 @@ export function parsePlacementPatch(body: unknown): PlacementPatch {
 }
 
 /** Updates (or creates) the placement row of a template part. 404 when the slug is not a part of the template. */
-export function applyPlacementPatch(
-	db: Db,
+export async function applyPlacementPatch(
+	db: DbOrTx,
 	templateId: string,
 	slug: string,
 	patch: PlacementPatch,
 	userId: string | null
-): PartPlacement {
-	const part = db
-		.select({ slug: templateParts.slug })
-		.from(templateParts)
-		.where(and(eq(templateParts.templateId, templateId), eq(templateParts.slug, slug)))
-		.get();
+): Promise<PartPlacement> {
+	const part = await first(
+		db
+			.select({ slug: templateParts.slug })
+			.from(templateParts)
+			.where(and(eq(templateParts.templateId, templateId), eq(templateParts.slug, slug)))
+	);
 	if (!part) throw new ApiError(404, 'Not found');
 	const where = and(
 		eq(templatePartPlacements.templateId, templateId),
 		eq(templatePartPlacements.slug, slug)
 	);
-	const existing = db.select().from(templatePartPlacements).where(where).get();
+	const existing = await first(db.select().from(templatePartPlacements).where(where));
 	const next = {
 		matrix: patch.matrix ?? existing?.matrix ?? IDENTITY,
 		instances: patch.instances ?? existing?.instances ?? [],
 		placed: patch.placed ?? existing?.placed ?? false
 	};
 	if (existing) {
-		db.update(templatePartPlacements)
+		await db
+			.update(templatePartPlacements)
 			.set({ ...next, updatedBy: userId, updatedAt: new Date() })
-			.where(where)
-			.run();
+			.where(where);
 	} else {
-		db.insert(templatePartPlacements)
-			.values({ templateId, slug, ...next, updatedBy: userId })
-			.run();
+		await db
+			.insert(templatePartPlacements)
+			.values({ templateId, slug, ...next, updatedBy: userId });
 	}
 	return { slug, ...next };
 }
