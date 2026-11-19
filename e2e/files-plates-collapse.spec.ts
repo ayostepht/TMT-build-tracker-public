@@ -13,10 +13,6 @@ test('Files: printed plates collapse behind a remembered toggle; per-plate expor
 	await page.goto(`/builds/${buildId}/files`);
 	await page.waitForLoadState('networkidle');
 	await arrangeForCentauri(page);
-	await expect(page.getByTestId('bed-compact')).toBeVisible();
-	// The arranged layout is written a moment after the picker closes; wait for it, or the plate count
-	// read below is still the kit's built-in layout.
-	await expect(page.getByTestId('layout-name')).toContainText('Arranged for');
 
 	// Nothing printed yet: no toggle, per-plate export is there.
 	await expect(page.getByTestId('printed-plates-toggle')).toHaveCount(0);

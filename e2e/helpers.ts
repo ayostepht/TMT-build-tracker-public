@@ -174,6 +174,21 @@ export async function arrangeForCentauri(page: Page) {
 	await page.getByTestId('printer-model').selectOption({ label: 'Centauri Carbon' });
 	await page.getByTestId('printer-mm').selectOption({ index: 1 });
 	await page.getByTestId('arrange-bed').click();
+	// The arranged layout is persisted a moment after the picker closes. Return only once the heading
+	// says so and the plate count on screen matches the server's, so callers never read the old layout.
+	await expect(page.getByTestId('bed-compact')).toBeVisible();
+	await expect(page.getByTestId('layout-name')).toContainText('Arranged for');
+	const buildId = /\/builds\/([^/?#]+)/.exec(new URL(page.url()).pathname)?.[1];
+	if (buildId) {
+		await expect
+			.poll(async () => {
+				const res = await page.request.get(`/api/builds/${buildId}/view`);
+				const view = (await res.json()) as { plates: unknown[] };
+				const shown = await page.locator('section.plate-card').count();
+				return shown === view.plates.length || shown === 0;
+			})
+			.toBe(true);
+	}
 }
 
 /** In the setup wizard: press Continue until `step` is showing (steps 2 to 5). */

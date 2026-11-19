@@ -23,8 +23,12 @@ test('Settings shows the build colors, keeps spool counts editable, and sends co
 
 	// Spool counts are edited here and survive a reload.
 	const spools = role.getByLabel('Spools (kg)');
+	const saved = page.waitForResponse(
+		(r) => r.request().method() === 'PATCH' && /\/filaments\//.test(r.url())
+	);
 	await spools.fill('3');
 	await spools.blur();
+	expect((await saved).ok()).toBe(true);
 	await expect(spools).toHaveValue('3');
 	await page.reload();
 	await expect(page.locator('.fil-role').first().getByLabel('Spools (kg)')).toHaveValue('3');
