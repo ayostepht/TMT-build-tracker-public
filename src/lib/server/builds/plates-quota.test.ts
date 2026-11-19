@@ -12,6 +12,7 @@ import { makeProjectThreeMf } from '../threemf/fixtures';
 import { parseThreeMfBytes } from '../threemf';
 import {
 	acquireExpensiveReadSlot,
+	EXPENSIVE_READ_MAX_HOLD_MS,
 	openExpensiveReads,
 	releaseWhenDone,
 	acquireUploadSlot,
@@ -199,28 +200,58 @@ describe('expensive read slots', () => {
 	const u = { id: 'reader', email: 'reader@example.test', emailVerified: false };
 
 	it('caps concurrent reads and releases exactly once', async () => {
-		const a = await acquireExpensiveReadSlot(db, u, 0);
-		const b = await acquireExpensiveReadSlot(db, u, 0);
-		expect(openExpensiveReads('reader')).toBe(2);
+		const held = [];
+		for (let i = 0; i < 4; i++) held.push(await acquireExpensiveReadSlot(db, u, 0));
+		const [a, b] = held;
+		expect(openExpensiveReads('reader')).toBe(4);
 		await expect(acquireExpensiveReadSlot(db, u, 0)).rejects.toMatchObject({
 			status: 429,
 			code: 'quota'
 		});
 		a();
 		a();
-		expect(openExpensiveReads('reader')).toBe(1);
-		b();
+		expect(openExpensiveReads('reader')).toBe(3);
+		held.forEach((r) => r());
 		expect(openExpensiveReads('reader')).toBe(0);
+		void b;
+	});
+
+	it('a slot held by an abandoned response is freed by the safety timeout', async () => {
+		vi.useFakeTimers();
+		try {
+			const x = { id: 'abandoned', email: 'abandoned@example.test', emailVerified: false };
+			await acquireExpensiveReadSlot(db, x, 20_000_000);
+			expect(openExpensiveReads('abandoned')).toBe(1);
+			vi.advanceTimersByTime(EXPENSIVE_READ_MAX_HOLD_MS + 1);
+			expect(openExpensiveReads('abandoned')).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('an erroring stream frees its slot', async () => {
+		const x = { id: 'errs', email: 'errs@example.test', emailVerified: false };
+		const rel = await acquireExpensiveReadSlot(db, x, 30_000_000);
+		const bad = new ReadableStream<Uint8Array>({
+			pull(c) {
+				c.error(new Error('boom'));
+			}
+		});
+		await releaseWhenDone(bad, rel)
+			.getReader()
+			.read()
+			.catch(() => {});
+		expect(openExpensiveReads('errs')).toBe(0);
 	});
 
 	it('limits the rate per user, and admins are exempt', async () => {
 		const v = { id: 'burst', email: 'burst@example.test', emailVerified: false };
-		for (let i = 0; i < 30; i++) (await acquireExpensiveReadSlot(db, v, 5_000_000))();
+		for (let i = 0; i < 20; i++) (await acquireExpensiveReadSlot(db, v, 5_000_000))();
 		await expect(acquireExpensiveReadSlot(db, v, 5_000_000)).rejects.toMatchObject({ status: 429 });
 		expect(openExpensiveReads('burst')).toBe(0);
 		vi.stubEnv('ADMIN_EMAILS', 'boss2@example.test');
 		const boss = { id: 'boss2', email: 'boss2@example.test', emailVerified: true };
-		for (let i = 0; i < 35; i++) (await acquireExpensiveReadSlot(db, boss, 5_000_000))();
+		for (let i = 0; i < 25; i++) (await acquireExpensiveReadSlot(db, boss, 5_000_000))();
 	});
 
 	it('a stream frees its slot when it ends or is cancelled', async () => {

@@ -584,9 +584,13 @@ export function acquireUploadSlot(db: DbOrTx, u: SseUser): Promise<() => void> {
 const READ_KEY = Symbol.for('tmt.expensive-read-slots');
 const readSlots = slotMap(READ_KEY);
 /** At most this many expensive reads per user at once. */
-export const EXPENSIVE_READ_CONCURRENCY = 2;
+export const EXPENSIVE_READ_CONCURRENCY = 4;
 /** Per-user budget for expensive reads: a bucket of this size refilling this many per minute. */
-export const EXPENSIVE_READ_PER_MIN = 30;
+export const EXPENSIVE_READ_PER_MIN = 60;
+/** Bucket size: a burst of this many reads before the per-minute refill matters. */
+export const EXPENSIVE_READ_BURST = 20;
+/** A slot never stays taken longer than this, whatever happens to the response. */
+export const EXPENSIVE_READ_MAX_HOLD_MS = 10 * 60_000;
 
 /** Expensive reads a user has in progress right now (tests, diagnostics). */
 export function openExpensiveReads(userId: string): number {
@@ -611,7 +615,7 @@ export async function acquireExpensiveReadSlot(
 				`read:${u.id}`,
 				{
 					perMin: EXPENSIVE_READ_PER_MIN,
-					burst: EXPENSIVE_READ_PER_MIN
+					burst: EXPENSIVE_READ_BURST
 				},
 				now
 			);
@@ -624,13 +628,17 @@ export async function acquireExpensiveReadSlot(
 		);
 	readSlots.set(u.id, (readSlots.get(u.id) ?? 0) + 1);
 	let released = false;
-	return () => {
+	const timer = setTimeout(() => release(), EXPENSIVE_READ_MAX_HOLD_MS);
+	timer.unref?.();
+	function release() {
 		if (released) return;
 		released = true;
+		clearTimeout(timer);
 		const left = (readSlots.get(u.id) ?? 1) - 1;
 		if (left <= 0) readSlots.delete(u.id);
 		else readSlots.set(u.id, left);
-	};
+	}
+	return release;
 }
 
 /** Pass `stream` through, calling `release` once it ends, errors or is cancelled. */
