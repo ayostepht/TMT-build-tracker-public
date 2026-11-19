@@ -32,9 +32,11 @@ services:
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
-      # 1 only because every request reaches the app through Cloudflare (the tunnel below, or a
-      # firewall that admits Cloudflare only). With 1, the client address is CF-Connecting-IP.
-      TRUST_CLOUDFLARE: ${TRUST_CLOUDFLARE:-1}
+      # Off unless you set it. Turn it on (TRUST_CLOUDFLARE=1 in deploy/.env) only when the app is
+      # reachable solely through Cloudflare (the tunnel below with no `ports:` published, or a
+      # firewall that admits Cloudflare only): the client address is then CF-Connecting-IP.
+      # Otherwise anyone can send that header themselves. The guide's Tunnel path sets it.
+      TRUST_CLOUDFLARE: ${TRUST_CLOUDFLARE:-}
       ANALYTICS_PROVIDER: ${ANALYTICS_PROVIDER:-}
       PLAUSIBLE_DOMAIN: ${PLAUSIBLE_DOMAIN:-}
       PLAUSIBLE_SCRIPT_URL: ${PLAUSIBLE_SCRIPT_URL:-}

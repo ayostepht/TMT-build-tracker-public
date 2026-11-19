@@ -11,6 +11,9 @@ import { seedTemplates } from '../seed/run';
 import { makeProjectThreeMf } from '../threemf/fixtures';
 import { parseThreeMfBytes } from '../threemf';
 import {
+	acquireExpensiveReadSlot,
+	openExpensiveReads,
+	releaseWhenDone,
 	acquireUploadSlot,
 	assertUploadRoom,
 	openUploadSlots,
@@ -189,6 +192,54 @@ describe('upload slots', () => {
 		const r = [await acquireUploadSlot(db, boss), await acquireUploadSlot(db, boss)];
 		r.forEach((x) => x());
 		expect(openUploadSlots('boss')).toBe(0);
+	});
+});
+
+describe('expensive read slots', () => {
+	const u = { id: 'reader', email: 'reader@example.test', emailVerified: false };
+
+	it('caps concurrent reads and releases exactly once', async () => {
+		const a = await acquireExpensiveReadSlot(db, u, 0);
+		const b = await acquireExpensiveReadSlot(db, u, 0);
+		expect(openExpensiveReads('reader')).toBe(2);
+		await expect(acquireExpensiveReadSlot(db, u, 0)).rejects.toMatchObject({
+			status: 429,
+			code: 'quota'
+		});
+		a();
+		a();
+		expect(openExpensiveReads('reader')).toBe(1);
+		b();
+		expect(openExpensiveReads('reader')).toBe(0);
+	});
+
+	it('limits the rate per user, and admins are exempt', async () => {
+		const v = { id: 'burst', email: 'burst@example.test', emailVerified: false };
+		for (let i = 0; i < 30; i++) (await acquireExpensiveReadSlot(db, v, 5_000_000))();
+		await expect(acquireExpensiveReadSlot(db, v, 5_000_000)).rejects.toMatchObject({ status: 429 });
+		expect(openExpensiveReads('burst')).toBe(0);
+		vi.stubEnv('ADMIN_EMAILS', 'boss2@example.test');
+		const boss = { id: 'boss2', email: 'boss2@example.test', emailVerified: true };
+		for (let i = 0; i < 35; i++) (await acquireExpensiveReadSlot(db, boss, 5_000_000))();
+	});
+
+	it('a stream frees its slot when it ends or is cancelled', async () => {
+		const mk = () =>
+			new ReadableStream<Uint8Array>({
+				start(c) {
+					c.enqueue(new Uint8Array([1]));
+					c.close();
+				}
+			});
+		const w = { id: 'streamer', email: 'streamer@example.test', emailVerified: false };
+		const r1 = await acquireExpensiveReadSlot(db, w, 9_000_000);
+		const s1 = releaseWhenDone(mk(), r1);
+		const rd = s1.getReader();
+		while (!(await rd.read()).done);
+		expect(openExpensiveReads('streamer')).toBe(0);
+		const r2 = await acquireExpensiveReadSlot(db, w, 9_000_000);
+		await releaseWhenDone(mk(), r2).cancel();
+		expect(openExpensiveReads('streamer')).toBe(0);
 	});
 });
 

@@ -2,6 +2,7 @@ import { backfillBuildParts } from './builds/backfill';
 import { repairTwinPlates } from './builds/twin-repair';
 import { failStaleModelJobs, kickQueue } from './models/jobs';
 import { getDb, runMigrations, type Db } from './db';
+import { lockDownSupabaseRoles } from './db/supabase-lockdown';
 import { templateSeeds } from './seed';
 import { seedTemplates } from './seed/run';
 import { startSupervisor } from './printers/supervisor';
@@ -38,6 +39,8 @@ export async function initDatabase(
 	seeds = templateSeeds
 ): Promise<{ inserted: string[]; updated: string[] }> {
 	await runMigrations(db);
+	// Supabase only (no-op elsewhere): keep its REST API roles away from the app's tables.
+	await lockDownSupabaseRoles(db);
 	const result = await seedTemplates(db, seeds);
 	if (result.inserted.length) console.log(`[tmt] seeded templates: ${result.inserted.join(', ')}`);
 	if (result.updated.length) console.log(`[tmt] updated templates: ${result.updated.join(', ')}`);

@@ -39,10 +39,10 @@ jobs:
       # The unit-test harness creates and drops one database per test file on this server.
       TEST_DATABASE_URL: postgres://tmt:tmt@localhost:5432/tmt_test
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
           cache: npm
@@ -75,17 +75,17 @@ jobs:
       E2E_DATABASE_URL: postgres://tmt:tmt@localhost:5432/tmt_e2e
       CI: 'true'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci --no-audit --no-fund
       - id: pw
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         id: pwcache
         with:
           path: ~/.cache/ms-playwright
@@ -95,7 +95,7 @@ jobs:
       - run: npx playwright install-deps chromium
         if: steps.pwcache.outputs.cache-hit == 'true'
       - run: npx playwright test
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
         with:
           name: playwright-report
@@ -109,10 +109,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       # push: false and load: false, so nothing leaves the runner. The kit pack is downloaded
       # from the public release and verified against kitpacks/index.json; the build fails if it
       # cannot be (no KITPACK_OPTIONAL here: the shipped image must contain it).

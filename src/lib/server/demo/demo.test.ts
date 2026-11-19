@@ -29,6 +29,7 @@ import { seedTemplates } from '../seed/run';
 import { findPersonalWorkspace } from '../teams';
 import { cleanupExpiredDemos, deleteDemoUser, liveDemoCount } from './cleanup';
 import { DemoBusyError, DemoRateError, resetDemoLimits, startDemo } from './index';
+import { demoLimitKey, MAX_TRACKED_ADDRESSES, takeDemoStart, trackedAddressCount } from './limits';
 
 let db: Db;
 let auth: Auth;
@@ -270,5 +271,84 @@ describe('ending a demo', () => {
 		]);
 		expect(a + b).toBe(3);
 		expect(await liveDemoCount(db)).toBe(0);
+	});
+});
+
+describe('demo starts under a small connection pool', () => {
+	it('more parallel starts than pool connections all finish, and the live cap holds', async () => {
+		const small = await createTestDb({ max: 3 });
+		try {
+			await seedTemplates(small, templateSeeds);
+			const smallAuth = createAuth(small);
+			vi.stubEnv('DEMO_MAX_LIVE', '5');
+			vi.stubEnv('DEMO_STARTS_PER_MINUTE', '100');
+			const t0 = Date.now();
+			const results = await Promise.race([
+				Promise.allSettled(
+					Array.from({ length: 8 }, (_, i) =>
+						startDemo(smallAuth, `203.0.113.${i + 1}`, jar().cookies)
+					)
+				),
+				new Promise<never>((_, rej) =>
+					setTimeout(() => rej(new Error('demo starts hung: pool deadlock')), 30_000)
+				)
+			]);
+			const ok = results.filter((r) => r.status === 'fulfilled').length;
+			const busy = results.filter(
+				(r) => r.status === 'rejected' && r.reason instanceof DemoBusyError
+			).length;
+			console.log(`concurrency: 8 starts, pool 3, ok=${ok} busy=${busy} in ${Date.now() - t0} ms`);
+			expect(ok).toBe(5);
+			expect(busy).toBe(3);
+			expect(await liveDemoCount(small)).toBe(5);
+		} finally {
+			await dropTestDb(small);
+		}
+	}, 60_000);
+
+	it('cleanup finishes with a two-connection pool while starts run', async () => {
+		const small = await createTestDb({ max: 2 });
+		try {
+			await seedTemplates(small, templateSeeds);
+			const smallAuth = createAuth(small);
+			vi.stubEnv('DEMO_STARTS_PER_MINUTE', '100');
+			for (let i = 0; i < 2; i++) await startDemo(smallAuth, `203.0.113.${i + 1}`, jar().cookies);
+			const later = new Date(Date.now() + 25 * 3600_000);
+			const [n] = await Promise.all([
+				cleanupExpiredDemos(small, later),
+				startDemo(smallAuth, '203.0.113.9', jar().cookies)
+			]);
+			expect(n).toBe(2);
+		} finally {
+			await dropTestDb(small);
+		}
+	}, 60_000);
+});
+
+describe('demo start limits', () => {
+	it('one IPv6 /64 and its IPv4-mapped form share a bucket', () => {
+		expect(demoLimitKey('::ffff:203.0.113.5')).toBe('203.0.113.5');
+		expect(demoLimitKey('::ffff:cb00:7105')).toBe('203.0.113.5');
+		expect(demoLimitKey('2001:db8:1:2:aaaa::1')).toBe(
+			demoLimitKey('2001:DB8:1:2:bbbb:cccc:dddd:eeee')
+		);
+		expect(demoLimitKey('2001:db8:1:3::1')).not.toBe(demoLimitKey('2001:db8:1:2::1'));
+		expect(takeDemoStart('2001:db8:1:2::1', 1)).toBe(0);
+		expect(takeDemoStart('2001:db8:1:2:ffff::9', 1)).toBeGreaterThan(0);
+		expect(takeDemoStart('203.0.113.5', 1)).toBe(0);
+		expect(takeDemoStart('::ffff:203.0.113.5', 1)).toBeGreaterThan(0);
+	});
+
+	it('the number of tracked addresses is capped', () => {
+		for (let i = 0; i < MAX_TRACKED_ADDRESSES + 50; i++)
+			takeDemoStart(`10.${i >> 16}.${(i >> 8) & 255}.${i & 255}`, 5);
+		expect(trackedAddressCount()).toBeLessThanOrEqual(MAX_TRACKED_ADDRESSES);
+	});
+
+	it('a global per-minute limit holds across addresses and lifts after a minute', () => {
+		const now = Date.now();
+		for (let i = 0; i < 3; i++) expect(takeDemoStart(`198.51.100.${i}`, 5, now, 3)).toBe(0);
+		expect(takeDemoStart('198.51.100.99', 5, now, 3)).toBeGreaterThan(0);
+		expect(takeDemoStart('198.51.100.99', 5, now + 61_000, 3)).toBe(0);
 	});
 });

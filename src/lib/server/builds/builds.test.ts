@@ -8,6 +8,7 @@ import {
 	buildFilaments,
 	buildParts,
 	buildPlates,
+	builds,
 	colorDesigns,
 	member,
 	organization,
@@ -95,6 +96,39 @@ describe('createBuild', () => {
 		const input = { organizationId: orgId, templateId, designId: null, name: 'x' };
 		await expect(createBuild(db, input, 'viewer')).rejects.toThrow(ApiError);
 		await expect(createBuild(db, input, 'outsider')).rejects.toThrow(ApiError);
+	});
+});
+
+describe('free-text caps', () => {
+	const base = () => ({ organizationId: orgId, templateId, designId: null });
+
+	it('create trims the name to 200 and rejects over-long recipient or hospital', async () => {
+		const id = await createBuild(db, { ...base(), name: 'n'.repeat(500) }, 'owner');
+		const row = await first(db.select().from(builds).where(eq(builds.id, id)));
+		expect(row!.name).toHaveLength(200);
+		await expect(
+			createBuild(db, { ...base(), name: 'x', recipient: 'r'.repeat(201) }, 'owner')
+		).rejects.toMatchObject({ status: 400 });
+		await expect(
+			createBuild(db, { ...base(), name: 'x', hospital: 'h'.repeat(201) }, 'owner')
+		).rejects.toMatchObject({ status: 400 });
+		await expect(
+			createBuild(db, { ...base(), name: 'x', recipient: 5 as unknown as string }, 'owner')
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('update applies the same limits', async () => {
+		const id = await mk();
+		await expect(
+			updateBuild(db, id, 'owner', { recipient: 'r'.repeat(201) })
+		).rejects.toMatchObject({ status: 400 });
+		await expect(updateBuild(db, id, 'owner', { hospital: 'h'.repeat(201) })).rejects.toMatchObject(
+			{ status: 400 }
+		);
+		await updateBuild(db, id, 'owner', { name: 'n'.repeat(500), recipient: 'r'.repeat(200) });
+		const row = await first(db.select().from(builds).where(eq(builds.id, id)));
+		expect(row!.name).toHaveLength(200);
+		expect(row!.recipient).toHaveLength(200);
 	});
 });
 

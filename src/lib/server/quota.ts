@@ -34,6 +34,7 @@ import { rm } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { and, count, eq, ne, sql } from 'drizzle-orm';
 import { ApiError, isSiteAdmin } from './access';
+import { takeWriteToken } from './write-rate';
 import { demoConfig, quotas, uploadsDir, type Quotas } from './config';
 import { advisoryLock, first, type DbOrTx } from './db';
 import { member, organization } from './db/auth.schema';
@@ -576,4 +577,84 @@ export function acquireSseSlot(db: DbOrTx, u: SseUser): Promise<() => void> {
  */
 export function acquireUploadSlot(db: DbOrTx, u: SseUser): Promise<() => void> {
 	return acquireSlot(db, u, 'concurrentUploadsPerUser', uploadSlots);
+}
+
+// ---- expensive reads (arranger, 3MF export)
+
+const READ_KEY = Symbol.for('tmt.expensive-read-slots');
+const readSlots = slotMap(READ_KEY);
+/** At most this many expensive reads per user at once. */
+export const EXPENSIVE_READ_CONCURRENCY = 2;
+/** Per-user budget for expensive reads: a bucket of this size refilling this many per minute. */
+export const EXPENSIVE_READ_PER_MIN = 30;
+
+/** Expensive reads a user has in progress right now (tests, diagnostics). */
+export function openExpensiveReads(userId: string): number {
+	return readSlots.get(userId) ?? 0;
+}
+
+/**
+ * Take one expensive-read slot (concurrency cap plus a per-user token bucket), or throw
+ * QuotaError 429 with a friendly sentence. Returns an idempotent `release()`: call it in a
+ * `finally`, or when a response stream ends, cancels or errors. Site admins are exempt.
+ */
+export async function acquireExpensiveReadSlot(
+	db: DbOrTx,
+	u: SseUser,
+	now = Date.now()
+): Promise<() => void> {
+	const current = readSlots.get(u.id) ?? 0;
+	const busy = current >= EXPENSIVE_READ_CONCURRENCY;
+	const wait = busy
+		? 0
+		: takeWriteToken(
+				`read:${u.id}`,
+				{
+					perMin: EXPENSIVE_READ_PER_MIN,
+					burst: EXPENSIVE_READ_PER_MIN
+				},
+				now
+			);
+	if ((busy || wait > 0) && !(await isSiteAdmin(db, u)))
+		throw new QuotaError(
+			busy
+				? 'Another export or plan is still being prepared. Wait for it to finish and try again.'
+				: 'Too many exports or plans in a short time. Wait a moment and try again.',
+			429
+		);
+	readSlots.set(u.id, (readSlots.get(u.id) ?? 0) + 1);
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		const left = (readSlots.get(u.id) ?? 1) - 1;
+		if (left <= 0) readSlots.delete(u.id);
+		else readSlots.set(u.id, left);
+	};
+}
+
+/** Pass `stream` through, calling `release` once it ends, errors or is cancelled. */
+export function releaseWhenDone(
+	stream: ReadableStream<Uint8Array>,
+	release: () => void
+): ReadableStream<Uint8Array> {
+	const reader = stream.getReader();
+	return new ReadableStream<Uint8Array>({
+		async pull(c) {
+			try {
+				const { done, value } = await reader.read();
+				if (done) {
+					release();
+					c.close();
+				} else c.enqueue(value);
+			} catch (e) {
+				release();
+				c.error(e);
+			}
+		},
+		async cancel(reason) {
+			release();
+			await reader.cancel(reason);
+		}
+	});
 }
