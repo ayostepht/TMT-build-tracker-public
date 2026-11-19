@@ -39,7 +39,7 @@ export function materials(brand: string): string[] {
 	return brandOf(brand)?.materials.map((m) => m.material) ?? [];
 }
 
-/** Drops the Spoolman-only fields so API responses stay as small as before they existed. */
+/** Drops the server-only catalog fields (SpoolmanDB id, density, spool weight) from API responses. */
 export function toPublic(c: CatalogColor): PublicCatalogColor {
 	const rest: Record<string, unknown> = { ...c };
 	delete rest.sdbId;
@@ -136,6 +136,3 @@ export function swatches(family: SwatchFamily): SwatchTuple[] {
 	if (!out) swatchCache.set(family, (out = swatchesOf(catalog, family)));
 	return out;
 }
-
-export { resolveSlotOrigin } from './origin.ts';
-export type { SlotLike } from './origin.ts';

@@ -89,7 +89,7 @@
 				return;
 			}
 			return run(async () => {
-				const r = await jobAction(job.id, {
+				await jobAction(job.id, {
 					action: 'confirm',
 					result: 'Partial',
 					split: {
@@ -99,7 +99,6 @@
 					},
 					hours: hours === '' ? null : Number(hours)
 				});
-				if (r.spoolmanWarning) ctx.error = r.spoolmanWarning;
 			});
 		}
 		if (gramsInvalid) {
@@ -107,13 +106,12 @@
 			return;
 		}
 		return run(async () => {
-			const r = await jobAction(job.id, {
+			await jobAction(job.id, {
 				action: 'confirm',
 				result: result as 'Success' | 'Failed' | 'Partial',
 				grams: gramsParsed,
 				hours: hours === '' ? null : Number(hours)
 			});
-			if (r.spoolmanWarning) ctx.error = r.spoolmanWarning;
 		});
 	};
 </script>

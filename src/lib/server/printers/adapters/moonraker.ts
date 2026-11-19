@@ -4,10 +4,8 @@ import type { PrinterStatus } from '#lib/printers/status.ts';
 import { shareLinkFor, shareLinkUrl } from '#lib/printers/share-link.ts';
 import {
 	guardedFetch,
-	ipForUrl,
 	isRedirect,
 	MAX_REMOTE_MESSAGE_BYTES,
-	OutboundError,
 	readJsonCapped,
 	REDIRECT_MESSAGE,
 	resolveAllowed,
@@ -15,7 +13,6 @@ import {
 	safeText
 } from '../outbound';
 import {
-	backoff,
 	CONNECT_TIMEOUT_MS,
 	FLOODED_MESSAGE,
 	HostileGuard,
@@ -87,6 +84,20 @@ export function normalizeMoonraker(st: Obj): PrinterStatus {
 
 export function connectMoonraker(cfg: PrinterConfig): AdapterHandle {
 	const subj = new StatusSubject();
+	// OctoEverywhere shared link: https/wss to the link host (the web interface's own paths), no
+	// port. A relay that hangs up must not be re-dialled every few seconds, so `attempt` resets
+	// only once a valid message arrived and the delays are the slower `linkBackoff` ones. Without a
+	// link nothing is dialled (`guarded`).
+	const found = shareLinkFor(cfg.kind, cfg.secrets);
+	if (!found) {
+		subj.emit({
+			state: 'error',
+			progress: null,
+			message: 'The OctoEverywhere shared link is missing.'
+		});
+		return { status$: (cb) => subj.subscribe(cb), close: () => (subj.closed = true) };
+	}
+	const link = found;
 	let ws: SocketLike | null = null;
 	let attempt = 0;
 	let retry: ReturnType<typeof setTimeout> | undefined;
@@ -95,15 +106,10 @@ export function connectMoonraker(cfg: PrinterConfig): AdapterHandle {
 	let connectTimer: ReturnType<typeof setTimeout> | undefined;
 	let acc: Obj = {};
 	const hostile = new HostileGuard();
-	// OctoEverywhere shared link: https/wss to the link host (the web interface's own paths), no
-	// port. A relay that hangs up must not be re-dialled every few seconds, so `attempt` resets
-	// only once a valid message arrived and the delays are the slower `linkBackoff` ones.
-	const link = shareLinkFor(cfg.kind, cfg.secrets);
-	const delay = (extra = 0) => (link ? linkBackoff(attempt++) : backoff(attempt++ + extra));
+	const delay = () => linkBackoff(attempt++);
 
 	/**
-	 * Close the socket we hold (it hung, or went silent) and retry on the normal backoff; through a
-	 * link that is `linkBackoff`. The close handler ignores it because `ws` is cleared first.
+	 * Close the socket we hold (it hung, or went silent) and retry on `linkBackoff`. The close handler ignores it because `ws` is cleared first.
 	 */
 	const dropSocket = (message: string) => {
 		const s = ws;
@@ -128,8 +134,7 @@ export function connectMoonraker(cfg: PrinterConfig): AdapterHandle {
 		clearTimeout(stale);
 		const STALE = 45000;
 		stale = setTimeout(() => {
-			if (!link) return dropSocket('No data from the printer');
-			// Link: report it, but keep the socket until the long silence limit.
+			// Report it, but keep the socket until the long silence limit.
 			subj.emit({ state: 'offline', progress: null, message: 'No data from the printer' });
 			stale = setTimeout(
 				() => dropSocket('No data from the printer'),
@@ -150,25 +155,18 @@ export function connectMoonraker(cfg: PrinterConfig): AdapterHandle {
 		if (subj.closed) return;
 		let named: string; // http(s) origin the REST calls go to
 		let wsBase: string;
-		let pin: SocketPin | undefined; // link: the validated public address the socket must dial
+		let pin: SocketPin | undefined; // the validated public address the socket must dial
 		try {
-			// Resolved and validated on every (re)connect; both requests go to the validated IP
-			// (link: the validated public address, which the socket is pinned to as well).
-			if (link) {
-				const t = await resolveAllowed(link.host, undefined, { allowShareLink: true });
-				pin = { ip: t.ip, family: t.family, servername: link.host };
-				named = link.origin;
-				wsBase = `wss://${link.host}`;
-			} else {
-				const t = await resolveAllowed(cfg.host);
-				named = `http://${ipForUrl(t.host)}:${cfg.port ?? 7125}`; // keeps the Host header; guardedFetch pins the IP
-				wsBase = `ws://${ipForUrl(t.ip)}:${cfg.port ?? 7125}`;
-			}
+			// Resolved and validated on every (re)connect; both requests go to the validated public
+			// address, which the socket is pinned to as well.
+			const t = await resolveAllowed(link.host, undefined, { allowShareLink: true });
+			pin = { ip: t.ip, family: t.family, servername: link.host };
+			named = link.origin;
+			wsBase = `wss://${link.host}`;
 		} catch (e) {
 			if (subj.closed) return;
 			subj.emit({ state: 'error', progress: null, message: safeError(e) });
-			if (!(e instanceof OutboundError && e.kind === 'public'))
-				retry = setTimeout(() => void open(), delay(3));
+			retry = setTimeout(() => void open(), delay());
 			return;
 		}
 		if (subj.closed) return;
@@ -179,7 +177,7 @@ export function connectMoonraker(cfg: PrinterConfig): AdapterHandle {
 				const r = await guardedFetch(shareLinkUrl(named, '/access/oneshot_token'), {
 					headers: { 'X-Api-Key': cfg.secrets.apiKey },
 					signal: AbortSignal.timeout(5000),
-					...(link ? { allowShareLink: true } : {})
+					allowShareLink: true
 				});
 				if (isRedirect(r.status)) throw new Error(REDIRECT_MESSAGE);
 				const j = (await readJsonCapped(r)) as { result?: string };
@@ -220,15 +218,11 @@ export function connectMoonraker(cfg: PrinterConfig): AdapterHandle {
 			clearTimeout(connectTimer);
 			subj.emit({ state: 'error', progress: null, message });
 			clearTimeout(retry);
-			// Through a link: never faster than the slow link backoff either.
-			retry = setTimeout(
-				() => void open(),
-				Math.max(hostile.trip(), link ? linkBackoff(attempt++) : 0)
-			);
+			// Never faster than the slow link backoff either.
+			retry = setTimeout(() => void open(), Math.max(hostile.trip(), linkBackoff(attempt++)));
 		};
 		sock.onopen = () => {
 			clearTimeout(connectTimer);
-			if (!link) attempt = 0;
 			acc = {};
 			armStale();
 			sock.send(

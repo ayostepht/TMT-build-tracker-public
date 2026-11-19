@@ -367,12 +367,12 @@ describe('removing a color that is in use', () => {
 		expect(rolesOfBuild(id)['soft-headrest']).toBe('soft');
 	});
 
-	it('moves every part (hidden variants too, locks kept), drops spools and link, remaps grams, logs it', () => {
+	it('moves every part (hidden variants too, locks kept), drops spools, remaps grams, logs it', () => {
 		const id = mk();
 		addRed(id, { partRoles: { 'wing-left': 'red', 'footrest-front': 'red' } });
 		updateBuildDesign(db, id, 'owner', { lock: { slugs: ['wing-left'], locked: true } });
 		db.update(buildFilaments)
-			.set({ spools: 2, spoolmanSpoolId: 7 })
+			.set({ spools: 2 })
 			.where(and(eq(buildFilaments.buildId, id), eq(buildFilaments.roleKey, 'red')))
 			.run();
 		db.insert(buildPlates)
@@ -404,9 +404,8 @@ describe('removing a color that is in use', () => {
 		expect(ev.at(-1)!.kind).toBe('design.update');
 		const text = describeActivity(last(v, 'design.update'), v);
 		expect(text).toContain(
-			'removed Red PETG; its 2 parts now use Primary PETG and unlinked Spoolman spool #7 and dropped 2 spools of stock'
+			'removed Red PETG; its 2 parts now use Primary PETG and dropped 2 spools of stock'
 		);
-		expect(text).toContain('unlinked Spoolman spool #7');
 		expect(text).toContain('dropped 2 spools of stock');
 	});
 

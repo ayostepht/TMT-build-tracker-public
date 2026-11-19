@@ -8,7 +8,6 @@ import {
 	limitTests,
 	uniformHostedFailure
 } from '#lib/server/printers/test-limit.ts';
-import { isPublicMode } from '#lib/server/config.ts';
 import { configFromInput } from '#lib/server/printers/store.ts';
 import { testConnection } from '#lib/server/printers/supervisor.ts';
 import type { RequestHandler } from './$types';
@@ -32,15 +31,15 @@ export const POST: RequestHandler = (event) =>
 				status: null,
 				message: 'This printer is not connected, so there is nothing to test.'
 			};
-		// 4xx with a clear message in public mode (unless it is a link) or for a non-local address. Through an
-		// OctoEverywhere link the destination is the link's host (a validated public address).
+		// The destination is the OctoEverywhere link's host (a validated public address); a refusal
+		// reads the same as any other failure, so the route cannot confirm a guessed link.
 		const link = shareLinkFor(cfg.kind, cfg.secrets);
+		if (!link) throw new ApiError(400, HOSTED_LINK_FAILURE);
 		await uniformHostedFailure(() =>
-			resolveAllowed(link ? link.host : cfg.host, undefined, { allowShareLink: !!link })
+			resolveAllowed(link.host, undefined, { allowShareLink: true })
 		);
 		const r = await testConnection(cfg);
-		// Hosted site: one wording for every failure, and no status that might carry another.
-		if (isPublicMode() && !r.ok)
-			return { connected: false, status: null, message: HOSTED_LINK_FAILURE };
+		// One wording for every failure, and no status that might carry another.
+		if (!r.ok) return { connected: false, status: null, message: HOSTED_LINK_FAILURE };
 		return { connected: r.ok, status: r.status, message: r.message };
 	});

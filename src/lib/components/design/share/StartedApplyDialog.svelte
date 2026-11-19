@@ -111,9 +111,7 @@
 								<li>
 									<span class="sad-name">{k.was}</span> becomes
 									<span class="sad-name">{k.name}</span>
-									({k.spools > 0 ? `${k.spools} kg on hand` : 'no spools'}{k.spoolman
-										? ', linked to Spoolman'
-										: ''})
+									({k.spools > 0 ? `${k.spools} kg on hand` : 'no spools'})
 								</li>
 							{/each}
 						</ul>

@@ -5,14 +5,13 @@
  */
 import { eq } from 'drizzle-orm';
 import type { PrinterStatus } from '#lib/printers/status.ts';
-import { shareLinkFor } from '#lib/printers/share-link.ts';
-import { isPublicMode } from '../config';
+import { SHARE_LINK_HOST_PLACEHOLDER, shareLinkFor } from '#lib/printers/share-link.ts';
 import type { Db } from '../db';
 import { printers } from '../db/schema';
 import { adapters as defaultAdapters } from './adapters';
 import { emitPrinterEvent } from './bus';
 import { processStatus } from './jobs';
-import { PUBLIC_MODE_MESSAGE } from './outbound';
+import { LINK_ONLY_MESSAGE } from './outbound';
 import { toConfig } from './store';
 import { maskSecrets, type AdapterHandle, type ConnectFn } from './types';
 import type { PrinterKind } from '#lib/printers/status.ts';
@@ -53,8 +52,8 @@ export class Supervisor {
 		if (!row) return;
 		if (row.kind === 'manual') return; // not connected: nothing to dial, ever
 		const cfg = toConfig(row);
-		// Hosted site: only a printer on an OctoEverywhere link is ever connected.
-		if (isPublicMode() && !shareLinkFor(cfg.kind, cfg.secrets)) return;
+		// Only a printer on an OctoEverywhere link is ever connected.
+		if (!shareLinkFor(cfg.kind, cfg.secrets)) return;
 		let handle: AdapterHandle;
 		try {
 			handle = this.adapters[cfg.kind](cfg);
@@ -69,15 +68,6 @@ export class Supervisor {
 		const conn: Conn = { handle, unsub: () => {}, lastWrite: 0, lastKey: '' };
 		conn.unsub = handle.status$((s) => this.onStatus(printerId, conn, s));
 		this.conns.set(printerId, conn);
-	}
-
-	/**
-	 * Camera on (Elegoo SDCP) over the printer's existing connection. Null when there is no
-	 * connection or the adapter has no such command (the caller may use a temporary socket).
-	 */
-	async enableCamera(printerId: string): Promise<boolean | null> {
-		const fn = this.conns.get(printerId)?.handle.enableCamera;
-		return fn ? fn() : null;
 	}
 
 	/** Drop a connection (printer deleted). */
@@ -171,8 +161,15 @@ export async function testConnection(
 			status: null,
 			message: 'This printer is not connected, so there is nothing to test.'
 		};
-	if (isPublicMode() && !shareLinkFor(cfg.kind, cfg.secrets))
-		return { ok: false, status: null, message: PUBLIC_MODE_MESSAGE };
+	if (!shareLinkFor(cfg.kind, cfg.secrets))
+		return {
+			ok: false,
+			status: null,
+			message:
+				cfg.host === SHARE_LINK_HOST_PLACEHOLDER
+					? 'The OctoEverywhere shared link is missing. Edit the printer and enter it again.'
+					: LINK_ONLY_MESSAGE
+		};
 	return new Promise((resolve) => {
 		let last: PrinterStatus | null = null;
 		let handle: AdapterHandle | null = null;
@@ -188,7 +185,8 @@ export async function testConnection(
 				status: last,
 				message: ok
 					? undefined
-					: (last?.message ?? 'No answer from the printer. Check the address and that it is on.')
+					: (last?.message ??
+						'No answer from the printer. Check the link and that the printer is on.')
 			});
 		};
 		let unsub = () => {};

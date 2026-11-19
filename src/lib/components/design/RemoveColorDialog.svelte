@@ -28,7 +28,7 @@
 	const slot = $derived(view.filaments.find((f) => f.key === roleKey));
 	const impact = $derived(removeImpact(view, roleKey));
 	const options = $derived(sortRoles(replacementOptions(view, roleKey), (o) => o.filament.key));
-	const stock = $derived(!!slot && (stockKg(slot) > 0 || slot.spoolmanSpoolId !== null));
+	const stock = $derived(!!slot && stockKg(slot) > 0);
 	let chosen = $state('');
 	const n = $derived(impact.length);
 </script>
@@ -84,9 +84,7 @@
 
 	{#if stock && slot}
 		<p class="rc-note">
-			Its {stockKg(slot) > 0
-				? `${fmtSpools(stockKg(slot))} kg on hand`
-				: 'stock'}{slot.spoolmanSpoolId !== null ? ' and Spoolman link' : ''} are dropped with it.
+			Its {stockKg(slot) > 0 ? `${fmtSpools(stockKg(slot))} kg on hand` : 'stock'} is dropped with it.
 		</p>
 	{/if}
 

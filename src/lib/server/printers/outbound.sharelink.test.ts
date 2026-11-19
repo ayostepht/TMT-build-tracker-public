@@ -74,7 +74,7 @@ describe('the shared-link host is the one public destination', () => {
 	it('an ordinary host with a public address is still refused', async () => {
 		await expect(
 			resolveAllowed('printer.example.com', fake({ 'printer.example.com': [PUBLIC4] }))
-		).rejects.toThrow(/not on your local network/);
+		).rejects.toThrow(/shared link only/);
 		// look-alikes of the link shape are ordinary hosts too
 		for (const h of [
 			'shared-short.octoeverywhere.com',

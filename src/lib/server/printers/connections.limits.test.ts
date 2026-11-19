@@ -11,7 +11,7 @@ import { openDb, runMigrations } from '../db';
 import { organization, printers, user } from '../db/schema';
 import { adapters } from './adapters';
 import { resolveCameraSource, MAX_CAMERA_URLS, type CameraTarget } from './camera-source';
-import { OutboundError, resolveAllowed, setResolver } from './outbound';
+import { resolveAllowed, setResolver } from './outbound';
 import { createPrinter, updatePrinter } from './store';
 import { HOSTED_LINK_FAILURE, limitTests, TEST_RATE, uniformHostedFailure } from './test-limit';
 import {
@@ -112,21 +112,18 @@ describe('link sockets are pinned to the validated address', () => {
 			h.close();
 		}
 	);
-	it('a LAN socket is not pinned (its URL already carries the validated address)', async () => {
-		const pins: Parameters<typeof useFakeSocket>[1] = [];
-		useFakeSocket(FakeWs, pins);
+	it('a printer with no link opens no socket at all', async () => {
+		useFakeSocket(FakeWs);
 		setResolver(async () => ['192.168.1.20']);
 		const h = adapters.moonraker({
 			id: 'p',
 			kind: 'moonraker',
 			host: 'printer.local',
-			port: null,
 			secrets: {}
 		});
 		watch(h);
 		await flush();
-		expect(FakeWs.all[0].url).toBe('ws://192.168.1.20:7125/websocket');
-		expect(pins).toEqual([undefined]);
+		expect(FakeWs.all).toHaveLength(0);
 		h.close();
 	});
 });
@@ -241,19 +238,13 @@ describe('handshake timeout and silent sockets', () => {
 		h.close();
 	});
 
-	it('Elegoo (link and LAN): the same handshake timeout', async () => {
-		for (const c of [
-			cfg('elegoo-sdcp'),
-			{ ...cfg('elegoo-sdcp', { mainboardId: 'ABCDEF' }), host: '10.0.0.5', port: 3030 }
-		]) {
-			FakeWs.all = [];
-			const h = adapters['elegoo-sdcp'](c);
-			await flush();
-			expect(FakeWs.all).toHaveLength(1); // the stub was used: nothing real was dialled
-			await tick(10_500);
-			expect(FakeWs.all[0].closed).toBe(true);
-			h.close();
-		}
+	it('Elegoo over a link: the same handshake timeout', async () => {
+		const h = adapters['elegoo-sdcp'](cfg('elegoo-sdcp'));
+		await flush();
+		expect(FakeWs.all).toHaveLength(1); // the stub was used: nothing real was dialled
+		await tick(10_500);
+		expect(FakeWs.all[0].closed).toBe(true);
+		h.close();
 	});
 
 	it('Klipper over a link: silence reports offline at 45 s but the socket is closed only at 120 s', async () => {
@@ -292,37 +283,9 @@ describe('handshake timeout and silent sockets', () => {
 		expect(ws.closed).toBe(true);
 		h.close();
 	});
-
-	it('LAN keeps the short limits: Klipper closes at 45 s, Elegoo at 20 s', async () => {
-		const lanK = adapters.moonraker({
-			id: 'p',
-			kind: 'moonraker',
-			host: '10.0.0.7',
-			port: null,
-			secrets: {}
-		});
-		await flush();
-		expect(FakeWs.all).toHaveLength(1); // the stub: nothing real was dialled
-		FakeWs.all[0].open();
-		await tick(46_000);
-		expect(FakeWs.all[0].closed).toBe(true);
-		lanK.close();
-		FakeWs.all = [];
-		const lanE = adapters['elegoo-sdcp']({
-			...cfg('elegoo-sdcp', { mainboardId: 'ABCDEF' }),
-			host: '10.0.0.5',
-			port: 3030
-		});
-		await flush();
-		expect(FakeWs.all).toHaveLength(1);
-		FakeWs.all[0].open();
-		await tick(20_500);
-		expect(FakeWs.all[0].closed).toBe(true);
-		lanE.close();
-	});
 });
 
-describe('hosted caps', () => {
+describe('caps (public quota defaults)', () => {
 	const setup = () => {
 		vi.stubEnv('TMT_MODE', 'public');
 		vi.stubEnv('BETTER_AUTH_SECRET', 'unit-test-secret-not-for-production-0123456789abcdef');
@@ -428,8 +391,7 @@ describe('test routes: rate limit and uniform hosted failures', () => {
 		expect(() => limitTests('u1', now + 7_000)).not.toThrow(); // refills 1 per 6 s
 	});
 
-	it('on a hosted site "link not found", "points inward" and "refused" are the same sentence', async () => {
-		vi.stubEnv('TMT_MODE', 'public');
+	it('"link not found", "points inward" and "refused" are the same sentence', async () => {
 		const fail = async (answers: () => Promise<string[]>) => {
 			setResolver(answers);
 			try {
@@ -447,24 +409,16 @@ describe('test routes: rate limit and uniform hosted failures', () => {
 			fail(async () => ['10.0.0.5'])
 		]);
 		expect(new Set(msgs)).toEqual(new Set([HOSTED_LINK_FAILURE]));
-		// a LAN address on the hosted site gives the same sentence too
+		// an address (not a link host) gives the same sentence too
 		await expect(
 			uniformHostedFailure(() => resolveAllowed('192.168.0.5', undefined, { allowShareLink: true }))
 		).rejects.toThrow(HOSTED_LINK_FAILURE);
-		// self-hosted keeps the specific messages
-		vi.unstubAllEnvs();
-		await expect(
-			uniformHostedFailure(() => resolveAllowed('8.8.8.8', undefined, { allowShareLink: true }))
-		).rejects.toBeInstanceOf(OutboundError);
 	});
 });
 
 describe('camera URLs from a remote printer', () => {
 	const t = (): CameraTarget => ({
 		kind: 'moonraker',
-		host: 'octoeverywhere',
-		port: null,
-		cameraUrl: null,
 		cameraEnabled: true,
 		secrets: { shareLink: LINK }
 	});

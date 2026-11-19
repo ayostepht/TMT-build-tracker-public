@@ -67,7 +67,7 @@ function hexOf(v: unknown): string {
  * - `partRoles: { slug: roleKey }`: move parts.
  * - `lock: { slugs, locked }`: "Lock part color" on or off (exactly the parts listed; never expanded to symmetry peers) (`design.lockedParts`).
  * - `removeRole: key` (+ `replaceWith: key`): remove a slot. A used slot needs `replaceWith`; all its parts
- *   (also those of unchosen options) move there, and grams keyed to it follow. Its spools and Spoolman link go.
+ *   (also those of unchosen options) move there, and grams keyed to it follow. Its spools go.
  * - `removeRoles: [key]`: remove slots that are unused by now (Undo of an auto-added lock slot).
  */
 export function updateBuildDesign(db: Db, buildId: string, userId: string, body: unknown): void {
@@ -104,7 +104,6 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 				tpu: false,
 				spools: 0,
 				recommendedSpools: 1,
-				spoolmanSpoolId: null,
 				kit: false
 			});
 		};
@@ -273,7 +272,6 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 				material: f.material,
 				hex: f.hex,
 				spools: stockKg(f),
-				...(f.spoolmanSpoolId !== null ? { spoolmanSpoolId: f.spoolmanSpoolId } : {}),
 				parts: affected.length
 			};
 		};
@@ -439,7 +437,7 @@ export function previewApplyDesign(
 
 /**
  * "Colors only": write the target filament's `name`, `material` and `hex` on the slots `planRecolor` picked.
- * Part slots, locks, plates, files, runs, spools, `spool_adds` and the Spoolman link are not touched, and
+ * Part slots, locks, plates, files, runs, spools and `spool_adds` are not touched, and
  * the kind (`design.recolor`) is outside `REARRANGE_KINDS`, so no plate is rebuilt.
  */
 function recolorOnly(tx: Db, view: BuildView, d: typeof colorDesigns.$inferSelect): RecolorPlan {

@@ -1,7 +1,10 @@
 import { createServer, type Server } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { guardedFetch, OutboundError } from './outbound';
+import { fetchPinned, OutboundError, type ResolvedTarget } from './outbound';
+
+const LOOP: ResolvedTarget = { host: '127.0.0.1', ip: '127.0.0.1', family: 4, literal: true };
+const guardedFetch = (u: string) => fetchPinned(new URL(u), LOOP);
 
 let srv: Server | undefined;
 afterEach(() => new Promise<void>((r) => (srv ? srv.close(() => r()) : r())));
@@ -18,7 +21,7 @@ async function serveStatus(line: string): Promise<number> {
 	return (srv.address() as AddressInfo).port;
 }
 
-describe('guardedFetch with an out-of-range HTTP status', () => {
+describe('fetchPinned with an out-of-range HTTP status', () => {
 	for (const code of [700, 999, 600]) {
 		it(`rejects with an OutboundError for status ${code} instead of throwing out of band`, async () => {
 			const port = await serveStatus(`HTTP/1.1 ${code} x`);

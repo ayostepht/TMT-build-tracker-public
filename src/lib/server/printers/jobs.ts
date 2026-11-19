@@ -28,7 +28,6 @@ import type { Db } from '../db';
 import { builds, printerJobs, printers } from '../db/schema';
 import { emitBuildEvent } from '../events';
 import { getExpected, getOrgSettings, setExpected } from '../org-settings';
-import { syncRunDeduction } from '../spoolman/deduct';
 import { emitPrinterEvent } from './bus';
 import { getMemberActor } from './system';
 
@@ -385,7 +384,6 @@ function finishJob(
 			runBody(view, job, 'Success', grams, elapsed, printer.name, now)
 		);
 		db.update(printerJobs).set({ runId }).where(eq(printerJobs.id, job.id)).run();
-		void syncRunDeduction(db, job.buildId, runId);
 	}
 	mutateBuildSystem(db, job.buildId, actor, printer.name, () => ({
 		kind: 'printer.job.done',

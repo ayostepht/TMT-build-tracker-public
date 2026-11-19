@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readCached } from '../spoolman/cache';
 import { and, eq, inArray } from 'drizzle-orm';
 import {
 	applyRun,
@@ -760,7 +759,6 @@ const MAX_UNDO_RUNS = 10;
  * saw before logging. Only parts that run affects may be restored. A Partial with per-part
  * results made two runs: `body.runIds` names all of them and one undo removes both (one
  * `run.undo` row). Ids that are no longer in this build are skipped; none left is a 404.
- * Returns the ids that were deleted (to hand back to Spoolman).
  */
 export function undoRun(
 	db: Db,
@@ -1084,7 +1082,7 @@ export function setPrinter(db: Db, buildId: string, userId: string, body: unknow
 	});
 }
 
-// ---- Milestone 7: printer jobs and Spoolman (appended)
+// ---- Milestone 7: printer jobs (appended)
 
 /**
  * Like `mutateBuild` for changes the server makes on its own (a printer finished a job):
@@ -1241,40 +1239,6 @@ export function removeSpoolAdd(
 			kind: 'filament.stock.remove',
 			payload: { role, addId, kg: gone.kg, at: gone.at }
 		};
-	});
-}
-
-/** Link (or clear with null) a build filament slot to a Spoolman spool: `{ spoolId: number | null }`. */
-export function linkSpool(
-	db: Db,
-	buildId: string,
-	userId: string,
-	role: string,
-	body: unknown
-): void {
-	if (!isObj(body) || !('spoolId' in body))
-		bad('spoolId is required (a number, or null to unlink)');
-	const id = body.spoolId;
-	if (id !== null && (typeof id !== 'number' || !Number.isInteger(id) || id < 1))
-		bad('spoolId must be a whole number');
-	const name = optStr(body.spoolName, 'spoolName', 200) ?? null;
-	mutateBuild(db, buildId, userId, (tx, view) => {
-		const slot = view.filaments.find((f) => f.key === role);
-		if (!slot) throw new ApiError(404, 'Unknown filament');
-		// A slot linked to a Spoolman filament only takes one of that filament's own spools.
-		const fid = slot.spoolman?.filamentId ?? null;
-		if (id !== null && fid != null) {
-			const cached = readCached(tx, view.build.organizationId, fid);
-			if (!cached?.spools.some((x) => x.id === id))
-				bad(
-					'That spool does not belong to the linked Spoolman filament. Pick it with the Spoolman spool chooser.'
-				);
-		}
-		tx.update(buildFilaments)
-			.set({ spoolmanSpoolId: id as number | null })
-			.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, role)))
-			.run();
-		return { kind: 'filament.spool', payload: { role, spoolId: id, spoolName: name } };
 	});
 }
 

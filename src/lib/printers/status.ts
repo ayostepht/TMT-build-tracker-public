@@ -1,12 +1,6 @@
 /** Printer integration types shared by server and browser. No Node imports. */
 
-export const PRINTER_KINDS = [
-	'elegoo-sdcp',
-	'moonraker',
-	'octoprint',
-	'bambu-lan',
-	'manual'
-] as const;
+export const PRINTER_KINDS = ['elegoo-sdcp', 'moonraker', 'octoprint', 'manual'] as const;
 export type PrinterKind = (typeof PRINTER_KINDS)[number];
 
 /** Stored in `printers.host` for a manual (not connected) printer: not an address, never dialled. */
@@ -14,60 +8,42 @@ export const MANUAL_HOST_PLACEHOLDER = 'manual';
 
 const SHARE_LINK_FIELD: SecretField = {
 	key: 'shareLink',
-	label: 'OctoEverywhere shared link (optional)',
+	label: 'OctoEverywhere shared link',
 	secret: true,
-	hint: "Reaches the printer through OctoEverywhere's existing connection instead of its address."
+	hint: "Reaches the printer through OctoEverywhere's existing connection. Required: the app never connects to a printer's own address."
 };
 
 export const PRINTER_KIND_INFO: Record<
 	PrinterKind,
-	{ label: string; defaultPort: number; secrets: SecretField[]; hint: string }
+	{ label: string; secrets: SecretField[]; hint: string }
 > = {
 	'elegoo-sdcp': {
 		label: 'Elegoo (SDCP)',
-		defaultPort: 3030,
 		secrets: [
 			{
 				key: 'mainboardId',
 				label: 'Mainboard ID (optional)',
 				secret: false,
-				hint: 'Found automatically; fill in only if status stays empty.'
+				hint: 'Learned from the printer; fill in only if status stays empty.'
 			},
-			{
-				key: 'shareLink',
-				label: 'OctoEverywhere shared link (optional)',
-				secret: true,
-				hint: "Uses OctoEverywhere's existing connection instead of one of the printer's limited direct connections."
-			}
+			SHARE_LINK_FIELD
 		],
-		hint: 'Centauri Carbon and other SDCP printers. Read-only status over WebSocket.'
+		hint: 'Centauri Carbon and other SDCP printers. Read-only status over WebSocket, through OctoEverywhere.'
 	},
 	moonraker: {
 		label: 'Klipper (Moonraker)',
-		defaultPort: 7125,
 		secrets: [{ key: 'apiKey', label: 'API key (optional)', secret: true }, SHARE_LINK_FIELD],
-		hint: 'Moonraker WebSocket on port 7125.'
+		hint: 'Moonraker through an OctoEverywhere shared link.'
 	},
 	octoprint: {
 		label: 'OctoPrint',
-		defaultPort: 80,
 		secrets: [{ key: 'apiKey', label: 'API key', secret: true }, SHARE_LINK_FIELD],
-		hint: 'OctoPrint REST API; create an application key in its settings.'
-	},
-	'bambu-lan': {
-		label: 'Bambu Lab (LAN mode)',
-		defaultPort: 8883,
-		secrets: [
-			{ key: 'accessCode', label: 'LAN access code', secret: true },
-			{ key: 'serial', label: 'Serial number', secret: false }
-		],
-		hint: 'LAN-only mode over MQTT (TLS). Access code and serial are on the printer screen.'
+		hint: 'OctoPrint REST API through an OctoEverywhere shared link; create an application key in its settings.'
 	},
 	manual: {
 		label: 'Not connected',
-		defaultPort: 0,
 		secrets: [],
-		hint: 'No address and no connection: log what is on this printer by hand.'
+		hint: 'No connection: log what is on this printer by hand.'
 	}
 };
 
@@ -129,22 +105,19 @@ export interface PrinterPublic {
 	name: string;
 	kind: PrinterKind;
 	host: string;
-	port: number | null;
 	catalogId: string | null;
 	enabled: boolean;
 	/** Camera on or off (default on). */
 	cameraEnabled: boolean;
-	/** Camera override; only sent to team editors and owners (it may carry a token). */
-	cameraUrl: string | null;
 	lastSeenAt: string | null;
 	status: PrinterStatus | null;
 	/** Names of stored secret fields that are set (values are never sent). */
 	secretsSet: string[];
 	/** Non-secret identifiers (serial, mainboard id). */
 	identifiers: Record<string, string>;
-	/** How it is reached: a LAN address, an OctoEverywhere shared link, or `manual` (never dialled). */
-	connection: 'lan' | 'link' | 'manual';
-	/** Why this printer can never be reached (hosted site, or a non-local address); null when it can. */
+	/** How it is reached: an OctoEverywhere shared link, or `manual` (never dialled). */
+	connection: 'link' | 'manual';
+	/** Why this printer cannot be reached (e.g. an old row with no link); null when it can. */
 	blocked: string | null;
 }
 

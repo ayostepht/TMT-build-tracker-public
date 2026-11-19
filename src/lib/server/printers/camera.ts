@@ -2,7 +2,8 @@
  * Camera hub: one upstream connection per printer, fanned out to every browser. Opened on the
  * first viewer or snapshot request, keeps the latest JPEG frame, closed `lingerMs` after the last
  * one leaves. Read-only: only HTTP GETs to URLs that passed the same-host guard, sent through
- * `guardedFetch` (validated local address, pinned; redirects are failures). Nothing here logs
+ * `guardedFetch` (the validated public address of the OctoEverywhere link, pinned; redirects are
+ * failures). Nothing here logs
  * URLs or response bodies.
  */
 import { checkCameraUrl } from '#lib/printers/camera-url.ts';
@@ -27,11 +28,6 @@ export interface HubOptions {
 	backoffBaseMs: number;
 	backoffMaxMs: number;
 	fetchFn: typeof fetch;
-	/** Camera-on: wait between reconnect tries and for how long in total after sending it. */
-	enableRetryMs: number;
-	enableWaitMs: number;
-	/** At most one camera-on per printer within this window. */
-	enableThrottleMs: number;
 }
 
 export const DEFAULT_HUB_OPTIONS: HubOptions = {
@@ -42,9 +38,6 @@ export const DEFAULT_HUB_OPTIONS: HubOptions = {
 	maxFrameBytes: MAX_FRAME_BYTES,
 	backoffBaseMs: 1000,
 	backoffMaxMs: 30000,
-	enableRetryMs: 1000,
-	enableWaitMs: 5000,
-	enableThrottleMs: 30000,
 	fetchFn: (...a) => guardedFetch(...a)
 };
 
@@ -59,12 +52,6 @@ export class CameraError extends Error {
 		this.stalled = extra.stalled;
 	}
 }
-
-/** Sends the camera-on command for one printer (throttled by the hub); true when it was sent. */
-export type CameraEnabler = () => Promise<boolean>;
-
-const needsEnable = (e: unknown): e is CameraError =>
-	e instanceof CameraError && (e.status !== undefined || e.stalled === true);
 
 export type SessionStatus = 'idle' | 'connecting' | 'live' | 'error';
 
@@ -81,7 +68,7 @@ const sleep = (ms: number, signal: AbortSignal) =>
 
 /**
  * GET one camera URL with a connect timeout. The URL must pass the same-host check, and the
- * default `fetchFn` (`guardedFetch`) only connects to a validated local address. A redirect is
+ * default `fetchFn` (`guardedFetch`) only connects to a validated public link address. A redirect is
  * never followed: it is a failure, whoever it points at.
  */
 export async function openUpstream(
@@ -102,7 +89,7 @@ export async function openUpstream(
 			redirect: 'manual',
 			signal: AbortSignal.any([signal, ctl.signal]),
 			headers: { accept: 'multipart/x-mixed-replace, image/jpeg, */*' },
-			// Only a source built from an Elegoo OctoEverywhere link may reach a share host.
+			// Only a source built from an OctoEverywhere link may reach a share host.
 			...(allowShareLink ? { allowShareLink: true } : {})
 		} as RequestInit);
 	} catch (e) {
@@ -157,7 +144,10 @@ const isMultipart = (ct: string | null) => !!ct && /multipart\/x-mixed-replace/i
  * Fetch one frame straight from a source (no hub): used by the settings "Test" button.
  * Tries each URL in order.
  */
-async function grabOnce(source: CameraSource, opts: Partial<HubOptions>): Promise<Buffer> {
+export async function grabFrame(
+	source: CameraSource,
+	opts: Partial<HubOptions> = {}
+): Promise<Buffer> {
 	const o = { ...DEFAULT_HUB_OPTIONS, ...opts };
 	let last: unknown = new CameraError('No camera');
 	for (const url of source.urls) {
@@ -192,33 +182,6 @@ async function grabOnce(source: CameraSource, opts: Partial<HubOptions>): Promis
 	throw last instanceof CameraError ? last : new CameraError('Could not reach the camera');
 }
 
-/**
- * `grabOnce` for the settings "Test" button. With an `enable` function (Elegoo) the camera is
- * switched on first, and a non-2xx answer (camera not ready) is retried once a second for up to
- * `enableWaitMs`.
- */
-export async function grabFrame(
-	source: CameraSource,
-	opts: Partial<HubOptions> = {},
-	enable?: CameraEnabler
-): Promise<Buffer> {
-	const o = { ...DEFAULT_HUB_OPTIONS, ...opts };
-	if (!enable) return grabOnce(source, opts);
-	await enable().catch(() => false);
-	const tries = Math.max(1, Math.round(o.enableWaitMs / o.enableRetryMs));
-	let last: unknown;
-	for (let i = 0; i <= tries; i++) {
-		if (i > 0) await new Promise((r) => setTimeout(r, o.enableRetryMs));
-		try {
-			return await grabOnce(source, opts);
-		} catch (e) {
-			last = e;
-			if (!needsEnable(e)) throw e;
-		}
-	}
-	throw last;
-}
-
 /** One printer's shared upstream connection. */
 export class CameraSession {
 	status: SessionStatus = 'idle';
@@ -236,8 +199,7 @@ export class CameraSession {
 	constructor(
 		private resolver: () => Promise<CameraSource | null>,
 		private opts: HubOptions,
-		private onClosed: () => void = () => {},
-		private enabler?: CameraEnabler
+		private onClosed: () => void = () => {}
 	) {}
 
 	/** Count a viewer; the upstream connection opens with the first one. Returns release. */
@@ -345,7 +307,6 @@ export class CameraSession {
 
 	private async loop(signal: AbortSignal) {
 		let attempt = 0;
-		let first = true;
 		while (!signal.aborted) {
 			this.setStatus('connecting');
 			let got = false;
@@ -353,11 +314,7 @@ export class CameraSession {
 				const src = await this.resolver();
 				if (signal.aborted) return;
 				if (!src) throw new CameraError('No camera for this printer');
-				// Elegoo: a new session starts with camera-on (a no-op within the throttle window).
-				if (this.enabler && first) await this.enabler().catch(() => false);
-				first = false;
-				if (signal.aborted) return;
-				got = await this.connectEnabling(src, signal);
+				got = await this.consumeAny(src, signal);
 			} catch (e) {
 				if (signal.aborted) return;
 				this.setStatus('error', e instanceof CameraError ? e.message : 'Camera unavailable');
@@ -366,33 +323,6 @@ export class CameraSession {
 			if (got) attempt = 0;
 			if (this.status !== 'error') this.setStatus('error', 'Camera stream ended');
 			await sleep(backoff(attempt++, this.opts.backoffBaseMs, this.opts.backoffMaxMs), signal);
-		}
-	}
-
-	/**
-	 * `consumeAny`, plus camera-on for Elegoo: when the camera answers non-2xx ("camera not
-	 * ready") or an open stream stalls, send camera-on (throttled by the hub) and reconnect once a
-	 * second for up to `enableWaitMs` before giving up to the normal backoff.
-	 */
-	private async connectEnabling(src: CameraSource, signal: AbortSignal): Promise<boolean> {
-		try {
-			return await this.consumeAny(src, signal);
-		} catch (e) {
-			if (signal.aborted || !this.enabler || !needsEnable(e)) throw e;
-			let last: unknown = e;
-			await this.enabler().catch(() => false);
-			const tries = Math.max(1, Math.round(this.opts.enableWaitMs / this.opts.enableRetryMs));
-			for (let i = 0; i < tries; i++) {
-				await sleep(this.opts.enableRetryMs, signal);
-				if (signal.aborted) throw last;
-				try {
-					return await this.consumeAny(src, signal);
-				} catch (e2) {
-					if (signal.aborted || !needsEnable(e2)) throw e2;
-					last = e2;
-				}
-			}
-			throw last;
 		}
 	}
 
@@ -477,46 +407,17 @@ export class CameraSession {
 /** Sessions per printer. */
 export class CameraHub {
 	private sessions = new Map<string, CameraSession>();
-	private lastEnable = new Map<string, number>();
 	readonly opts: HubOptions;
 	constructor(opts: Partial<HubOptions> = {}) {
 		this.opts = { ...DEFAULT_HUB_OPTIONS, ...opts };
 	}
 
-	/**
-	 * Wrap a camera-on sender so it runs at most once per `enableThrottleMs` per key (printer),
-	 * across sessions and the settings Test. A throttled call returns false without sending.
-	 */
-	throttledEnabler(key: string, send: () => Promise<boolean>): CameraEnabler {
-		return async () => {
-			const now = Date.now();
-			const last = this.lastEnable.get(key);
-			if (last !== undefined && now - last < this.opts.enableThrottleMs) return false;
-			this.lastEnable.set(key, now);
-			try {
-				return await send();
-			} catch {
-				return false;
-			}
-		};
-	}
-
-	/** `send` makes this an Elegoo printer: the session sends camera-on (throttled) when needed. */
-	session(
-		printerId: string,
-		resolver: () => Promise<CameraSource | null>,
-		send?: () => Promise<boolean>
-	): CameraSession {
+	session(printerId: string, resolver: () => Promise<CameraSource | null>): CameraSession {
 		let s = this.sessions.get(printerId);
 		if (!s) {
-			const created: CameraSession = new CameraSession(
-				resolver,
-				this.opts,
-				() => {
-					if (this.sessions.get(printerId) === created) this.sessions.delete(printerId);
-				},
-				send ? this.throttledEnabler(printerId, send) : undefined
-			);
+			const created: CameraSession = new CameraSession(resolver, this.opts, () => {
+				if (this.sessions.get(printerId) === created) this.sessions.delete(printerId);
+			});
 			s = created;
 			this.sessions.set(printerId, s);
 		}

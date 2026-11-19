@@ -3,81 +3,45 @@ import { invite, joinViaInvite, ownerWithBuild, uniqueEmail } from './helpers';
 import { gotoIntegrations } from './integrations-helpers';
 
 /**
- * r49 phase 2: the Integrations page. Link printers are saved DISABLED and never tested: the suite
- * runs on a self-hosted server with real DNS, and a link is a made-up name that must never be
- * looked up or dialled. The hosted-site rendering (disabled cards, hosted note, Spoolman card)
- * follows `available` and `hosted` from the options; it is unit-tested in
- * src/lib/printers/integrations-view.test.ts because one e2e server runs in one mode.
+ * The Integrations page. A printer is reached through an OctoEverywhere link or is not connected at
+ * all. Link printers are saved DISABLED and never tested: a link is a made-up name that must never
+ * be looked up or dialled by the suite.
  */
 const LINK = 'https://shared-e2eintegr12345678.octoeverywhere.com';
 
-const CARDS = [
-	'elegoo-lan',
-	'klipper-lan',
-	'octoprint-lan',
-	'bambu-lan',
-	'octoeverywhere',
-	'manual'
-];
+const CARDS = ['octoeverywhere', 'manual'];
 
 test('the chooser renders every option from the options endpoint with its two labels', async ({
 	page
 }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
 	const { chapterUrl } = await ownerWithBuild(page, 'ig-chooser');
-	const opts = (await (await page.request.get('/api/printers/options')).json()) as {
-		hosted: boolean;
-		connectionOptions: {
-			key: string;
-			group: string;
-			hosted: boolean;
-			verifiedOnHardware: boolean;
-			available: boolean;
-		}[];
-	};
 	await gotoIntegrations(page, chapterUrl);
-	// No printers yet: a plain line, and no hosted note on a self-hosted server.
+	// No printers yet: a plain line, and nothing about addresses on your own network or Spoolman.
 	await expect(page.getByTestId('printers-none')).toBeVisible();
 	await expect(page.getByTestId('hosted-note')).toHaveCount(0);
+	await expect(page.getByTestId('team-spoolman')).toHaveCount(0);
+	await expect(page.getByTestId('integrations-unavailable')).toHaveCount(0);
 	await page.getByTestId('add-printer').click();
 	const chooser = page.getByTestId('printer-chooser');
 	await expect(chooser).toBeVisible();
 	await expect(chooser.getByRole('heading', { level: 4 })).toHaveText([
-		'On your network',
 		'Through OctoEverywhere',
 		'Not connected'
 	]);
 	for (const id of CARDS) await expect(page.getByTestId(`option-${id}`)).toBeVisible();
 	await expect(chooser.locator('button[data-testid^="option-"]')).toHaveCount(CARDS.length);
 
-	// One quiet "Experimental" tag, exactly on the three LAN options that are not verified.
-	const experimental = opts.connectionOptions
-		.filter((o) => o.group === 'lan' && !o.verifiedOnHardware)
-		.map((o) => o.key);
-	expect(experimental.sort()).toEqual(['bambu-lan', 'klipper-lan', 'octoprint-lan']);
-	await expect(chooser.getByTestId('experimental-tag')).toHaveCount(3);
+	// No row is tagged Experimental (the link form tags the unverified printer types itself).
+	await expect(chooser.getByTestId('experimental-tag')).toHaveCount(0);
+	await expect(chooser.getByTestId('experimental-note')).toHaveCount(0);
 	for (const id of CARDS) {
 		const row = page.getByTestId(`option-${id}`);
-		await expect(row.getByTestId('experimental-tag')).toHaveCount(
-			experimental.includes(id) ? 1 : 0
-		);
 		await expect(row).toBeEnabled();
-		// no per-option labels any more
 		await expect(row.getByTestId('hosted-label')).toHaveCount(0);
 		await expect(row.getByTestId('verified-label')).toHaveCount(0);
 	}
-	// One note with the issues link.
-	await expect(chooser.getByTestId('experimental-note')).toHaveCount(1);
-	await expect(chooser.getByTestId('experimental-note')).toContainText(
-		'Options marked Experimental have not been run on real printers yet. If you try one, tell us how it went.'
-	);
-	await expect(chooser.getByTestId('issues-link')).toHaveAttribute(
-		'href',
-		/^https:\/\/github\.com\/.+\/issues\/new\?template=printer-report\.yml$/
-	);
 	// Short descriptions.
-	await expect(page.getByTestId('option-elegoo-lan')).toContainText('Live status and camera');
-	await expect(page.getByTestId('option-bambu-lan')).toContainText('Live status, no camera');
 	await expect(page.getByTestId('option-octoeverywhere')).toContainText(
 		'For Elegoo, Klipper or OctoPrint, from anywhere'
 	);
@@ -141,48 +105,6 @@ test('choosing an option shows only its fields and its setup steps', async ({ pa
 		await page.getByTestId('printer-form').getByRole('button', { name: 'Cancel' }).click();
 		await page.getByTestId('printer-chooser').getByRole('button', { name: 'Cancel' }).click();
 	};
-
-	await open('elegoo-lan');
-	await has('pf-host', 'pf-port', 'pf-mainboardId', 'pf-discover', 'pf-test', 'pf-camera-url');
-	await hasNot('pf-shareLink', 'pf-kind', 'pf-link-type', 'pf-apiKey', 'pf-accessCode');
-	await steps(/#elegoo-sdcp$/);
-	await page.screenshot({
-		path: 'data/r49-shots-integrations/form-elegoo-390-light.png',
-		fullPage: true
-	});
-	await cancel();
-
-	await open('klipper-lan');
-	await has('pf-host', 'pf-port', 'pf-apiKey', 'pf-camera-url');
-	await hasNot('pf-shareLink', 'pf-mainboardId', 'pf-discover', 'pf-accessCode');
-	await expect(page.getByTestId('pf-apiKey')).not.toHaveAttribute('required', '');
-	await steps(/#klipper-moonraker$/);
-	await page.screenshot({
-		path: 'data/r49-shots-integrations/form-klipper-390-light.png',
-		fullPage: true
-	});
-	await cancel();
-
-	await open('octoprint-lan');
-	await has('pf-host', 'pf-port', 'pf-apiKey');
-	await expect(page.getByTestId('pf-apiKey')).toHaveAttribute('required', '');
-	await hasNot('pf-shareLink', 'pf-discover');
-	await steps(/#octoprint$/);
-	await page.screenshot({
-		path: 'data/r49-shots-integrations/form-octoprint-390-light.png',
-		fullPage: true
-	});
-	await cancel();
-
-	await open('bambu-lan');
-	await has('pf-host', 'pf-accessCode', 'pf-serial', 'pf-camera-unsupported');
-	await hasNot('pf-camera-url', 'pf-shareLink', 'pf-apiKey', 'pf-discover', 'pf-link-type');
-	await steps(/#bambu-lab-lan-mode$/);
-	await page.screenshot({
-		path: 'data/r49-shots-integrations/form-bambu-390-light.png',
-		fullPage: true
-	});
-	await cancel();
 
 	// OctoEverywhere: one card, a "Printer type" select inside, no address or port.
 	await open('octoeverywhere');
@@ -375,30 +297,4 @@ test('the Printers view: empty state with a way to Integrations; viewers are tol
 	await expect(v.getByTestId('printers-empty')).toContainText('Ask a chapter owner or editor');
 	await expect(v.getByTestId('printers-manage')).toHaveCount(0);
 	await context.close();
-});
-
-test('the Spoolman card: steps, own-network label, address field; no overflow at 390', async ({
-	page
-}) => {
-	await page.setViewportSize({ width: 390, height: 844 });
-	const { chapterUrl } = await ownerWithBuild(page, 'ig-spoolman');
-	await gotoIntegrations(page, chapterUrl);
-	const card = page.getByTestId('team-spoolman');
-	await expect(card.getByTestId('spoolman-hosted-label')).toHaveText(
-		'Needs the app on your own network'
-	);
-	await expect(card.getByTestId('spoolman-steps').locator('li')).toHaveCount(3);
-	await expect(card.getByTestId('spoolman-guide')).toHaveAttribute(
-		'href',
-		/printers\.md#spoolman-and-automatic-logging$/
-	);
-	await expect(card.getByTestId('spoolman-url')).toBeVisible();
-	await expect(card.getByTestId('spoolman-deduct')).toBeDisabled();
-	await expect(page.getByTestId('integrations-unavailable')).toHaveCount(0);
-	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-	await card.scrollIntoViewIfNeeded();
-	await page.screenshot({
-		path: 'data/r49-shots-integrations/spoolman-390-light.png',
-		fullPage: true
-	});
 });

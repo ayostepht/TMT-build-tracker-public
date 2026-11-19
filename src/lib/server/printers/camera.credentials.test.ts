@@ -1,102 +1,93 @@
-import { createServer, type IncomingMessage, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { openUpstream } from './camera';
 import { resolveCameraSource, type CameraTarget } from './camera-source';
-import { guardedFetch } from './outbound';
 
 /**
- * The printer's API key/token is only ever sent to the printer's own API URL. A camera URL (custom,
- * or reported by the printer) is fetched by `openUpstream`, which has no credentials to send, so a
- * camera URL naming another port or path on the same host never receives the key.
+ * The printer's API key is only ever sent to the printer's own API URL on the link. A camera URL
+ * (reported by the printer) is fetched by `openUpstream`, which has no credentials to send, so a
+ * camera URL naming another path on the same link host never receives the key. Fetches are
+ * recorded here; nothing is dialled.
  */
-const servers: Server[] = [];
-afterEach(async () => {
-	while (servers.length) await new Promise<void>((r) => servers.pop()!.close(() => r()));
-});
-async function listen(fn: (req: IncomingMessage) => string) {
-	const hits: Record<string, string | string[] | undefined>[] = [];
-	const srv = createServer((req, res) => {
-		hits.push({ ...req.headers, url: req.url });
-		res.writeHead(200, { 'content-type': 'application/json' }).end(fn(req));
-	});
-	servers.push(srv);
-	await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
-	return { port: (srv.address() as AddressInfo).port, hits };
+const HOST = 'shared-testtoken12345678.octoeverywhere.com';
+const LINK = `https://${HOST}`;
+
+interface Call {
+	url: string;
+	headers: Record<string, string>;
+	allow: unknown;
 }
-const secretHeaders = (h: Record<string, unknown>) =>
+function recorder(answer: (url: string) => unknown) {
+	const calls: Call[] = [];
+	const fetchFn = (async (u: string | URL, init?: RequestInit & { allowShareLink?: boolean }) => {
+		const url = String(u);
+		calls.push({
+			url,
+			headers: Object.fromEntries(new Headers(init?.headers).entries()),
+			allow: init?.allowShareLink
+		});
+		return new Response(JSON.stringify(answer(url)), { status: 200 });
+	}) as unknown as typeof fetch;
+	return { calls, fetchFn };
+}
+const secretHeaders = (h: Record<string, string>) =>
 	['x-api-key', 'authorization', 'cookie', 'x-auth-token'].filter((k) => k in h);
 const target = (o: Partial<CameraTarget>): CameraTarget => ({
 	kind: 'moonraker',
-	host: '127.0.0.1',
-	port: null,
-	cameraUrl: null,
 	cameraEnabled: true,
-	secrets: { apiKey: 'SECRETKEY' },
+	secrets: { shareLink: LINK, apiKey: 'SECRETKEY' },
 	...o
 });
-const opts = { connectTimeoutMs: 2000, fetchFn: guardedFetch };
 
 describe('camera fetches never carry the printer API key', () => {
-	it('Moonraker: the key goes to the API port, the webcam on another port gets none', async () => {
-		const cam = await listen(() => '{}');
-		const api = await listen(() =>
-			JSON.stringify({
-				result: {
-					webcams: [
-						{ enabled: true, stream_url: `http://127.0.0.1:${cam.port}/webcam/?action=stream` }
-					]
-				}
-			})
+	it('Moonraker: the key goes to the API request, the camera fetch gets none', async () => {
+		const api = recorder(() => ({
+			result: { webcams: [{ enabled: true, stream_url: `${LINK}/webcam/?action=stream` }] }
+		}));
+		const src = await resolveCameraSource(target({}), { fetchFn: api.fetchFn });
+		expect(src?.urls).toEqual([`${LINK}/webcam/?action=stream`]);
+		expect(api.calls).toHaveLength(1);
+		expect(api.calls[0].url).toBe(`${LINK}/server/webcams/list`);
+		expect(api.calls[0].headers['x-api-key']).toBe('SECRETKEY');
+
+		const cam = recorder(() => ({}));
+		await openUpstream(
+			src!.urls[0],
+			HOST,
+			new AbortController().signal,
+			{ connectTimeoutMs: 2000, fetchFn: cam.fetchFn },
+			src!.shareLink === true
 		);
-		const src = await resolveCameraSource(target({ port: api.port }), { fetchFn: guardedFetch });
-		expect(src?.urls).toEqual([`http://127.0.0.1:${cam.port}/webcam/?action=stream`]);
-		expect(api.hits[0]['x-api-key']).toBe('SECRETKEY');
-		await (
-			await openUpstream(src!.urls[0], '127.0.0.1', new AbortController().signal, opts)
-		).text();
-		expect(cam.hits).toHaveLength(1);
-		expect(secretHeaders(cam.hits[0])).toEqual([]);
+		expect(cam.calls).toHaveLength(1);
+		expect(secretHeaders(cam.calls[0].headers)).toEqual([]);
+		expect(cam.calls[0].allow).toBe(true); // only the link host, on a link call
 	});
 
-	it('a custom camera URL on a different port than the printer API gets no credentials', async () => {
-		const other = await listen(() => '{}'); // some other service on the same host
-		const src = await resolveCameraSource(
-			target({ kind: 'octoprint', port: 5000, cameraUrl: `http://127.0.0.1:${other.port}/admin` })
-		);
-		expect(src).toMatchObject({ origin: 'custom' });
-		const res = await openUpstream(src!.urls[0], '127.0.0.1', new AbortController().signal, opts);
-		await res.text();
-		expect(other.hits).toHaveLength(1);
-		expect(secretHeaders(other.hits[0])).toEqual([]);
+	it('a camera URL on another host or scheme is dropped, so the key can never follow it', async () => {
+		const api = recorder(() => ({
+			result: {
+				webcams: [
+					{
+						enabled: true,
+						stream_url: 'http://192.168.0.9/s',
+						snapshot_url: 'https://evil.test/p'
+					},
+					{ enabled: true, stream_url: `http://${HOST}/s` }
+				]
+			}
+		}));
+		const src = await resolveCameraSource(target({}), { fetchFn: api.fetchFn });
+		expect(src).toBeNull();
+		expect(api.calls.map((c) => c.url)).toEqual([`${LINK}/server/webcams/list`]);
 	});
 
-	it('a custom camera URL on the printer API port itself still gets no credentials (cameras are fetched keyless)', async () => {
-		const same = await listen(() => '{}');
-		const src = await resolveCameraSource(
-			target({
-				kind: 'octoprint',
-				port: same.port,
-				cameraUrl: `http://127.0.0.1:${same.port}/webcam/?action=stream`
-			})
-		);
-		await (
-			await openUpstream(src!.urls[0], '127.0.0.1', new AbortController().signal, opts)
-		).text();
-		expect(secretHeaders(same.hits[0])).toEqual([]);
-	});
-
-	it('the OctoPrint settings request (the only keyed call) goes to the API port only', async () => {
-		const cam = await listen(() => '{}');
-		const api = await listen(() =>
-			JSON.stringify({
-				webcam: { webcamEnabled: true, streamUrl: `http://127.0.0.1:${cam.port}/s` }
-			})
-		);
-		await resolveCameraSource(target({ kind: 'octoprint', port: api.port }), {
-			fetchFn: guardedFetch
-		});
-		expect(api.hits[0]['x-api-key']).toBe('SECRETKEY');
-		expect(cam.hits).toHaveLength(0); // resolving the source never touches the camera
+	it('the OctoPrint settings request (the only keyed call) goes to the link API only', async () => {
+		const api = recorder(() => ({
+			webcam: { webcamEnabled: true, streamUrl: `${LINK}/webcam/?action=stream` }
+		}));
+		const src = await resolveCameraSource(target({ kind: 'octoprint' }), { fetchFn: api.fetchFn });
+		expect(api.calls).toHaveLength(1);
+		expect(api.calls[0].url).toBe(`${LINK}/api/settings`);
+		expect(api.calls[0].headers['x-api-key']).toBe('SECRETKEY');
+		expect(src?.urls).toEqual([`${LINK}/webcam/?action=stream`]);
 	});
 });

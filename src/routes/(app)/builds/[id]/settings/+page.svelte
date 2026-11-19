@@ -8,7 +8,6 @@
 	import { getBuildCtx } from '#lib/components/build-context.svelte.ts';
 	import Swatch from '#lib/components/Swatch.svelte';
 	import MoveToChapter from '#lib/components/MoveToChapter.svelte';
-	import SpoolLink from '#lib/components/SpoolLink.svelte';
 	import DraftSettings from '#lib/components/build/DraftSettings.svelte';
 
 	const ctx = getBuildCtx();
@@ -127,7 +126,6 @@
 				>Change colors in Design <span class="btn-arrow" aria-hidden="true">→</span></a
 			>
 		</div>
-		<SpoolLink />
 	</section>
 
 	<section class="card">

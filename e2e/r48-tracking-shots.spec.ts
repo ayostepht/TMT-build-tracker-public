@@ -1,4 +1,3 @@
-import { MockSdcp } from '../src/lib/server/printers/mock-sdcp';
 import { expect, test } from './fixtures';
 import { invite, joinViaInvite, ownerWithBuild, uniqueEmail } from './helpers';
 import { chooseStatus } from './status-helpers';
@@ -81,9 +80,7 @@ test('shots: Print tab closed / menu open / dialog open, Files plate, landing Ne
 	page
 }) => {
 	test.setTimeout(300_000);
-	const sdcp = new MockSdcp();
-	await sdcp.start();
-	try {
+	{
 		await page.setViewportSize({ width: 390, height: 844 });
 		const { buildId, chapterUrl } = await ownerWithBuild(page, 'r48shots');
 		const org = (
@@ -96,15 +93,11 @@ test('shots: Print tab closed / menu open / dialog open, Files plate, landing Ne
 				data: {
 					organizationId: org,
 					name,
-					kind: 'elegoo-sdcp',
-					host: '127.0.0.1',
-					port: sdcp.port,
-					secrets: { mainboardId: 'ABCDEF' }
+					kind: 'manual'
 				}
 			});
 			expect(r.ok()).toBe(true);
 		}
-		sdcp.set({ printStatus: 0, machineStatus: [0], progress: 0, file: '' });
 
 		for (const scheme of ['light', 'dark'] as const) {
 			await page.emulateMedia({ colorScheme: scheme });
@@ -151,7 +144,5 @@ test('shots: Print tab closed / menu open / dialog open, Files plate, landing Ne
 		);
 		await page.getByTestId('where-confirm').click();
 		await expect(page.getByTestId('landing-now-card')).toHaveCount(1);
-	} finally {
-		await sdcp.stop();
 	}
 });

@@ -196,9 +196,7 @@ test('compact printer summary, switching layouts asks first, printers from other
 		data: {
 			organizationId: chapter.id,
 			name: 'CC1',
-			kind: 'moonraker',
-			host: '127.0.0.1',
-			port: 7125,
+			kind: 'manual',
 			catalogId: 'elegoo-centauri-carbon'
 		}
 	});

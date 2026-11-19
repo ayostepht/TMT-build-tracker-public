@@ -53,22 +53,5 @@ export interface FilamentSupplement {
 	brands: SupplementBrand[];
 }
 
-/** A catalog color as sent to browsers: the Spoolman fields stay on the server. */
+/** A catalog color as sent to browsers: the SpoolmanDB-derived fields (id, density, spool weight) stay on the server. */
 export type PublicCatalogColor = Omit<CatalogColor, 'sdbId' | 'density' | 'spoolWeightG'>;
-
-/** What a build slot (name, material, hex; no brand reference) was matched to, with Spoolman data resolved. */
-export interface SlotOrigin {
-	brand: string;
-	material: string;
-	color: CatalogColor;
-	/** SpoolmanDB id; null for vendor-supplement colors. */
-	sdbId: string | null;
-	/** g/cm3 or null when the catalog has none. */
-	density: number | null;
-	/** Empty spool weight in grams or null. */
-	spoolWeightG: number | null;
-	/** Net filament weight in grams of the catalog spool (1000 when the catalog says nothing). */
-	netWeightG: number;
-	/** How sure the match is: 'exact' = brand + color (+ material) name and hex agree; 'name' = name matched, hex differs or was not given. */
-	confidence: 'exact' | 'name';
-}

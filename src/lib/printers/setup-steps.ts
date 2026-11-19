@@ -1,6 +1,6 @@
 /**
  * Maker-facing text for the Integrations page: a one-line description and the short numbered
- * "How to set it up" for every connection option, plus the Spoolman steps. Browser-safe, no Node
+ * "How to set it up" for every connection option. Browser-safe, no Node
  * imports. The facts come from the form hints, `PRINTER_KIND_INFO`, the adapters and
  * `docs/guides/printers.md`; where a printer's exact menu path is not known the step says what to
  * look for instead of naming a menu.
@@ -25,19 +25,9 @@ const LINK_STEP_COPY =
 const LINK_STEP_CREATE =
 	'In OctoEverywhere, create a shared connection for the printer (OctoEverywhere explains how in its own help).';
 const LINK_STEP_PASTE =
-	'Paste the link below. You do not need the printer’s address, port or camera address.';
+	'Paste the link below. It is all the app needs to reach the printer and its camera.';
 
 export const SETUP_TEXT: Record<ConnectionKey, SetupText> = {
-	'elegoo-lan': {
-		description: 'Live status and camera',
-		steps: [
-			'Make sure the printer is on the same network as the computer that runs this app.',
-			'Find the printer’s IP address on its network screen (or use “Find Elegoo printers” below; it only finds printers on the same network segment as this app).',
-			'Enter the address below. Leave the port empty: 3030 is the default. The mainboard ID is found automatically.',
-			'Press Test connection, then Add printer. The app only reads status; the one command it sends turns the camera on.'
-		],
-		anchor: 'elegoo-sdcp'
-	},
 	'octoeverywhere-elegoo': {
 		description: 'Live status and camera',
 		steps: [
@@ -70,37 +60,6 @@ export const SETUP_TEXT: Record<ConnectionKey, SetupText> = {
 		],
 		anchor: 'octoprint-through-an-octoeverywhere-shared-link'
 	},
-	'klipper-lan': {
-		description: 'Live status and camera',
-		steps: [
-			'Make sure Moonraker (the service behind Mainsail or Fluidd) is running and the printer is on the same network as this app.',
-			'Find the printer’s IP address (its network screen, or your router’s list of devices).',
-			'Enter the address below. Leave the port empty unless yours is not 7125.',
-			'Leave the API key empty if Moonraker trusts your network (the machine that runs this app must be a trusted client in Moonraker’s configuration). Otherwise enter the key.',
-			'Press Test connection, then Add printer.'
-		],
-		anchor: 'klipper-moonraker'
-	},
-	'octoprint-lan': {
-		description: 'Live status and camera',
-		steps: [
-			'Make sure OctoPrint is running and on the same network as this app.',
-			'In OctoPrint’s settings, create an application key and copy it.',
-			'Enter the address of the machine OctoPrint runs on. Leave the port empty unless it is not 80.',
-			'Paste the API key. Press Test connection, then Add printer.'
-		],
-		anchor: 'octoprint'
-	},
-	'bambu-lan': {
-		description: 'Live status, no camera',
-		steps: [
-			'In the printer’s network settings, switch on LAN mode. The app does not use Bambu’s cloud.',
-			'On the printer’s screen, find its IP address, the LAN access code and its serial number.',
-			'Enter all three below. The app does not verify the printer’s self-signed certificate for this one connection.',
-			'Press Test connection, then Add printer. The camera is not supported for Bambu printers.'
-		],
-		anchor: 'bambu-lab-lan-mode'
-	},
 	manual: {
 		description: 'A name only, for logging by hand',
 		steps: [
@@ -118,21 +77,5 @@ export const LINK_GROUP_DESCRIPTION = 'For Elegoo, Klipper or OctoPrint, from an
 /** The printer connection report form: where makers report how an experimental option went. */
 export const ISSUES_URL =
 	'https://github.com/ayostepht/TMT-Build-Tracker/issues/new?template=printer-report.yml';
-
-export const SPOOLMAN_TEXT = {
-	description:
-		'Spoolman tracks your filament spools. Connect it, link each filament to its Spoolman filament, and the app shows what is left, keeps it up to date and moves on to the next spool when one runs out.',
-	steps: [
-		'Spoolman is a separate app. Run it on your own network, for example on the same server as this app.',
-		'Enter its address below, like http://192.168.0.20:7912. The address must be reachable from where this app runs.',
-		'Choose who keeps Spoolman up to date: this app (each logged print takes its grams off the linked spool) or something else. Then link each filament to its Spoolman filament on the build’s Overview, in the setup wizard or in the Design tab.'
-	],
-	anchor: 'spoolman-and-automatic-logging',
-	hostedReason:
-		'A hosted site cannot reach a Spoolman on your own network, so this is only available when you run the app yourself.'
-} as const;
-
-export const HOSTED_NOTE =
-	'On this hosted site, OctoEverywhere links, printers that are not connected and logging prints by hand all work. Anything that needs the app on your own network (a printer’s local address, Spoolman) needs your own install of the app.';
 
 export const guideUrl = (anchor: string) => `${PRINTER_GUIDE_URL}#${anchor}`;

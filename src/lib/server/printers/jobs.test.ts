@@ -105,7 +105,7 @@ beforeEach(() => {
 	printerId = createPrinter(db, 'org1', 'owner', {
 		name: 'Shop Centauri',
 		kind: 'elegoo-sdcp',
-		host: '10.0.0.9',
+		secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
 		catalogId: 'elegoo-centauri-carbon'
 	}).id;
 });
@@ -271,7 +271,7 @@ describe('job lifecycle', () => {
 	});
 });
 
-describe('Spoolman-independent log paths', () => {
+describe('manual log paths next to a linked printer', () => {
 	it('manual run for the same plate still works', () => {
 		expect(() =>
 			addRun(db, buildId, 'owner', {
@@ -299,7 +299,7 @@ describe('supervisor', () => {
 		subscribePrinterEvents('org1', (e) => events.push(e.type));
 		const sup = new Supervisor(
 			db,
-			{ 'elegoo-sdcp': fake, moonraker: fake, octoprint: fake, 'bambu-lan': fake, manual: fake },
+			{ 'elegoo-sdcp': fake, moonraker: fake, octoprint: fake, manual: fake },
 			60_000
 		);
 		sup.start();
@@ -1003,7 +1003,7 @@ describe('linking a job over parts that are already Printing', () => {
 		const p2 = createPrinter(db, 'org1', 'owner', {
 			name: 'Second',
 			kind: 'elegoo-sdcp',
-			host: '10.0.0.10',
+			secrets: { shareLink: 'https://shared-bbbbbbbb2222.octoeverywhere.com' },
 			catalogId: 'elegoo-centauri-carbon'
 		}).id;
 		const st = printing(FILE_B, 5, 200, { remainingSec: 9000 });

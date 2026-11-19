@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { openDb, runMigrations } from '../db';
 import { organization, user } from '../db/schema';
+import { ApiError } from '../access';
 import { configFromInput, createPrinter, updatePrinter } from './store';
 import { decryptSecrets } from './secrets';
 
@@ -12,106 +13,81 @@ function setup() {
 	runMigrations(db);
 	db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' }).run();
 	db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() }).run();
-	const lan = createPrinter(db, 'o', 'u1', {
-		name: 'LAN',
-		kind: 'elegoo-sdcp',
-		host: '10.0.0.5',
-		secrets: { mainboardId: 'MB1' }
-	});
-	const linked = createPrinter(db, 'o', 'u1', {
+	const elegoo = createPrinter(db, 'o', 'u1', {
 		name: 'Linked',
 		kind: 'elegoo-sdcp',
-		secrets: { shareLink: L1 }
+		secrets: { shareLink: L1, mainboardId: 'MB1' }
 	});
 	const octo = createPrinter(db, 'o', 'u1', {
 		name: 'Octo',
 		kind: 'octoprint',
-		host: '10.0.0.6',
-		secrets: { apiKey: 'KEY' }
+		secrets: { shareLink: L1, apiKey: 'KEY' }
 	});
-	return { db, lan, linked, octo };
+	const manual = createPrinter(db, 'o', 'u1', { name: 'Bench', kind: 'manual' });
+	return { db, elegoo, octo, manual };
 }
 
-describe('stored secrets belong to their destination (address or link)', () => {
-	it('keeping the same link keeps it; the typed host is ignored while a link is set', () => {
-		const { db, linked } = setup();
-		const r = updatePrinter(db, linked.id, 'o', { host: '10.0.0.9', name: 'Renamed' });
-		expect(decryptSecrets(r.secretEnc)).toEqual({ shareLink: L1 });
-		expect(r.host).toBe('octoeverywhere'); // an address cannot hide next to a link
-		const t = configFromInput(db, 'o', { id: linked.id, host: '10.0.0.9' });
-		expect(t.host).toBe('octoeverywhere');
-		expect(t.secrets.shareLink).toBe(L1);
-	});
-
-	it('changing the link replaces it and carries nothing else over', () => {
-		const { db, linked } = setup();
-		const r = updatePrinter(db, linked.id, 'o', { secrets: { shareLink: L2, mainboardId: '' } });
-		expect(decryptSecrets(r.secretEnc)).toEqual({ shareLink: L2 });
-	});
-
-	it('address to link: the old identifiers do not ride along to the relay', () => {
-		const { db, lan } = setup();
-		const r = updatePrinter(db, lan.id, 'o', { secrets: { shareLink: L1 } });
-		expect(decryptSecrets(r.secretEnc)).toEqual({ shareLink: L1 });
-		expect(r.host).toBe('octoeverywhere');
-	});
-
-	it('link to address needs an address, and leaves no link behind', () => {
-		const { db, linked } = setup();
-		expect(() => updatePrinter(db, linked.id, 'o', { secrets: { shareLink: '' } })).toThrow(
-			/address/i
-		);
-		const r = updatePrinter(db, linked.id, 'o', { host: '10.0.0.7', secrets: { shareLink: '' } });
-		expect(r.host).toBe('10.0.0.7');
-		expect(r.secretEnc).toBeNull();
-	});
-
-	it('a connection test cannot move stored secrets to another destination', () => {
-		const { db, octo, lan, linked } = setup();
-		// address to another address: the key must be typed again (existing rule, unchanged)
-		expect(() => configFromInput(db, 'o', { id: octo.id, host: '10.0.0.99' })).toThrow(
-			/Re-enter the api key/
-		);
-		// a typed link on a stored LAN printer does not bring the stored identifiers along
-		const toLink = configFromInput(db, 'o', { id: lan.id, secrets: { shareLink: L2 } });
-		expect(toLink.secrets).toEqual({ shareLink: L2 });
-		expect(toLink.host).toBe('octoeverywhere');
-		// the stored link is not reused against a typed address once removed
-		const toAddr = configFromInput(db, 'o', {
-			id: linked.id,
-			host: '10.0.0.9',
-			secrets: { shareLink: '' }
-		});
-		expect(toAddr.secrets).toEqual({});
-		expect(toAddr.host).toBe('10.0.0.9');
-		// the stored link is reachable only as the link: another link replaces it
-		const other = configFromInput(db, 'o', { id: linked.id, secrets: { shareLink: L2 } });
-		expect(other.secrets.shareLink).toBe(L2);
-	});
-
-	it('a printer type that cannot use links (Bambu LAN) never gets one, so addresses stay the rule', () => {
-		const { db } = setup();
-		const bambu = createPrinter(db, 'o', 'u1', {
-			name: 'B',
-			kind: 'bambu-lan',
-			host: '10.0.0.8',
-			secrets: { accessCode: 'CODE', serial: 'SN1' }
-		});
-		expect(() => updatePrinter(db, bambu.id, 'o', { secrets: { shareLink: L1 } })).toThrow(
-			/Bambu Lab/
-		);
-		const r = updatePrinter(db, bambu.id, 'o', { name: 'x' });
-		expect(decryptSecrets(r.secretEnc).shareLink).toBeUndefined();
-		expect(decryptSecrets(r.secretEnc).accessCode).toBe('CODE');
-		expect(r.host).toBe('10.0.0.8');
-	});
-
-	it('OctoPrint and Klipper can move to a link: the stored key does not ride along', () => {
+describe('stored secrets belong to the link they were saved for', () => {
+	it('keeping the same link keeps everything stored with it; a typed address is ignored', () => {
 		const { db, octo } = setup();
-		const r = updatePrinter(db, octo.id, 'o', { secrets: { shareLink: L1, apiKey: 'NEW' } });
-		expect(decryptSecrets(r.secretEnc)).toEqual({ shareLink: L1, apiKey: 'NEW' });
-		expect(r.host).toBe('octoeverywhere');
-		const r2 = updatePrinter(db, octo.id, 'o', { secrets: { shareLink: L2 } });
-		expect(decryptSecrets(r2.secretEnc)).toEqual({ shareLink: L2 }); // the old key is not sent to another link
+		const r = updatePrinter(db, octo.id, 'o', { host: '10.0.0.9', name: 'Renamed' });
+		expect(decryptSecrets(r.secretEnc)).toEqual({ shareLink: L1, apiKey: 'KEY' });
+		expect(r.host).toBe('octoeverywhere'); // an address cannot hide next to a link
+		const t = configFromInput(db, 'o', { id: octo.id, host: '10.0.0.9' });
+		expect(t.host).toBe('octoeverywhere');
+		expect(t.secrets).toEqual({ shareLink: L1, apiKey: 'KEY' });
+	});
+
+	it('typing the same link again does not drop the stored key', () => {
+		const { db, octo } = setup();
+		const r = updatePrinter(db, octo.id, 'o', { secrets: { shareLink: `${L1}/` } });
+		expect(decryptSecrets(r.secretEnc)).toEqual({ shareLink: L1, apiKey: 'KEY' });
+	});
+
+	it('changing the link replaces it and carries nothing else over (no key rides to another relay)', () => {
+		const { db, octo, elegoo } = setup();
+		const r = updatePrinter(db, octo.id, 'o', { secrets: { shareLink: L2 } });
+		expect(decryptSecrets(r.secretEnc)).toEqual({ shareLink: L2 });
+		const e = updatePrinter(db, elegoo.id, 'o', { secrets: { shareLink: L2 } });
+		expect(decryptSecrets(e.secretEnc)).toEqual({ shareLink: L2 });
+		// a connection test behaves the same: the typed link gets only what was typed
+		const t = configFromInput(db, 'o', { id: octo.id, secrets: { shareLink: L2 } });
+		expect(t.secrets).toEqual({ shareLink: L2 });
+		const typed = configFromInput(db, 'o', {
+			id: octo.id,
+			secrets: { shareLink: L2, apiKey: 'NEW' }
+		});
+		expect(typed.secrets).toEqual({ shareLink: L2, apiKey: 'NEW' });
+	});
+
+	it('a link cannot be removed: a connected printer always has one', () => {
+		const { db, octo } = setup();
+		expect(() => updatePrinter(db, octo.id, 'o', { secrets: { shareLink: '' } })).toThrow(ApiError);
+		expect(() => configFromInput(db, 'o', { id: octo.id, secrets: { shareLink: '' } })).toThrow(
+			/shared link/i
+		);
+		// pausing and renaming stay possible
+		expect(updatePrinter(db, octo.id, 'o', { enabled: false }).enabled).toBe(false);
+	});
+
+	it('a manual printer holds no secrets and no address, and cannot become a link printer without a link', () => {
+		const { db, manual } = setup();
+		expect(manual).toMatchObject({ host: 'manual', secretEnc: null, port: null, cameraUrl: null });
+		const m = updatePrinter(db, manual.id, 'o', { secrets: { shareLink: L1 } });
+		expect(m.secretEnc).toBeNull(); // still manual: no secrets kept
+		expect(() => updatePrinter(db, manual.id, 'o', { kind: 'octoprint' })).toThrow(/shared link/i);
+		const ok = updatePrinter(db, manual.id, 'o', { kind: 'octoprint', secrets: { shareLink: L2 } });
+		expect(ok.host).toBe('octoeverywhere');
+		expect(decryptSecrets(ok.secretEnc)).toEqual({ shareLink: L2 });
+	});
+
+	it('a printer type that cannot use a link is refused', () => {
+		const { db } = setup();
+		expect(() =>
+			createPrinter(db, 'o', 'u1', { name: 'x', kind: 'manual', secrets: { shareLink: L1 } })
+		).not.toThrow();
+		expect(() =>
+			createPrinter(db, 'o', 'u1', { name: 'x', kind: 'bambu-lan', secrets: { shareLink: L1 } })
+		).toThrow(/Unknown printer type/);
 	});
 });

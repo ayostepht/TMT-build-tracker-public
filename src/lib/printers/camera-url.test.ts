@@ -1,58 +1,49 @@
 import { describe, expect, it } from 'vitest';
-import { cameraSupported, checkCameraUrl, defaultCameraUrl, resolveCameraUrl } from './camera-url';
+import { cameraSupported, checkCameraUrl, resolveCameraUrl } from './camera-url';
 import { cleanHost } from './address';
 
-describe('camera URL defaults', () => {
-	it('Elegoo SDCP defaults to the MJPEG port on the printer host', () => {
-		expect(defaultCameraUrl('elegoo-sdcp', '192.168.1.50')).toBe('http://192.168.1.50:3031/video');
-		expect(defaultCameraUrl('elegoo-sdcp', 'printer.lan')).toBe('http://printer.lan:3031/video');
-		expect(defaultCameraUrl('elegoo-sdcp', 'fe80::1')).toBe('http://[fe80::1]:3031/video');
-	});
-	it('other kinds have no fixed default; Bambu is unsupported', () => {
-		expect(defaultCameraUrl('moonraker', 'h')).toBeNull();
-		expect(defaultCameraUrl('octoprint', 'h')).toBeNull();
-		expect(cameraSupported('bambu-lan')).toBe(false);
+const LINK = 'shared-abcdefgh1234.octoeverywhere.com';
+
+describe('camera support', () => {
+	it('every connected kind has a camera, a manual printer has none', () => {
 		expect(cameraSupported('elegoo-sdcp')).toBe(true);
+		expect(cameraSupported('moonraker')).toBe(true);
+		expect(cameraSupported('octoprint')).toBe(true);
+		expect(cameraSupported('manual')).toBe(false);
 	});
 });
 
-describe('same-host guard', () => {
-	const ok = (u: string, h: string) => checkCameraUrl(u, h).ok;
-	it('accepts http(s) on the printer host, any port, any case', () => {
-		expect(ok('http://192.168.1.50:3031/video', '192.168.1.50')).toBe(true);
-		expect(ok('https://192.168.1.50/cam', '192.168.1.50')).toBe(true);
-		expect(ok('http://Printer.LAN:8080/s', 'printer.lan')).toBe(true);
-		expect(ok('http://[fe80::1]:81/s', 'fe80::1')).toBe(true);
-		expect(ok('http://printer.lan./s', 'printer.lan')).toBe(true);
+describe('same-host guard (link host)', () => {
+	const ok = (u: string, h = LINK) => checkCameraUrl(u, h).ok;
+	it('accepts https on the link host, default port, any case', () => {
+		expect(ok(`https://${LINK}/video`)).toBe(true);
+		expect(ok(`https://${LINK.toUpperCase()}/webcam/?action=stream`)).toBe(true);
+		expect(ok(`https://${LINK}./video`)).toBe(true);
 	});
-	it('refuses other hosts, schemes, credentials and junk', () => {
-		expect(ok('http://192.168.1.51:3031/video', '192.168.1.50')).toBe(false);
-		expect(ok('http://169.254.169.254/latest', '192.168.1.50')).toBe(false);
-		expect(ok('http://localhost/x', '192.168.1.50')).toBe(false);
-		expect(ok('ftp://192.168.1.50/x', '192.168.1.50')).toBe(false);
-		expect(ok('file:///etc/passwd', '192.168.1.50')).toBe(false);
-		expect(ok('http://user:pw@192.168.1.50/x', '192.168.1.50')).toBe(false);
-		expect(ok('http://192.168.1.50.evil.test/x', '192.168.1.50')).toBe(false);
-		expect(ok('http://evil.test/@192.168.1.50', '192.168.1.50')).toBe(false);
-		expect(ok('not a url', '192.168.1.50')).toBe(false);
-		expect(ok('//192.168.1.50/x', '192.168.1.50')).toBe(false);
+	it('refuses other hosts, schemes, ports, credentials and junk', () => {
+		expect(ok('https://shared-other00000000.octoeverywhere.com/video')).toBe(false);
+		expect(ok('http://192.168.1.50:3031/video')).toBe(false);
+		expect(ok('http://169.254.169.254/latest')).toBe(false);
+		expect(ok(`http://${LINK}/video`)).toBe(false);
+		expect(ok(`https://${LINK}:8443/video`)).toBe(false);
+		expect(ok(`https://user:pw@${LINK}/video`)).toBe(false);
+		expect(ok(`ftp://${LINK}/x`)).toBe(false);
+		expect(ok('file:///etc/passwd')).toBe(false);
+		expect(ok(`https://${LINK}.evil.test/x`)).toBe(false);
+		expect(ok(`https://evil.test/@${LINK}`)).toBe(false);
+		expect(ok('not a url')).toBe(false);
+		expect(ok(`//${LINK}/x`)).toBe(false);
 	});
 	it('normalizes hosts', () => {
 		expect(cleanHost(' [::1] ')).toBe('::1');
 		expect(cleanHost('Host.')).toBe('host');
 		expect(cleanHost('Host...')).toBe('host');
 	});
-	it('uses the same normaliser as the guard: a multi-dot host still matches, a different one does not', () => {
-		expect(ok('http://printer.lan./x', 'Printer.LAN..')).toBe(true);
-		expect(ok('http://printer.lan./x', 'other.lan')).toBe(false);
-	});
-	it('resolves relative URLs from a printer API against its host and still guards them', () => {
-		expect(
-			resolveCameraUrl('/webcam/?action=stream', 'http://10.0.0.5/', '10.0.0.5')?.toString()
-		).toBe('http://10.0.0.5/webcam/?action=stream');
-		expect(
-			resolveCameraUrl('http://10.0.0.5:8080/s', 'http://10.0.0.5/', '10.0.0.5')
-		).not.toBeNull();
-		expect(resolveCameraUrl('http://evil.test/s', 'http://10.0.0.5/', '10.0.0.5')).toBeNull();
+	it('resolves relative URLs from a printer API against the link and still guards them', () => {
+		expect(resolveCameraUrl('/webcam/?action=stream', `https://${LINK}/`, LINK)?.toString()).toBe(
+			`https://${LINK}/webcam/?action=stream`
+		);
+		expect(resolveCameraUrl('https://evil.test/s', `https://${LINK}/`, LINK)).toBeNull();
+		expect(resolveCameraUrl(`http://${LINK}/s`, `https://${LINK}/`, LINK)).toBeNull();
 	});
 });

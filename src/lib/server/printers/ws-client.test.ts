@@ -1,15 +1,16 @@
 /**
  * The real `ws` client (ws-client.ts) against loopback-only servers: the message size cap is
  * enforced while a frame arrives, no compression, no redirects, handshake timeout, address pin.
- * Every socket here is 127.0.0.1.
+ * Every socket here is 127.0.0.1 (the adapters are pointed at it through the test seam).
  */
 import { createServer, type Server } from 'node:http';
 import { createServer as createTcp, type Server as TcpServer, type Socket } from 'node:net';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { adapters } from './adapters';
 import { MiniWsServer } from './mini-ws';
-import { MAX_REMOTE_MESSAGE_BYTES } from './outbound';
+import { MAX_REMOTE_MESSAGE_BYTES, setResolver } from './outbound';
+import { resetFakeSocket, useLoopbackWs } from './ws-test';
 import { OVERSIZED_MESSAGE, type PrinterConfig } from './types';
 import { openSocket, type SocketLike } from './ws-client';
 import type { PrinterStatus } from '#lib/printers/status.ts';
@@ -190,12 +191,23 @@ describe('handshake', () => {
 });
 
 describe('through the adapters (real ws, loopback)', () => {
-	const cfg = (kind: PrinterConfig['kind'], port: number): PrinterConfig => ({
-		id: 'p',
-		kind,
-		host: '127.0.0.1',
-		port,
-		secrets: kind === 'elegoo-sdcp' ? { mainboardId: 'MB1' } : {}
+	// A link printer whose socket really goes through the `ws` client to the loopback server.
+	const cfg = (kind: PrinterConfig['kind'], port: number): PrinterConfig => {
+		useLoopbackWs(port);
+		return {
+			id: 'p',
+			kind,
+			host: 'octoeverywhere',
+			secrets: {
+				shareLink: 'https://shared-testtoken12345678.octoeverywhere.com',
+				...(kind === 'elegoo-sdcp' ? { mainboardId: 'MB1' } : {})
+			}
+		};
+	};
+	beforeEach(() => setResolver(async () => ['93.184.216.34']));
+	afterEach(() => {
+		resetFakeSocket();
+		setResolver(null);
 	});
 	it.each(['moonraker', 'elegoo-sdcp'] as const)(
 		'%s: a 2 MiB message gives the oversize state and no quick reconnect',

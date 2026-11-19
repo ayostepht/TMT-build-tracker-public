@@ -1,9 +1,7 @@
 import type { PrinterKind } from '#lib/printers/status.ts';
 import { shareLinkFor, SHARE_LINK_HOST_PLACEHOLDER } from '#lib/printers/share-link.ts';
-import { isPublicMode } from '../../config';
-import { PUBLIC_MODE_MESSAGE } from '../outbound';
+import { LINK_ONLY_MESSAGE } from '../outbound';
 import { StatusSubject, type AdapterHandle, type ConnectFn, type PrinterConfig } from '../types';
-import { connectBambu } from './bambu';
 import { connectMoonraker } from './moonraker';
 import { connectOctoprint } from './octoprint';
 import { connectSdcp } from './sdcp';
@@ -21,21 +19,22 @@ function idle(message: string, state: 'error' | 'offline'): AdapterHandle {
 }
 
 /**
- * Public mode: only a printer reached through an OctoEverywhere shared link opens a connection
- * (and only to the link host, see `outbound.ts`); every other adapter reports the hosted-site
- * refusal and never opens a socket. The placeholder host means "reached through a link"; without
- * a usable link (secrets lost after a key rotation, a kind that cannot use one) it is not a real
- * host: never dial it, report offline with a clear message instead.
+ * Only a printer reached through an OctoEverywhere shared link opens a connection (and only to the
+ * link host, see `outbound.ts`). Without a usable link (a kind that cannot use one, or secrets lost
+ * after a key rotation) nothing is dialled: a row with no link reports an error, and the
+ * placeholder host (meaning "reached through a link") reports offline with a clear message.
  */
 function guarded(connect: ConnectFn): ConnectFn {
 	return (cfg: PrinterConfig): AdapterHandle => {
 		const link = shareLinkFor(cfg.kind, cfg.secrets);
-		if (isPublicMode() && !link) return idle(PUBLIC_MODE_MESSAGE, 'error');
-		if (cfg.host === SHARE_LINK_HOST_PLACEHOLDER && !link)
-			return idle(
-				'The OctoEverywhere shared link is missing. Edit the printer and enter it again.',
-				'offline'
-			);
+		if (!link) {
+			if (cfg.host === SHARE_LINK_HOST_PLACEHOLDER)
+				return idle(
+					'The OctoEverywhere shared link is missing. Edit the printer and enter it again.',
+					'offline'
+				);
+			return idle(LINK_ONLY_MESSAGE, 'error');
+		}
 		return connect(cfg);
 	};
 }
@@ -50,6 +49,5 @@ export const adapters: Record<PrinterKind, ConnectFn> = {
 	'elegoo-sdcp': guarded(connectSdcp),
 	moonraker: guarded(connectMoonraker),
 	octoprint: guarded(connectOctoprint),
-	'bambu-lan': guarded(connectBambu),
 	manual: connectManual
 };

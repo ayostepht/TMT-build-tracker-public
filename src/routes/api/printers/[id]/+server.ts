@@ -20,7 +20,7 @@ export const PATCH: RequestHandler = (event) =>
 		const row = updatePrinter(getDb(), event.params.id, org, await readJson(event));
 		getSupervisor()?.refresh(row.id);
 		cameraChanged(row.id);
-		return { printer: toPublic(row, true) };
+		return { printer: toPublic(row) };
 	});
 
 export const DELETE: RequestHandler = (event) =>

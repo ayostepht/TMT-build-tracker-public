@@ -46,15 +46,11 @@
 	const groups = $derived(chooserGroups(options));
 
 	function choose(entry: ChooserEntry) {
-		if (!entry.available) return;
-		const first = entry.options.find((o) => o.available) ?? entry.options[0];
-		mode = { m: 'add', entry, key: first.key };
+		mode = { m: 'add', entry, key: entry.options[0].key };
 	}
 	const typeChoices = (entry: ChooserEntry) =>
 		entry.options.length > 1
-			? entry.options
-					.filter((o) => o.available)
-					.map((o) => ({ key: o.key, label: o.linkPrinterType ?? o.label }))
+			? entry.options.map((o) => ({ key: o.key, label: o.linkPrinterType ?? o.label }))
 			: [];
 	function setType(key: string) {
 		if (mode.m === 'add') mode = { ...mode, key };
@@ -144,7 +140,6 @@
 								<button
 									class="ig-row-btn"
 									type="button"
-									disabled={!e.available}
 									data-testid="option-{e.id}"
 									onclick={() => choose(e)}
 								>
@@ -154,11 +149,6 @@
 											>{EXPERIMENTAL_TAG}</span
 										>{/if}
 									<span class="ig-chev" aria-hidden="true">›</span>
-									{#if !e.available && e.unavailableReason}
-										<span class="ig-why" data-testid="option-unavailable"
-											>{e.unavailableReason}</span
-										>
-									{/if}
 								</button>
 							</li>
 						{/each}
@@ -350,11 +340,6 @@
 		color: var(--muted);
 		font-size: 1.4em;
 		line-height: 1;
-	}
-	.ig-why {
-		grid-column: 1 / -1;
-		font-size: var(--fs-sm);
-		color: var(--bad);
 	}
 	@media (min-width: 761px) {
 		.ig-row-btn {

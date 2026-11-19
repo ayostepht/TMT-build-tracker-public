@@ -1,45 +1,31 @@
 import { isObj } from '#lib/domain/guards.ts';
 /**
- * Where a printer's camera is: the team's override, the printer type's default, or what the
- * printer itself reports (Moonraker webcam list, OctoPrint settings). Every URL that comes out
- * has passed the SSRF guard: http(s) only, same host as the printer (and the connection itself
- * only ever goes to a validated local address, or the shared link's validated public one, see
- * `outbound.ts`).
+ * Where a printer's camera is: the printer type's default through the OctoEverywhere link, or what
+ * the printer itself reports through it (Moonraker webcam list, OctoPrint settings). Every URL that
+ * comes out has passed the SSRF guard: https on the link host only (the connection itself only ever
+ * goes to the link's validated public address, see `outbound.ts`).
  */
-import {
-	cameraSupported,
-	checkCameraUrl,
-	defaultCameraUrl,
-	resolveCameraUrl
-} from '#lib/printers/camera-url.ts';
-import {
-	SHARE_LINK_HOST_PLACEHOLDER,
-	shareLinkCameraUrl,
-	shareLinkFor,
-	shareLinkUrl
-} from '#lib/printers/share-link.ts';
+import { cameraSupported, checkCameraUrl, resolveCameraUrl } from '#lib/printers/camera-url.ts';
+import { shareLinkCameraUrl, shareLinkFor, shareLinkUrl } from '#lib/printers/share-link.ts';
 import type { PrinterKind } from '#lib/printers/status.ts';
 import type { printers } from '../db/schema';
 import { assertOutboundAllowed, guardedFetch, isRedirect, readJsonCapped } from './outbound';
 import { decryptSecrets } from './secrets';
 
-export type CameraOrigin = 'custom' | 'default' | 'moonraker' | 'octoprint';
+export type CameraOrigin = 'default' | 'moonraker' | 'octoprint';
 
 export interface CameraSource {
 	/** Candidates in order of preference (stream before snapshot); the first that works is used. */
 	urls: string[];
 	origin: CameraOrigin;
-	/** The printer's host: redirects and every request are held to it. */
+	/** The link host: redirects and every request are held to it. */
 	host: string;
-	/** Built from an OctoEverywhere link: the only source allowed to reach a share host. */
+	/** Always true: built from an OctoEverywhere link, the only source allowed to reach a share host. */
 	shareLink?: boolean;
 }
 
 export interface CameraTarget {
 	kind: PrinterKind;
-	host: string;
-	port: number | null;
-	cameraUrl: string | null;
 	cameraEnabled: boolean;
 	secrets: Record<string, string>;
 }
@@ -47,9 +33,6 @@ export interface CameraTarget {
 export function toCameraTarget(r: typeof printers.$inferSelect): CameraTarget {
 	return {
 		kind: r.kind as PrinterKind,
-		host: r.host,
-		port: r.port,
-		cameraUrl: r.cameraUrl,
 		cameraEnabled: r.cameraEnabled,
 		secrets: decryptSecrets(r.secretEnc)
 	};
@@ -62,15 +45,13 @@ export const MAX_CAMERA_URLS = 4;
 /** Longest remote camera URL kept (the same cap as a saved custom address). */
 const MAX_CAMERA_URL_LENGTH = 500;
 
-const hostPart = (h: string) => (h.includes(':') && !h.startsWith('[') ? `[${h}]` : h);
-
 /** GET JSON from the printer's own API; never follows redirects, short timeout. */
 async function getJson(
 	url: string,
 	headers: Record<string, string>,
 	fetchFn: typeof fetch,
 	timeoutMs: number,
-	shareLink = false
+	shareLink = true
 ): Promise<unknown> {
 	const res = await fetchFn(url, {
 		headers,
@@ -95,40 +76,21 @@ export async function resolveCameraSource(
 ): Promise<CameraSource | null> {
 	if (!t.cameraEnabled || !cameraSupported(t.kind)) return null;
 	const link = shareLinkFor(t.kind, t.secrets);
-	assertOutboundAllowed({ allowShareLink: !!link }); // public mode: only a link printer goes on
+	if (!link) return null; // no link: nothing is ever dialled
+	assertOutboundAllowed({ allowShareLink: true });
 	const fetchFn = opts.fetchFn ?? guardedFetch;
 	const timeout = opts.apiTimeoutMs ?? 5000;
-	// Through an OctoEverywhere shared link every request and redirect is pinned to the link's
-	// host (a custom address is ignored): Elegoo's stream is the link's /video; Moonraker's and
-	// OctoPrint's come from the printer's own API, and only same-host (relative) URLs survive.
-	if (link) {
-		if (t.kind === 'elegoo-sdcp') {
-			const c = checkCameraUrl(shareLinkCameraUrl(link.origin), link.host);
-			return c.ok
-				? { urls: [c.url.toString()], origin: 'default', host: link.host, shareLink: true }
-				: null;
-		}
-		const listed = await listedCameras(t, link.origin, link.host, fetchFn, timeout, true);
-		return listed ? { ...listed, shareLink: true } : null;
-	}
-	const host = t.host;
-	if (host === SHARE_LINK_HOST_PLACEHOLDER) return null; // link missing: never dial the placeholder
-	if (t.cameraUrl) {
-		const c = checkCameraUrl(t.cameraUrl, host);
-		return c.ok ? { urls: [c.url.toString()], origin: 'custom', host } : null;
-	}
+	// Every request and redirect is pinned to the link's host: Elegoo's stream is the link's
+	// /video; Moonraker's and OctoPrint's come from the printer's own API, and only same-host
+	// (relative) URLs survive.
 	if (t.kind === 'elegoo-sdcp') {
-		const d = defaultCameraUrl(t.kind, host);
-		return d ? { urls: [d], origin: 'default', host } : null;
+		const c = checkCameraUrl(shareLinkCameraUrl(link.origin), link.host);
+		return c.ok
+			? { urls: [c.url.toString()], origin: 'default', host: link.host, shareLink: true }
+			: null;
 	}
-	return listedCameras(
-		t,
-		`http://${hostPart(host)}:${t.port ?? (t.kind === 'moonraker' ? 7125 : 80)}`,
-		host,
-		fetchFn,
-		timeout,
-		false
-	);
+	const listed = await listedCameras(t, link.origin, link.host, fetchFn, timeout);
+	return listed ? { ...listed, shareLink: true } : null;
 }
 
 /** Moonraker's webcam list / OctoPrint's webcam settings, asked of the printer's API at `api`. */
@@ -137,10 +99,9 @@ async function listedCameras(
 	api: string,
 	host: string,
 	fetchFn: typeof fetch,
-	timeout: number,
-	shareLink: boolean
+	timeout: number
 ): Promise<CameraSource | null> {
-	const base = shareLink ? `${api}/` : `http://${hostPart(host)}/`;
+	const base = `${api}/`;
 	const pick = (...cands: unknown[]) =>
 		cands
 			.map((u) =>
@@ -155,13 +116,7 @@ async function listedCameras(
 		const headers: Record<string, string> = {};
 		if (t.secrets.apiKey) headers['X-Api-Key'] = t.secrets.apiKey;
 		try {
-			const j = await getJson(
-				shareLinkUrl(api, '/server/webcams/list'),
-				headers,
-				fetchFn,
-				timeout,
-				shareLink
-			);
+			const j = await getJson(shareLinkUrl(api, '/server/webcams/list'), headers, fetchFn, timeout);
 			const cams =
 				isObj(j) && isObj(j.result) && Array.isArray(j.result.webcams) ? j.result.webcams : [];
 			for (const cam of cams.slice(0, MAX_CAMERA_URLS)) {
@@ -181,8 +136,7 @@ async function listedCameras(
 				shareLinkUrl(api, '/api/settings'),
 				{ 'X-Api-Key': t.secrets.apiKey },
 				fetchFn,
-				timeout,
-				shareLink
+				timeout
 			);
 			const w = isObj(j) && isObj(j.webcam) ? j.webcam : null;
 			if (w && w.webcamEnabled !== false) {

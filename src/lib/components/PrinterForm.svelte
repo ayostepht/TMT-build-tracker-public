@@ -1,18 +1,10 @@
 <script lang="ts">
-	import {
-		addPrinter,
-		discoverPrinters,
-		testPrinter,
-		testPrinterCamera,
-		updatePrinter,
-		type DiscoveredPrinterDto
-	} from '#lib/client/api.ts';
+	import { addPrinter, testPrinter, testPrinterCamera, updatePrinter } from '#lib/client/api.ts';
 	import { printerBrands } from '#lib/printers/catalog.ts';
-	import { cameraSupported, defaultCameraUrl } from '#lib/printers/camera-url.ts';
+	import { cameraSupported } from '#lib/printers/camera-url.ts';
 	import type { ConnectionOptionView } from '#lib/printers/connection-options.ts';
 	import { EXPERIMENTAL_TAG, isExperimental } from '#lib/printers/integrations-view.ts';
 	import { ISSUES_URL, SETUP_TEXT, guideUrl } from '#lib/printers/setup-steps.ts';
-	import { SHARE_LINK_HOST_PLACEHOLDER, supportsShareLink } from '#lib/printers/share-link.ts';
 	import {
 		PRINTER_KIND_INFO,
 		PRINTER_KINDS,
@@ -51,11 +43,8 @@
 	const init = () => ({
 		name: printer?.name ?? '',
 		kind: (printer?.kind ?? option?.kind ?? 'elegoo-sdcp') as PrinterKind,
-		host: printer?.host === SHARE_LINK_HOST_PLACEHOLDER ? '' : (printer?.host ?? ''),
-		port: printer?.port ?? null,
 		catalogId: printer?.catalogId ?? '',
 		enabled: printer?.enabled ?? true,
-		cameraUrl: printer?.cameraUrl ?? '',
 		cameraEnabled: printer?.cameraEnabled ?? true
 	});
 	let f = $state(init());
@@ -66,40 +55,15 @@
 		secrets = {};
 	});
 	const info = $derived(PRINTER_KIND_INFO[f.kind]);
-	/** "Remove link" pressed on a printer that has a saved OctoEverywhere link. */
-	let removeLink = $state(false);
 	const hasSavedLink = $derived(!!printer?.secretsSet.includes('shareLink'));
-	/** Reached through an OctoEverywhere link (typed or saved): no address, port or camera address. */
-	const viaLink = $derived(
-		option
-			? option.via === 'link'
-			: supportsShareLink(f.kind) && (!!secrets.shareLink?.trim() || (hasSavedLink && !removeLink))
-	);
 	/** A printer that is never contacted: a name (and model) is all there is. */
 	const isManual = $derived(f.kind === 'manual');
 	const optField = (key: string) => option?.fields.find((x) => x.key === key);
 	const fieldList = $derived(
-		info.secrets.filter((x) => (option ? !!optField(x.key) : !(viaLink && x.key === 'mainboardId')))
+		info.secrets.filter((x) => (option ? !!optField(x.key) : x.key !== 'mainboardId'))
 	);
 	const setup = $derived(option ? SETUP_TEXT[option.key] : null);
-	const canTest = $derived(
-		isManual ? false : viaLink ? !!secrets.shareLink?.trim() || hasSavedLink : !!f.host.trim()
-	);
-	// Saved secrets only work at the destination they were saved for (an address, or the link
-	// itself): the server asks for them again when it changes. In link mode the link is the secret.
-	const savedHost = $derived(
-		printer?.host === SHARE_LINK_HOST_PLACEHOLDER ? '' : (printer?.host ?? '')
-	);
-	const moved = $derived(
-		!!printer &&
-			f.kind === printer.kind &&
-			!viaLink &&
-			(hasSavedLink ||
-				f.host.trim().toLowerCase() !== savedHost.toLowerCase() ||
-				(f.port ?? null) !== (printer.port ?? null))
-	);
-	const needRetype = (key: string) =>
-		moved && key !== 'shareLink' && !!printer?.secretsSet.includes(key) && !secrets[key];
+	const canTest = $derived(isManual ? false : !!secrets.shareLink?.trim() || hasSavedLink);
 
 	let busy = $state(false);
 	let error = $state('');
@@ -110,15 +74,6 @@
 	let camTesting = $state(false);
 	let cam = $state<{ works: boolean; message?: string; image?: string } | null>(null);
 	const camSupported = $derived(cameraSupported(f.kind));
-	const camPlaceholder = $derived(
-		f.kind === 'elegoo-sdcp'
-			? (defaultCameraUrl(f.kind, f.host.trim() || 'printer-address') ?? '')
-			: f.kind === 'moonraker'
-				? 'Automatic: the webcam set up in Klipper'
-				: 'Automatic: the webcam set in OctoPrint (needs an API key)'
-	);
-	let discovering = $state(false);
-	let found = $state<DiscoveredPrinterDto[] | null>(null);
 
 	function payload() {
 		const s: Record<string, string> = {};
@@ -126,17 +81,13 @@
 			const typed = secrets[fld.key];
 			if (typed !== undefined && (typed !== '' || !fld.secret)) s[fld.key] = typed;
 		}
-		if (removeLink && !s.shareLink) s.shareLink = '';
 		if (isManual)
 			return { name: f.name, kind: f.kind, catalogId: f.catalogId || null, enabled: true };
 		return {
 			name: f.name,
 			kind: f.kind,
-			host: f.host.trim() || (viaLink ? SHARE_LINK_HOST_PLACEHOLDER : ''),
-			port: f.port,
 			catalogId: f.catalogId || null,
 			enabled: f.enabled,
-			cameraUrl: cameraSupported(f.kind) && !viaLink ? f.cameraUrl.trim() || null : null,
 			cameraEnabled: f.cameraEnabled,
 			secrets: s
 		};
@@ -181,25 +132,6 @@
 		} finally {
 			camTesting = false;
 		}
-	}
-
-	async function discover() {
-		discovering = true;
-		found = null;
-		try {
-			found = (await discoverPrinters(org)).found;
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Search failed';
-		} finally {
-			discovering = false;
-		}
-	}
-	function pick(d: DiscoveredPrinterDto) {
-		f.host = d.host;
-		f.kind = 'elegoo-sdcp';
-		if (!f.name) f.name = d.name || d.machineName || 'Elegoo printer';
-		secrets = { ...secrets, mainboardId: d.mainboardId };
-		found = null;
 	}
 </script>
 
@@ -264,33 +196,6 @@
 				</select>
 			</label>
 		{/if}
-		{#if !isManual && (option ? option.via === 'lan' : true)}
-			<label class="field"
-				>Address <input
-					bind:value={f.host}
-					required={!viaLink}
-					placeholder={viaLink ? 'Not needed with a shared link' : '192.168.0.50'}
-					autocapitalize="none"
-					autocomplete="off"
-					data-testid="pf-host"
-				/></label
-			>
-			{#if !viaLink}
-				<label class="field"
-					>Port
-					<input
-						type="number"
-						min="1"
-						max="65535"
-						inputmode="numeric"
-						value={f.port ?? ''}
-						placeholder={String(info.defaultPort)}
-						data-testid="pf-port"
-						oninput={(e) => (f.port = e.currentTarget.value ? Number(e.currentTarget.value) : null)}
-					/></label
-				>
-			{/if}
-		{/if}
 		{#each fieldList as fld (fld.key)}
 			<label class="field"
 				>{optField(fld.key)?.label ?? fld.label}
@@ -301,28 +206,13 @@
 					required={!!optField(fld.key)?.required && !printer?.secretsSet.includes(fld.key)}
 					value={secrets[fld.key] ?? (fld.secret ? '' : (printer?.identifiers[fld.key] ?? ''))}
 					placeholder={fld.secret && printer?.secretsSet.includes(fld.key)
-						? moved
-							? 'Re-enter for the new address'
-							: 'Saved (leave blank to keep)'
+						? 'Saved (leave blank to keep)'
 						: ''}
 					data-testid="pf-{fld.key}"
 					oninput={(e) => (secrets[fld.key] = e.currentTarget.value)}
 				/>
-				{#if fld.secret && needRetype(fld.key)}<small data-testid="pf-retype-{fld.key}"
-						>The saved value is only used at the address it was saved for. Re-enter it to use this
-						address.</small
-					>{/if}
 				{#if optField(fld.key)?.hint ?? fld.hint}<small>{optField(fld.key)?.hint ?? fld.hint}</small
 					>{/if}
-				{#if fld.key === 'shareLink' && hasSavedLink && !secrets.shareLink?.trim() && !option}
-					<button
-						class="btn sm linkrm"
-						type="button"
-						data-testid="pf-sharelink-remove"
-						onclick={() => (removeLink = !removeLink)}
-						>{removeLink ? 'Keep the saved link' : 'Remove the saved link'}</button
-					>
-				{/if}
 			</label>
 		{/each}
 		{#if !option || optField('catalogId')}
@@ -341,37 +231,6 @@
 	</div>
 	{#if !option}<p class="muted hint">{info.hint}</p>{/if}
 
-	{#if (option ? option.key === 'elegoo-lan' : f.kind === 'elegoo-sdcp') && !viaLink}
-		<div class="disc">
-			<button
-				class="btn sm"
-				type="button"
-				onclick={discover}
-				disabled={discovering}
-				data-testid="pf-discover"
-				>{discovering ? 'Searching…' : 'Find Elegoo printers on the network'}</button
-			>
-			{#if found}
-				{#if found.length}
-					<ul class="found">
-						{#each found as d (d.mainboardId || d.host)}
-							<li>
-								<span><b>{d.name || d.machineName}</b> <span class="muted">{d.host}</span></span>
-								<button class="btn sm" type="button" onclick={() => pick(d)}>Use this</button>
-							</li>
-						{/each}
-					</ul>
-				{:else}
-					<p class="muted">
-						Nothing answered. The search is a UDP broadcast, so it only reaches printers on the same
-						network segment as this server (run the container with host networking, or on br0). Type
-						the printer's address instead; its IP is on the printer's network screen.
-					</p>
-				{/if}
-			{/if}
-		</div>
-	{/if}
-
 	{#if !isManual}
 		<fieldset class="cam" data-testid="pf-camera">
 			<legend>Camera</legend>
@@ -380,27 +239,9 @@
 					><input type="checkbox" bind:checked={f.cameraEnabled} data-testid="pf-camera-on" /> Show the
 					camera while this printer is printing</label
 				>
-				{#if viaLink}
-					<p class="muted hint" data-testid="pf-camera-via-link">
-						The camera comes through the OctoEverywhere link too.
-					</p>
-				{:else}
-					<label class="field"
-						>Camera address (optional)
-						<input
-							bind:value={f.cameraUrl}
-							placeholder={camPlaceholder}
-							autocapitalize="none"
-							autocomplete="off"
-							maxlength="500"
-							data-testid="pf-camera-url"
-						/>
-						<small
-							>Leave empty to use the automatic address. A custom address must be on the same
-							address as the printer (any port).</small
-						>
-					</label>
-				{/if}
+				<p class="muted hint" data-testid="pf-camera-via-link">
+					The camera comes through the OctoEverywhere link too.
+				</p>
 				<div class="actions">
 					<button
 						class="btn sm"
@@ -419,10 +260,6 @@
 						{/if}
 					</div>
 				{/if}
-			{:else}
-				<p class="muted hint" data-testid="pf-camera-unsupported">
-					Camera is not supported for Bambu Lab printers: their camera uses a proprietary stream.
-				</p>
 			{/if}
 		</fieldset>
 
@@ -525,32 +362,9 @@
 		border-radius: var(--r-pill);
 		padding: 0 var(--sp-4);
 	}
-	.linkrm {
-		justify-self: start;
-	}
 	.hint {
 		margin: 0;
 		font-size: var(--fs-sm);
-	}
-	.disc {
-		display: grid;
-		gap: var(--sp-4);
-	}
-	.found {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: grid;
-		gap: var(--sp-3);
-	}
-	.found li {
-		display: flex;
-		justify-content: space-between;
-		gap: var(--sp-4);
-		align-items: center;
-		border: 1px solid var(--line);
-		border-radius: var(--r-md);
-		padding: var(--sp-3) var(--sp-5);
 	}
 	.chk {
 		display: flex;

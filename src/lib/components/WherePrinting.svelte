@@ -18,7 +18,7 @@
 		printers: {
 			id: string;
 			name: string;
-			connection?: 'lan' | 'link' | 'manual';
+			connection?: 'link' | 'manual';
 			status?: { state: string; fileName?: string } | null;
 		}[];
 		parts?: { slug: string; name: string }[];

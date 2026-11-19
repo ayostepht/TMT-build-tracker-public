@@ -1,4 +1,3 @@
-import { MockSdcp } from '../src/lib/server/printers/mock-sdcp';
 import { expect, test } from './fixtures';
 import { ownerWithBuild } from './helpers';
 
@@ -10,9 +9,7 @@ test.use({ hasTouch: true, isMobile: true });
 
 test('print tab touch targets are >= 44px and the start pair reads clearly', async ({ page }) => {
 	test.setTimeout(240_000);
-	const sdcp = new MockSdcp();
-	await sdcp.start();
-	try {
+	{
 		await page.setViewportSize({ width: 390, height: 844 });
 		const { buildId, chapterUrl } = await ownerWithBuild(page, 'r47');
 		const slug = chapterUrl.split('/teams/')[1].split('/')[0];
@@ -69,14 +66,10 @@ test('print tab touch targets are >= 44px and the start pair reads clearly', asy
 			data: {
 				organizationId: org,
 				name: 'Shot CC1',
-				kind: 'elegoo-sdcp',
-				host: '127.0.0.1',
-				port: sdcp.port,
-				secrets: { mainboardId: 'ABCDEF' }
+				kind: 'manual'
 			}
 		});
 		expect(created.ok()).toBe(true);
-		sdcp.set({ printStatus: 0, machineStatus: [0], progress: 0, file: '' });
 		await page.goto(chapterUrl);
 		await page.waitForLoadState('networkidle');
 		const next = page.getByTestId('next-up-card').first();
@@ -85,7 +78,5 @@ test('print tab touch targets are >= 44px and the start pair reads clearly', asy
 		await expect(badge).toHaveText(/To print/);
 		expect((await badge.boundingBox())!.height).toBeGreaterThanOrEqual(44);
 		await shots('printer');
-	} finally {
-		await sdcp.stop();
 	}
 });

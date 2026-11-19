@@ -279,13 +279,12 @@
 			changes: changes.map((f) => ({ key: f.key, ...next.slots[f.key] })),
 			skipped: [],
 			keptStock: changes
-				.filter((f) => stockKg(f) > 0 || f.spoolmanSpoolId !== null)
+				.filter((f) => stockKg(f) > 0)
 				.map((f) => ({
 					role: f.key,
 					name: next.slots[f.key].name,
 					was: f.name,
-					spools: stockKg(f),
-					spoolman: f.spoolmanSpoolId !== null
+					spools: stockKg(f)
 				})),
 			started: view.started,
 			summary: startedSummary(view.started),
