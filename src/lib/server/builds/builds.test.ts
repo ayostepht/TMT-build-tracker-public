@@ -343,9 +343,7 @@ describe('undoRun', () => {
 		(
 			await expect(await undoRun(db, id, 'owner', runId, { parts: [{ ...snap, slug: other }] }))
 		).rejects.toThrow(ApiError);
-		await expect(undoRun(db, id, 'viewer', runId, { parts: [snap] })).rejects.toThrow(
-			ApiError
-		);
+		await expect(undoRun(db, id, 'viewer', runId, { parts: [snap] })).rejects.toThrow(ApiError);
 		await undoRun(db, id, 'owner', runId, { parts: [snap] });
 		const after = (await loadBuildView(db, id, 'owner'))!;
 		expect(after.runs).toHaveLength(0);
@@ -412,9 +410,7 @@ describe('editing and deleting past print logs', () => {
 		await expect(updateRun(db, id, 'viewer', runId, { note: 'x' })).rejects.toThrowError(
 			expect.objectContaining({ status: 403 })
 		);
-		await expect(updateRun(db, id, 'editor', runId, { result: 'Bogus' })).rejects.toThrow(
-			ApiError
-		);
+		await expect(updateRun(db, id, 'editor', runId, { result: 'Bogus' })).rejects.toThrow(ApiError);
 		await expect(updateRun(db, id, 'editor', 'nope', { note: 'x' })).rejects.toThrowError(
 			expect.objectContaining({ status: 404 })
 		);

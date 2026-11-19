@@ -143,9 +143,7 @@ describe('Studio drafts: tracking mutations are refused', () => {
 
 	it('viewers still get a 403 and builds still accept tracking', async () => {
 		const id = await mkDraft();
-		await expect(updateBuild(db, id, 'viewer', { name: 'x' })).rejects.toThrow(
-			/cannot edit/
-		);
+		await expect(updateBuild(db, id, 'viewer', { name: 'x' })).rejects.toThrow(/cannot edit/);
 		const b = await mkBuild();
 		const slug = (await loadBuildView(db, b, 'owner'))!.parts[0].slug;
 		await setPartStatus(db, b, 'editor', slug, { status: 'Printed' });
@@ -190,8 +188,6 @@ describe('Studio drafts: delete and promote', () => {
 
 	it('refuses to promote a build, and viewers cannot promote', async () => {
 		await rejected(async () => await promoteDraft(db, await mkBuild(), 'owner'));
-		await expect(promoteDraft(db, await mkDraft(), 'viewer')).rejects.toThrow(
-			/cannot edit/
-		);
+		await expect(promoteDraft(db, await mkDraft(), 'viewer')).rejects.toThrow(/cannot edit/);
 	});
 });

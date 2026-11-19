@@ -45,12 +45,14 @@ beforeEach(async () => {
 		createdAt: new Date()
 	});
 	templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
-	printerId = (await createPrinter(db, 'org1', 'owner', {
-		name: 'Shop Centauri',
-		kind: 'elegoo-sdcp',
-		secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
-		catalogId: 'elegoo-centauri-carbon'
-	})).id;
+	printerId = (
+		await createPrinter(db, 'org1', 'owner', {
+			name: 'Shop Centauri',
+			kind: 'elegoo-sdcp',
+			secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
+			catalogId: 'elegoo-centauri-carbon'
+		})
+	).id;
 	await db
 		.update(printers)
 		.set({ lastStatus: { state: 'printing' } })

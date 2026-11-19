@@ -213,7 +213,7 @@ describe('photos and upload bytes', () => {
 		vi.stubEnv('QUOTA_PHOTOS_PER_BUILD', '1');
 		const b = await mk();
 		await add(b);
-		await expect(add(b)).rejects.toMatchObject({ status: 409, code: 'quota' });
+		await expect(await add(b)).rejects.toMatchObject({ status: 409, code: 'quota' });
 		expect(files(b)).toHaveLength(1);
 	});
 
@@ -229,7 +229,7 @@ describe('photos and upload bytes', () => {
 		vi.stubEnv('QUOTA_UPLOAD_MB_PER_WORKSPACE', '1');
 		const b = await mk();
 		await add(b, 600_000);
-		await expect(add(b, 600_000)).rejects.toMatchObject({ status: 409, code: 'quota' });
+		await expect(await add(b, 600_000)).rejects.toMatchObject({ status: 409, code: 'quota' });
 		expect(files(b)).toHaveLength(1);
 		await add(b, 300_000);
 	});
@@ -359,7 +359,7 @@ describe('per-user bytes and the disk floor', () => {
 		vi.stubEnv('QUOTA_UPLOAD_MB_PER_WORKSPACE', 'off');
 		vi.stubEnv('QUOTA_UPLOAD_MB_PER_USER', '1');
 		await add(await mk('u1', 'build', orgId), 600_000);
-		await expect(add(await mk('u1', 'build', 'org2'), 600_000)).rejects.toMatchObject({
+		await expect(await add(await mk('u1', 'build', 'org2'), 600_000)).rejects.toMatchObject({
 			status: 409,
 			code: 'quota'
 		});
@@ -369,12 +369,12 @@ describe('per-user bytes and the disk floor', () => {
 	it('is unlimited when off', async () => {
 		vi.stubEnv('QUOTA_UPLOAD_MB_PER_USER', 'off');
 		await add(await mk(), 3_000_000);
-		await expect(add(await mk(), 3_000_000)).resolves.toBeTruthy();
+		await expect(await add(await mk(), 3_000_000)).resolves.toBeTruthy();
 	});
 
 	it('refuses photos and design previews with 507 below the disk floor', async () => {
 		vi.stubEnv('MIN_FREE_DISK_MB', '999999999999');
-		await expect(add(await mk())).rejects.toMatchObject({ status: 507 });
+		await expect(await add(await mk())).rejects.toMatchObject({ status: 507 });
 	});
 });
 

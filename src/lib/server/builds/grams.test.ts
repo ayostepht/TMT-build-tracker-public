@@ -81,7 +81,7 @@ describe('updatePart manualGrams', () => {
 		await updatePart(db, id, 'owner', 'push-top', { manualGrams: null });
 		expect((await view(id)).state['push-top'].manualGrams).toBeNull();
 		expect(partGrams(await view(id), 'push-top').source).toBe('bom');
-		expect(lastKind(id).payload).toMatchObject({ manualGrams: null, cleared: true });
+		expect((await lastKind(id)).payload).toMatchObject({ manualGrams: null, cleared: true });
 		(
 			await expect(await updatePart(db, id, 'owner', 'push-top', { manualGrams: null }))
 		).rejects.toThrow(ApiError);
@@ -124,14 +124,15 @@ describe('request-supplied keys', () => {
 		'part slug %s is a 404 and writes no activity',
 		async (slug) => {
 			const id = await mk();
-			const n = async () => (await db.select().from(activity).where(eq(activity.buildId, id))).length;
+			const n = async () =>
+				(await db.select().from(activity).where(eq(activity.buildId, id))).length;
 			const before = await n();
 			for (const body of [{ manualGrams: 5 }, { comps: { 0: true } }]) {
 				await expect(updatePart(db, id, 'owner', slug, body)).rejects.toThrow(
 					expect.objectContaining({ status: 404 })
 				);
 			}
-			expect(n()).toBe(before);
+			expect(await n()).toBe(before);
 		}
 	);
 
@@ -160,7 +161,7 @@ describe('updatePlate sets the grams source', () => {
 	it('typed grams are "user"; clearing them clears the source; the activity payload stays clean', async () => {
 		const id = await mk();
 		await updatePlate(db, id, 'owner', 10, { slicerGrams: 280 });
-		expect(src(id, 10)).toBe('user');
+		expect(await src(id, 10)).toBe('user');
 		const v = await view(id);
 		expect(v.plates.find((p) => p.number === 10)!.gramsSource).toBe('user');
 		expect(
@@ -172,18 +173,18 @@ describe('updatePlate sets the grams source', () => {
 			perRun: 280,
 			source: 'user'
 		});
-		expect(lastKind(id).payload).not.toHaveProperty('slicerGramsSource');
+		expect((await lastKind(id)).payload).not.toHaveProperty('slicerGramsSource');
 		await updatePlate(db, id, 'owner', 10, { slicerGrams: null });
-		expect(src(id, 10)).toBeNull();
+		expect(await src(id, 10)).toBeNull();
 	});
 
 	it('per-part entries are "user" too', async () => {
 		const id = await mk();
 		const slug = (await view(id)).plates.find((p) => p.number === 13)!.parts[0];
 		await updatePlate(db, id, 'owner', 13, { slicerByPart: { [slug]: 120 } });
-		expect(src(id, 13)).toBe('user');
+		expect(await src(id, 13)).toBe('user');
 		await updatePlate(db, id, 'owner', 13, { slicerByPart: {} });
-		expect(src(id, 13)).toBeNull();
+		expect(await src(id, 13)).toBeNull();
 	});
 });
 

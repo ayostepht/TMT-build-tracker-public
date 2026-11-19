@@ -111,7 +111,7 @@ describe('Partial with per-part results', () => {
 		);
 		expect(runIds).toHaveLength(2);
 		expect(runId).toBe(runIds[0]);
-		expect(acts(id).length).toBe(before + 1);
+		expect((await acts(id)).length).toBe(before + 1);
 		const row = acts(id, 'run.add').at(-1)!;
 		expect(row.payload).toMatchObject({
 			split: true,

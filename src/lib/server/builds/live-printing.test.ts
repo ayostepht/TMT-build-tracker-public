@@ -57,12 +57,14 @@ beforeEach(async () => {
 		{ organizationId: 'org1', templateId, designId: null, name: 'Columbus' },
 		'owner'
 	);
-	printerId = (await createPrinter(db, 'org1', 'owner', {
-		name: 'Shop Centauri',
-		kind: 'elegoo-sdcp',
-		secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
-		catalogId: 'elegoo-centauri-carbon'
-	})).id;
+	printerId = (
+		await createPrinter(db, 'org1', 'owner', {
+			name: 'Shop Centauri',
+			kind: 'elegoo-sdcp',
+			secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
+			catalogId: 'elegoo-centauri-carbon'
+		})
+	).id;
 	await db
 		.update(printers)
 		.set({ lastStatus: { state: 'printing', elapsedSec: 2760, remainingSec: 4440 } })
@@ -76,13 +78,13 @@ describe('logging an older attempt while the plate prints again', () => {
 		await printingAction(db, buildId, 'owner', { action: 'start', slugs: ['handle-left'] });
 		const t = part().startedAt!.getTime();
 		expect(Math.abs(t - Date.now())).toBeLessThan(5000);
-		expect(part().runEstSeconds).toBeNull();
+		expect((await part()).runEstSeconds).toBeNull();
 		await printingAction(db, buildId, 'owner', { action: 'stop', slugs: ['handle-left'] });
 
 		await liveJob();
 		await printingAction(db, buildId, 'owner', { action: 'start', slugs: ['handle-left'] });
-		expect(part().startedAt!.getTime()).toBe(T0.getTime());
-		expect(part().runEstSeconds).toBe(7200);
+		expect((await part()).startedAt!.getTime()).toBe(T0.getTime());
+		expect((await part()).runEstSeconds).toBe(7200);
 	});
 
 	it.each([
@@ -98,8 +100,8 @@ describe('logging an older attempt while the plate prints again', () => {
 			.where(eq(printers.id, printerId));
 		await liveJob();
 		await printingAction(db, buildId, 'owner', { action: 'start', slugs: ['handle-left'] });
-		expect(part().startedAt!.getTime()).toBe(T0.getTime());
-		expect(part().runEstSeconds).toBeNull();
+		expect((await part()).startedAt!.getTime()).toBe(T0.getTime());
+		expect((await part()).runEstSeconds).toBeNull();
 	});
 
 	it('a Failed run keeps the plate Printing with its start; delete and undo too', async () => {
@@ -108,24 +110,24 @@ describe('logging an older attempt while the plate prints again', () => {
 		const before = part();
 		const { runId } = await addRun(db, buildId, 'owner', failed);
 		expect(await db.select().from(printRuns)).toHaveLength(1);
-		expect(part()).toMatchObject({
+		expect(await part()).toMatchObject({
 			status: 'Printing',
 			startedAt: before.startedAt,
 			runEstSeconds: 7200
 		});
 		await deleteRun(db, buildId, 'owner', runId);
-		expect(part()).toMatchObject({ status: 'Printing', startedAt: before.startedAt });
+		expect(await part()).toMatchObject({ status: 'Printing', startedAt: before.startedAt });
 
 		const { runId: id2 } = await addRun(db, buildId, 'owner', failed);
 		await undoRun(db, buildId, 'owner', id2, {
 			parts: [{ slug: 'handle-left', status: 'To print', comps: {} }]
 		});
-		expect(part()).toMatchObject({ status: 'Printing', startedAt: before.startedAt });
+		expect(await part()).toMatchObject({ status: 'Printing', startedAt: before.startedAt });
 	});
 
 	it('without a live job the Failed run flags Reprint as before', async () => {
 		await printingAction(db, buildId, 'owner', { action: 'start', slugs: ['handle-left'] });
 		await addRun(db, buildId, 'owner', failed);
-		expect(part()).toMatchObject({ status: 'Reprint', startedAt: null });
+		expect(await part()).toMatchObject({ status: 'Reprint', startedAt: null });
 	});
 });

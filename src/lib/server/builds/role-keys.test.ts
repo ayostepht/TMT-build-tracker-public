@@ -79,8 +79,8 @@ describe('remapRoleKey', () => {
 		}
 		await db.transaction((tx) => remapRoleKey(tx, id, 'x', 'primary'));
 
-		expect(plateGrams(id, 90)).toEqual({ primary: 15 });
-		expect(plateGrams(id, 91)).toEqual({ accent: 2 });
+		expect(await plateGrams(id, 90)).toEqual({ primary: 15 });
+		expect(await plateGrams(id, 91)).toEqual({ accent: 2 });
 		expect(
 			(await first(db.select().from(buildPartProfiles).where(eq(buildPartProfiles.buildId, id))))!
 				.gramsByRole
@@ -97,7 +97,7 @@ describe('remapRoleKey', () => {
 			keep: 1
 		});
 		// the other build is untouched
-		expect(plateGrams(other, 90)).toEqual({ x: 10, primary: 5 });
+		expect(await plateGrams(other, 90)).toEqual({ x: 10, primary: 5 });
 		expect(
 			(await first(
 				db
@@ -116,7 +116,7 @@ describe('remapRoleKey', () => {
 			await remapRoleKey(tx, id, 'primary', 'primary');
 			await remapRoleKey(tx, id, 'gone', 'primary');
 		});
-		expect(plateGrams(id, 90)).toEqual({ primary: 5 });
+		expect(await plateGrams(id, 90)).toEqual({ primary: 5 });
 	});
 });
 

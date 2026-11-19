@@ -88,7 +88,7 @@ describe('spool adds', () => {
 		const add = await addSpool(db, id, 'owner', key, { kg: 1 });
 		await removeSpoolAdd(db, id, 'owner', key, add);
 		expect((await view(id)).filaments[0].spoolAdds).toEqual([]);
-		expect(acts(id, 'filament.stock.remove')).toHaveLength(1);
+		expect(await acts(id, 'filament.stock.remove')).toHaveLength(1);
 		expect(await status(async () => await removeSpoolAdd(db, id, 'owner', key, add))).toBe(404);
 		expect(await status(async () => await removeSpoolAdd(db, id, 'owner', key, '__proto__'))).toBe(
 			404
@@ -123,7 +123,7 @@ describe('spool adds', () => {
 		await addSpool(db, id, 'owner', key, { kg: 1, note: ' a\nb\r\n\tc\u0000d\u0001e\u202ef ' });
 		const note = (await view(id)).filaments[0].spoolAdds![0].note!;
 		expect(note).toBe('a b c d e f');
-		expect(acts(id, 'filament.stock.add').at(-1)!.payload).toMatchObject({ note });
+		expect((await acts(id, 'filament.stock.add')).at(-1)!.payload).toMatchObject({ note });
 		await addSpool(db, id, 'owner', key, { kg: 1, note: '\n\u0000' });
 		expect((await view(id)).filaments[0].spoolAdds![1].note).toBeUndefined();
 	});

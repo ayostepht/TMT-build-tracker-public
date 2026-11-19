@@ -300,9 +300,7 @@ describe('resolveItem and readiness', () => {
 
 describe('handoff', () => {
 	it('saves the form (editors only) and marks the build done', async () => {
-		await expect(updateHandoff(db, buildId, 'viewer', { notes: 'x' })).rejects.toThrow(
-			ApiError
-		);
+		await expect(updateHandoff(db, buildId, 'viewer', { notes: 'x' })).rejects.toThrow(ApiError);
 		await updateHandoff(db, buildId, 'editor', {
 			recipientName: 'Sam',
 			organization: 'City Clinic',
