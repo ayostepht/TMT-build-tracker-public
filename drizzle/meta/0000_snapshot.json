@@ -1,5 +1,5 @@
 {
-  "id": "0ab85b93-2c02-43cd-87b5-69fa9ffb1d07",
+  "id": "7034bae0-5e11-47fe-b24b-5e0b3ed76360",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -2467,12 +2467,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "port": {
-          "name": "port",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
         "catalog_id": {
           "name": "catalog_id",
           "type": "text",
@@ -2491,12 +2485,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": true
-        },
-        "camera_url": {
-          "name": "camera_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "camera_enabled": {
           "name": "camera_enabled",

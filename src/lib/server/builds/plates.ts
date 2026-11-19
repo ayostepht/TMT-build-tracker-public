@@ -40,7 +40,7 @@ import type { Silhouette } from '#lib/domain/silhouette.ts';
 import { ApiError, buildAccess } from '../access';
 import { diskHasRoom, uploadsDir } from '../config';
 import { assertRunTotal, assertUploadRoom, parsedUploadBytes } from '../quota';
-import type { Db } from '../db';
+import { advisoryLock, first, one, type Db, type DbOrTx } from '../db';
 import {
 	buildPlates,
 	builds,
@@ -97,28 +97,28 @@ export interface LayoutInfo {
 	plateCount: number;
 }
 
-export function listLayouts(db: Db, templateId: string): LayoutInfo[] {
-	return db
-		.select()
-		.from(templatePlateLayouts)
-		.where(eq(templatePlateLayouts.templateId, templateId))
-		.orderBy(asc(templatePlateLayouts.sort))
-		.all()
-		.map((l) => ({
-			key: l.key,
-			name: l.name,
-			printerNote: l.printerNote,
-			isDefault: l.isDefault,
-			plateCount: l.plates.length
-		}));
+export async function listLayouts(db: DbOrTx, templateId: string): Promise<LayoutInfo[]> {
+	return (
+		await db
+			.select()
+			.from(templatePlateLayouts)
+			.where(eq(templatePlateLayouts.templateId, templateId))
+			.orderBy(asc(templatePlateLayouts.sort))
+	).map((l) => ({
+		key: l.key,
+		name: l.name,
+		printerNote: l.printerNote,
+		isDefault: l.isDefault,
+		plateCount: l.plates.length
+	}));
 }
 
 /** Layouts of the build's template plus the build's current choice (null = template default). */
-export function buildLayouts(db: Db, buildId: string, userId: string) {
-	if (!buildAccess(db, buildId, userId)) throw new ApiError(404, 'Not found');
-	const b = db.select().from(builds).where(eq(builds.id, buildId)).get();
+export async function buildLayouts(db: DbOrTx, buildId: string, userId: string) {
+	if (!(await buildAccess(db, buildId, userId))) throw new ApiError(404, 'Not found');
+	const b = await first(db.select().from(builds).where(eq(builds.id, buildId)));
 	if (!b) throw new ApiError(404, 'Not found');
-	const layouts = listLayouts(db, b.templateId);
+	const layouts = await listLayouts(db, b.templateId);
 	return {
 		layouts,
 		current: b.plateLayout ?? layouts.find((l) => l.isDefault)?.key ?? null
@@ -129,33 +129,31 @@ export function buildLayouts(db: Db, buildId: string, userId: string) {
  * Turn print logs attached to plates into part logs. Returns how many logs were
  * converted. Statuses are not touched: part state stays as it is.
  */
-function convertPlateRuns(tx: Db, buildId: string, view: BuildView): number {
+async function convertPlateRuns(tx: DbOrTx, buildId: string, view: BuildView): Promise<number> {
 	const attached = view.runs.filter((r) => r.plateNumber != null);
 	// one run per active part for each attached run: refuse before touching anything when over the cap
 	const created = attached.reduce((n, r) => n + runTargets(view, r).length, 0);
 	assertRunTotal(view.runs.length - attached.length + created);
 	for (const r of attached) {
 		const targets = runTargets(view, r);
-		tx.delete(printRuns).where(eq(printRuns.id, r.id)).run();
+		await tx.delete(printRuns).where(eq(printRuns.id, r.id));
 		if (!targets.length) continue; // log of a plate whose parts are all inactive: nothing to keep it on
 		const share = (v: number | null) =>
 			v == null ? null : Math.round((v / targets.length) * 100) / 100;
 		for (const slug of targets)
-			tx.insert(printRuns)
-				.values({
-					buildId,
-					plateNumber: null,
-					partSlug: slug,
-					partSlugs: null,
-					date: r.date,
-					result: r.result,
-					grams: share(r.grams),
-					hours: share(r.hours),
-					printer: r.printer,
-					userId: r.userId,
-					note: r.note
-				})
-				.run();
+			await tx.insert(printRuns).values({
+				buildId,
+				plateNumber: null,
+				partSlug: slug,
+				partSlugs: null,
+				date: r.date,
+				result: r.result,
+				grams: share(r.grams),
+				hours: share(r.hours),
+				printer: r.printer,
+				userId: r.userId,
+				note: r.note
+			});
 	}
 	return attached.length;
 }
@@ -181,15 +179,15 @@ function requireConversion(view: BuildView, convertRuns: boolean) {
  *
  * Returns the effective `convertRuns`.
  */
-function guardPlateReplace(
-	tx: Db,
+async function guardPlateReplace(
+	tx: DbOrTx,
 	buildId: string,
 	view: BuildView,
 	body: { convertRuns: boolean; confirm: boolean }
-): boolean {
+): Promise<boolean> {
 	const st = view.started;
 	if (st.liveJobs > 0) {
-		const jobs = tx
+		const jobs = await tx
 			.select({
 				plate: printerJobs.plateNumber,
 				printer: printers.name
@@ -198,14 +196,13 @@ function guardPlateReplace(
 			.leftJoin(printers, eq(printers.id, printerJobs.printerId))
 			.where(
 				and(eq(printerJobs.buildId, buildId), inArray(printerJobs.status, ['printing', 'paused']))
-			)
-			.all();
-		const first = jobs[0];
+			);
+		const liveJob = jobs[0];
 		const what =
-			first?.plate != null
-				? `Plate ${first.plate} is printing${first.printer ? ` on ${first.printer}` : ''}`
-				: first?.printer
-					? `A print is running on ${first.printer}`
+			liveJob?.plate != null
+				? `Plate ${liveJob.plate} is printing${liveJob.printer ? ` on ${liveJob.printer}` : ''}`
+				: liveJob?.printer
+					? `A print is running on ${liveJob.printer}`
 					: 'A print is running';
 		throw new BuildStartedError(
 			st,
@@ -232,12 +229,12 @@ function guardPlateReplace(
 	return body.convertRuns || body.confirm;
 }
 
-export function setPlateLayout(
+export async function setPlateLayout(
 	db: Db,
 	buildId: string,
 	userId: string,
 	body: unknown
-): { plates: number; convertedRuns: number } {
+): Promise<{ plates: number; convertedRuns: number }> {
 	if (!isObj(body) || typeof body.key !== 'string') bad('key is required');
 	const key = (body as Obj).key as string;
 	const flags = {
@@ -245,34 +242,33 @@ export function setPlateLayout(
 		confirm: (body as Obj).confirm === true
 	};
 	let result = { plates: 0, convertedRuns: 0 };
-	mutateBuild(db, buildId, userId, (tx, view) => {
-		const b = tx.select().from(builds).where(eq(builds.id, buildId)).get()!;
-		const layout = tx
-			.select()
-			.from(templatePlateLayouts)
-			.where(
-				and(eq(templatePlateLayouts.templateId, b.templateId), eq(templatePlateLayouts.key, key))
-			)
-			.get();
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
+		const b = await one(tx.select().from(builds).where(eq(builds.id, buildId)));
+		const layout = await first(
+			tx
+				.select()
+				.from(templatePlateLayouts)
+				.where(
+					and(eq(templatePlateLayouts.templateId, b.templateId), eq(templatePlateLayouts.key, key))
+				)
+		);
 		if (!layout) bad('Unknown plate layout');
-		const convertRuns = guardPlateReplace(tx, buildId, view, flags);
+		const convertRuns = await guardPlateReplace(tx, buildId, view, flags);
 		requireConversion(view, convertRuns);
-		const convertedRuns = convertPlateRuns(tx, buildId, view);
-		tx.delete(buildPlates).where(eq(buildPlates.buildId, buildId)).run();
+		const convertedRuns = await convertPlateRuns(tx, buildId, view);
+		await tx.delete(buildPlates).where(eq(buildPlates.buildId, buildId));
 		for (const p of layout!.plates)
-			tx.insert(buildPlates)
-				.values({
-					buildId,
-					number: p.number,
-					name: p.name,
-					estSeconds: p.estSeconds,
-					runs: p.runs,
-					perPartRuns: p.perPartRuns ?? false,
-					parts: p.parts,
-					source: `layout:${key}`
-				})
-				.run();
-		tx.update(builds).set({ plateLayout: key }).where(eq(builds.id, buildId)).run();
+			await tx.insert(buildPlates).values({
+				buildId,
+				number: p.number,
+				name: p.name,
+				estSeconds: p.estSeconds,
+				runs: p.runs,
+				perPartRuns: p.perPartRuns ?? false,
+				parts: p.parts,
+				source: `layout:${key}`
+			});
+		await tx.update(builds).set({ plateLayout: key }).where(eq(builds.id, buildId));
 		clearBuildThumbs(buildId);
 		result = { plates: layout!.plates.length, convertedRuns };
 		return {
@@ -357,95 +353,105 @@ export function suggestUpload(view: BuildView, summary: StoredSummary): UploadSu
  * review screen can show them; the original file is not kept. Older unapplied uploads of
  * the build are discarded.
  */
-export function createUpload(
+export async function createUpload(
 	db: Db,
 	buildId: string,
 	userId: string,
 	file: { name: string; size: number },
 	parsed: ThreeMfSummary,
 	view: BuildView
-): { uploadId: string; summary: StoredSummary; suggestions: UploadSuggestions } {
-	const access = buildAccess(db, buildId, userId);
+): Promise<{ uploadId: string; summary: StoredSummary; suggestions: UploadSuggestions }> {
+	const access = await buildAccess(db, buildId, userId);
 	if (!access) throw new ApiError(404, 'Not found');
 	if (!access.canEdit) throw new ApiError(403, 'Your role cannot edit');
 	const summary = toStoredSummary(parsed);
-	const stale = db
-		.select({ id: buildUploads.id })
-		.from(buildUploads)
-		.where(and(eq(buildUploads.buildId, buildId), eq(buildUploads.status, 'parsed')))
-		.all();
-	// Kept on disk: the plate thumbnails (the 3MF itself is deleted after parsing). Replacing the
-	// build's pending uploads counts only the difference; refused before anything is written.
-	const newBytes = parsed.plates.reduce((n, p) => n + (p.thumbnail?.length ?? 0), 0);
-	const freed = stale.reduce((n, s) => n + parsedUploadBytes(s.id), 0);
-	// The route checked the disk floor before the body arrived; thumbnails are written now, so check again.
-	if (newBytes > 0 && !diskHasRoom(uploadsDir()))
-		throw new ApiError(507, 'The server is almost out of disk space');
-	if (newBytes > freed) assertUploadRoom(db, access.organizationId, newBytes - freed, { userId });
+	// The quota check and the insert run under one lock so two uploads at once cannot both pass it.
+	const { row, stale } = await db.transaction(async (tx) => {
+		await advisoryLock(tx, `quota:upload:${access.organizationId}`);
+		const stale = await tx
+			.select({ id: buildUploads.id })
+			.from(buildUploads)
+			.where(and(eq(buildUploads.buildId, buildId), eq(buildUploads.status, 'parsed')));
+		// Kept on disk: the plate thumbnails (the 3MF itself is deleted after parsing). Replacing the
+		// build's pending uploads counts only the difference; refused before anything is written.
+		const newBytes = parsed.plates.reduce((n, p) => n + (p.thumbnail?.length ?? 0), 0);
+		const freed = stale.reduce((n, s) => n + parsedUploadBytes(s.id), 0);
+		// The route checked the disk floor before the body arrived; thumbnails are written now, so check again.
+		if (newBytes > 0 && !diskHasRoom(uploadsDir()))
+			throw new ApiError(507, 'The server is almost out of disk space');
+		if (newBytes > freed)
+			await assertUploadRoom(tx, access.organizationId, newBytes - freed, { userId });
+		if (stale.length)
+			await tx
+				.update(buildUploads)
+				.set({ status: 'discarded' })
+				.where(
+					inArray(
+						buildUploads.id,
+						stale.map((s) => s.id)
+					)
+				);
+		const [row] = await tx
+			.insert(buildUploads)
+			.values({
+				buildId,
+				kind: UPLOAD_KIND,
+				fileName: file.name.slice(0, 255),
+				size: file.size,
+				summary: summary as unknown as Obj,
+				status: 'parsed',
+				createdBy: userId
+			})
+			.returning({ id: buildUploads.id });
+		return { row, stale };
+	});
 	for (const s of stale) rmSync(uploadDir(s.id), { recursive: true, force: true });
-	if (stale.length)
-		db.update(buildUploads)
-			.set({ status: 'discarded' })
-			.where(
-				inArray(
-					buildUploads.id,
-					stale.map((s) => s.id)
-				)
-			)
-			.run();
-	const row = db
-		.insert(buildUploads)
-		.values({
-			buildId,
-			kind: UPLOAD_KIND,
-			fileName: file.name.slice(0, 255),
-			size: file.size,
-			summary: summary as unknown as Obj,
-			status: 'parsed',
-			createdBy: userId
-		})
-		.returning({ id: buildUploads.id })
-		.get();
 	mkdirSync(uploadDir(row.id), { recursive: true });
 	for (const p of parsed.plates)
 		if (p.thumbnail) writeFileSync(uploadThumbPath(row.id, p.index), p.thumbnail);
 	return { uploadId: row.id, summary, suggestions: suggestUpload(view, summary) };
 }
 
-function getUpload(db: Db, buildId: string, uploadId: string) {
-	const u = db
-		.select()
-		.from(buildUploads)
-		.where(and(eq(buildUploads.id, uploadId), eq(buildUploads.buildId, buildId)))
-		.get();
+async function getUpload(db: DbOrTx, buildId: string, uploadId: string) {
+	const u = await first(
+		db
+			.select()
+			.from(buildUploads)
+			.where(and(eq(buildUploads.id, uploadId), eq(buildUploads.buildId, buildId)))
+	);
 	if (!u) throw new ApiError(404, 'Upload not found');
 	return u;
 }
 
 /** For the review screen's thumbnails. */
-export function uploadThumbnailFile(
-	db: Db,
+export async function uploadThumbnailFile(
+	db: DbOrTx,
 	buildId: string,
 	userId: string,
 	uploadId: string,
 	n: number
 ) {
-	const access = buildAccess(db, buildId, userId);
+	const access = await buildAccess(db, buildId, userId);
 	if (!access) throw new ApiError(404, 'Not found');
-	const u = getUpload(db, buildId, uploadId);
+	const u = await getUpload(db, buildId, uploadId);
 	if (u.status !== 'parsed') throw new ApiError(404, 'Not found');
 	const path = uploadThumbPath(uploadId, n);
 	if (!existsSync(path)) throw new ApiError(404, 'No thumbnail');
 	return path;
 }
 
-export function discardUpload(db: Db, buildId: string, userId: string, uploadId: string): void {
-	const access = buildAccess(db, buildId, userId);
+export async function discardUpload(
+	db: DbOrTx,
+	buildId: string,
+	userId: string,
+	uploadId: string
+): Promise<void> {
+	const access = await buildAccess(db, buildId, userId);
 	if (!access) throw new ApiError(404, 'Not found');
 	if (!access.canEdit) throw new ApiError(403, 'Your role cannot edit');
-	const u = getUpload(db, buildId, uploadId);
+	const u = await getUpload(db, buildId, uploadId);
 	if (u.status === 'parsed') {
-		db.update(buildUploads).set({ status: 'discarded' }).where(eq(buildUploads.id, uploadId)).run();
+		await db.update(buildUploads).set({ status: 'discarded' }).where(eq(buildUploads.id, uploadId));
 		rmSync(uploadDir(uploadId), { recursive: true, force: true });
 	}
 }
@@ -480,13 +486,13 @@ export interface ApplyResult {
 	warnings: string[];
 }
 
-export function applyUpload(
+export async function applyUpload(
 	db: Db,
 	buildId: string,
 	userId: string,
 	uploadId: string,
 	body: unknown
-): ApplyResult {
+): Promise<ApplyResult> {
 	if (!isObj(body)) bad('Invalid body');
 	const b = body as Obj;
 	const flags = { convertRuns: b.convertRuns === true, confirm: b.confirm === true };
@@ -501,8 +507,8 @@ export function applyUpload(
 		twinPlates: [],
 		warnings: []
 	};
-	mutateBuild(db, buildId, userId, (tx, view) => {
-		const up = getUpload(tx, buildId, uploadId);
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
+		const up = await getUpload(tx, buildId, uploadId);
 		if (up.status !== 'parsed')
 			throw new ApiError(409, 'This upload was already applied or discarded');
 		const summary = up.summary as unknown as StoredSummary;
@@ -559,7 +565,7 @@ export function applyUpload(
 		if (!rows.length) bad('Map at least one object to a part first');
 
 		// What the file teaches about each part (both modes).
-		const learnedProfiles = learnFromSummary(tx, {
+		const learnedProfiles = await learnFromSummary(tx, {
 			templateId: view.build.templateId,
 			summary,
 			mapping,
@@ -568,23 +574,23 @@ export function applyUpload(
 			fileName: up.fileName,
 			uploadId
 		});
-		const storeLearned = () =>
+		const storeLearned = async () =>
 			learnedProfiles.length
-				? storeProfiles(tx, buildId, learnedProfiles, {
+				? await storeProfiles(tx, buildId, learnedProfiles, {
 						source: `upload:${uploadId}`,
 						fileName: up.fileName,
 						plates: summary.plates.length,
 						printer: summary.printer
 					})
 				: 0;
-		const finishUpload = () => {
-			tx.update(buildUploads)
+		const finishUpload = async () => {
+			await tx
+				.update(buildUploads)
 				.set({
 					status: 'applied',
 					summary: { ...(up.summary as Obj), mapping, filamentMap, variantChoices: choices }
 				})
-				.where(eq(buildUploads.id, uploadId))
-				.run();
+				.where(eq(buildUploads.id, uploadId));
 			rmSync(uploadDir(uploadId), { recursive: true, force: true });
 		};
 
@@ -597,25 +603,25 @@ export function applyUpload(
 			let convertedRuns = 0;
 			if (b.arrange === true) {
 				if (!view.printer) bad('Choose a printer first to arrange plates');
-				requireConversion(view, guardPlateReplace(tx, buildId, view, flags));
+				requireConversion(view, await guardPlateReplace(tx, buildId, view, flags));
 			}
-			const learned = storeLearned();
+			const learned = await storeLearned();
 			if (b.arrange === true) {
 				// re-read the view so the arrangement sees the new data
-				const fresh = loadBuildView(tx, buildId, userId)!;
+				const fresh = (await loadBuildView(tx, buildId, userId))!;
 				const plan = planArrangement(
 					fresh,
-					loadFootprints(tx, fresh.build.templateId),
-					layoutHintFor(tx, fresh.build.templateId)
+					await loadFootprints(tx, fresh.build.templateId),
+					await layoutHintFor(tx, fresh.build.templateId)
 				);
 				if (plan) {
-					convertedRuns = convertPlateRuns(tx, buildId, fresh);
+					convertedRuns = await convertPlateRuns(tx, buildId, fresh);
 					clearBuildThumbs(buildId);
-					writePlan(tx, buildId, plan);
+					await writePlan(tx, buildId, plan);
 					arranged = true;
 				}
 			}
-			finishUpload();
+			await finishUpload();
 			result = {
 				plates: 0,
 				skipped: 0,
@@ -638,12 +644,12 @@ export function applyUpload(
 				}
 			};
 		}
-		const convertRuns = guardPlateReplace(tx, buildId, view, flags);
+		const convertRuns = await guardPlateReplace(tx, buildId, view, flags);
 		requireConversion(view, convertRuns);
 
-		const convertedRuns = convertPlateRuns(tx, buildId, view);
-		const manualFor = manualTimes(tx, buildId);
-		tx.delete(buildPlates).where(eq(buildPlates.buildId, buildId)).run();
+		const convertedRuns = await convertPlateRuns(tx, buildId, view);
+		const manualFor = await manualTimes(tx, buildId);
+		await tx.delete(buildPlates).where(eq(buildPlates.buildId, buildId));
 		clearBuildThumbs(buildId);
 		const twinPlates: ApplyResult['twinPlates'] = [];
 		const warnings: string[] = [];
@@ -667,39 +673,37 @@ export function applyUpload(
 			const manual = manualFor(pl.index, slugs);
 			// grams the maker typed on the same plate win over the file's (shown as "overrides file")
 			const carried = !!manual.typedGrams;
-			tx.insert(buildPlates)
-				.values({
-					buildId,
-					number: pl.index,
-					name: pl.name,
-					estSeconds: pl.estSeconds,
-					runs: plan.runs,
-					perPartRuns: plan.perPartRuns,
-					parts: slugs,
-					...carryManuals(manual),
-					...(carried
-						? {}
-						: {
-								slicerGrams: pl.grams,
-								// twins: each part's grams per run are the plate's; accounting counts them under the part's own role
-								slicerByPart:
-									plan.perPartRuns && pl.grams
-										? Object.fromEntries(slugs.map((s) => [s, pl.grams as number]))
-										: {},
-								slicerGramsSource: pl.grams ? ('file' as const) : null
-							}),
-					thumbnailPath: thumb,
-					filamentGrams: plan.perPartRuns ? {} : fg,
-					source: `upload:${uploadId}`
-				})
-				.run();
+			await tx.insert(buildPlates).values({
+				buildId,
+				number: pl.index,
+				name: pl.name,
+				estSeconds: pl.estSeconds,
+				runs: plan.runs,
+				perPartRuns: plan.perPartRuns,
+				parts: slugs,
+				...carryManuals(manual),
+				...(carried
+					? {}
+					: {
+							slicerGrams: pl.grams,
+							// twins: each part's grams per run are the plate's; accounting counts them under the part's own role
+							slicerByPart:
+								plan.perPartRuns && pl.grams
+									? Object.fromEntries(slugs.map((s) => [s, pl.grams as number]))
+									: {},
+							slicerGramsSource: pl.grams ? ('file' as const) : null
+						}),
+				thumbnailPath: thumb,
+				filamentGrams: plan.perPartRuns ? {} : fg,
+				source: `upload:${uploadId}`
+			});
 		}
-		tx.update(builds)
+		await tx
+			.update(builds)
 			.set({ plateLayout: 'upload', variantChoices: choices })
-			.where(eq(builds.id, buildId))
-			.run();
-		const learned = storeLearned();
-		finishUpload();
+			.where(eq(builds.id, buildId));
+		const learned = await storeLearned();
+		await finishUpload();
 		result = {
 			plates: rows.length,
 			skipped: summary.plates.length - rows.length,
@@ -719,28 +723,33 @@ export function applyUpload(
 }
 
 /** "Remove" on the Files tab: forget what the build learned from a sliced file. Plates stay as they are. */
-export function forgetPrintTemplate(db: Db, buildId: string, userId: string): number {
+export async function forgetPrintTemplate(
+	db: Db,
+	buildId: string,
+	userId: string
+): Promise<number> {
 	let n = 0;
-	mutateBuild(db, buildId, userId, (tx) => {
-		n = clearProfiles(tx, buildId);
+	await mutateBuild(db, buildId, userId, async (tx) => {
+		n = await clearProfiles(tx, buildId);
 		return { kind: 'plates.template.forget', payload: { parts: n } };
 	});
 	return n;
 }
 
 /** Absolute path of a build plate's thumbnail, or null. */
-export function plateThumbnailFile(
-	db: Db,
+export async function plateThumbnailFile(
+	db: DbOrTx,
 	buildId: string,
 	userId: string,
 	number: number
-): string | null {
-	if (!buildAccess(db, buildId, userId)) throw new ApiError(404, 'Not found');
-	const row = db
-		.select({ p: buildPlates.thumbnailPath })
-		.from(buildPlates)
-		.where(and(eq(buildPlates.buildId, buildId), eq(buildPlates.number, number)))
-		.get();
+): Promise<string | null> {
+	if (!(await buildAccess(db, buildId, userId))) throw new ApiError(404, 'Not found');
+	const row = await first(
+		db
+			.select({ p: buildPlates.thumbnailPath })
+			.from(buildPlates)
+			.where(and(eq(buildPlates.buildId, buildId), eq(buildPlates.number, number)))
+	);
 	if (!row?.p || row.p !== buildThumbRel(buildId, number)) return null;
 	const abs = join(uploadsDir(), row.p);
 	return existsSync(abs) ? abs : null;
@@ -755,29 +764,29 @@ export function plateThumbnailFile(
  * (409 otherwise), exactly like `setPlateLayout`. A started build needs `confirm: true`; a live printer job
  * refuses the call (see `guardPlateReplace`).
  */
-export function arrangeForPrinter(
+export async function arrangeForPrinter(
 	db: Db,
 	buildId: string,
 	userId: string,
 	body: unknown = {}
-): { plates: number; convertedRuns: number; warnings: ArrangeWarning[] } {
+): Promise<{ plates: number; convertedRuns: number; warnings: ArrangeWarning[] }> {
 	const flags = {
 		convertRuns: isObj(body) && body.convertRuns === true,
 		confirm: isObj(body) && body.confirm === true
 	};
 	let result = { plates: 0, convertedRuns: 0, warnings: [] as ArrangeWarning[] };
-	mutateBuild(db, buildId, userId, (tx, view) => {
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
 		if (!view.printer) bad('Choose a printer first');
 		const plan = planArrangement(
 			view,
-			loadFootprints(tx, view.build.templateId),
-			layoutHintFor(tx, view.build.templateId)
+			await loadFootprints(tx, view.build.templateId),
+			await layoutHintFor(tx, view.build.templateId)
 		)!;
-		const convertRuns = guardPlateReplace(tx, buildId, view, flags);
+		const convertRuns = await guardPlateReplace(tx, buildId, view, flags);
 		requireConversion(view, convertRuns);
-		const convertedRuns = convertPlateRuns(tx, buildId, view);
+		const convertedRuns = await convertPlateRuns(tx, buildId, view);
 		clearBuildThumbs(buildId);
-		const plates = writePlan(tx, buildId, plan);
+		const plates = await writePlan(tx, buildId, plan);
 		result = { plates, convertedRuns, warnings: plan.result.warnings };
 		return {
 			kind: 'plates.arrange',
@@ -823,16 +832,21 @@ const validItem = (i: unknown): boolean =>
 	typeof (i as { slug?: unknown }).slug === 'string' &&
 	typeof (i as { piece?: unknown }).piece === 'number';
 
-export function buildArrangement(db: Db, buildId: string, userId: string): ArrangementInfo {
-	const view = loadBuildView(db, buildId, userId);
+export async function buildArrangement(
+	db: DbOrTx,
+	buildId: string,
+	userId: string
+): Promise<ArrangementInfo> {
+	const view = await loadBuildView(db, buildId, userId);
 	if (!view) throw new ApiError(404, 'Not found');
-	const row = db.select().from(builds).where(eq(builds.id, buildId)).get();
-	const raw = db
-		.select()
-		.from(buildPlates)
-		.where(eq(buildPlates.buildId, buildId))
-		.orderBy(asc(buildPlates.number))
-		.all()
+	const row = await first(db.select().from(builds).where(eq(builds.id, buildId)));
+	const raw = (
+		await db
+			.select()
+			.from(buildPlates)
+			.where(eq(buildPlates.buildId, buildId))
+			.orderBy(asc(buildPlates.number))
+	)
 		.filter((p) => p.source === ARRANGED_SOURCE && p.arrangement)
 		.map((p) => p.arrangement as unknown);
 	// Corrupt stored data (an arrangement that is not an object, a null or non-object item, items
@@ -857,9 +871,9 @@ export function buildArrangement(db: Db, buildId: string, userId: string): Arran
 	}
 	// Outlines for the diagram: only what is on the plates; computed once, then cached in the row.
 	const onPlates = new Set(stored.flatMap((pl) => pl.parts));
-	ensureSilhouettes(db, view.build.templateId, onPlates);
-	const footprints = loadFootprints(db, view.build.templateId);
-	const plan = planArrangement(view, footprints, layoutHintFor(db, view.build.templateId));
+	await ensureSilhouettes(db, view.build.templateId, onPlates);
+	const footprints = await loadFootprints(db, view.build.templateId);
+	const plan = planArrangement(view, footprints, await layoutHintFor(db, view.build.templateId));
 	const used: Record<string, PrintFootprint> = {};
 	for (const pl of stored)
 		for (const s of pl.parts) {

@@ -9,7 +9,7 @@ import { setResolver } from './outbound';
 import { resolveCameraSource, type CameraTarget } from './camera-source';
 import { MockSdcp } from './mock-sdcp';
 import { decryptSecrets } from './secrets';
-import { openDb, runMigrations } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import { organization, printers, user } from '../db/schema';
 import { configFromInput, createPrinter, toConfig, toPublic, updatePrinter } from './store';
 import type { PrinterConfig } from './types';
@@ -22,7 +22,7 @@ const LINK = `https://${HOST}`;
 
 const cleanup: (() => unknown)[] = [];
 // The link name resolves to a public address (never a real lookup); the guard validates it.
-beforeEach(() => setResolver(async () => ['93.184.216.34']));
+beforeEach(async () => setResolver(async () => ['93.184.216.34']));
 afterEach(async () => {
 	setResolver(null);
 	vi.unstubAllGlobals();
@@ -145,11 +145,10 @@ describe('camera through an OctoEverywhere link', () => {
 });
 
 describe('shared link storage', () => {
-	const setup = () => {
-		const db = openDb(':memory:');
-		runMigrations(db);
-		db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' }).run();
-		db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() }).run();
+	const setup = async () => {
+		const db = await createTestDb();
+		await db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' });
+		await db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() });
 		return db;
 	};
 	const body = (extra: Record<string, unknown> = {}) => ({
@@ -159,9 +158,9 @@ describe('shared link storage', () => {
 		...extra
 	});
 
-	it('stores the link encrypted, needs no address, and never returns it', () => {
+	it('stores the link encrypted, needs no address, and never returns it', async () => {
 		const db = setup();
-		const row = createPrinter(db, 'o', 'u1', body());
+		const row = await createPrinter(db, 'o', 'u1', body());
 		expect(row.host).toBe('octoeverywhere');
 		expect(row.secretEnc).not.toContain(HOST);
 		expect(decryptSecrets(row.secretEnc)).toEqual({ shareLink: LINK });
@@ -174,33 +173,39 @@ describe('shared link storage', () => {
 			expect(pub.identifiers).toEqual({});
 		}
 		expect(toConfig(row).secrets.shareLink).toBe(LINK);
-		expect(db.select().from(printers).all()).toHaveLength(1);
+		expect(await db.select().from(printers)).toHaveLength(1);
 	});
 
-	it('rejects a bad link without echoing it, and a missing link', () => {
+	it('rejects a bad link without echoing it, and a missing link', async () => {
 		const db = setup();
 		let msg = '';
 		try {
-			createPrinter(db, 'o', 'u1', body({ secrets: { shareLink: 'https://evil.example/x' } }));
+			await createPrinter(
+				db,
+				'o',
+				'u1',
+				body({ secrets: { shareLink: 'https://evil.example/x' } })
+			);
 		} catch (e) {
 			msg = (e as Error).message;
 		}
 		expect(msg).toBeTruthy();
 		expect(msg).not.toContain('evil.example');
 		// a connected printer needs a link: an address alone is no longer a way to add one
-		expect(() =>
-			createPrinter(db, 'o', 'u1', { name: 'x', kind: 'elegoo-sdcp', host: '192.168.0.5' })
+		expect(
+			() =>
+				await createPrinter(db, 'o', 'u1', { name: 'x', kind: 'elegoo-sdcp', host: '192.168.0.5' })
 		).toThrow(/shared link/i);
 		// Bambu LAN is gone: it is not a printer type any more
-		expect(() => createPrinter(db, 'o', 'u1', body({ kind: 'bambu-lan' }))).toThrow(
+		expect(() => await createPrinter(db, 'o', 'u1', body({ kind: 'bambu-lan' }))).toThrow(
 			/Unknown printer type/
 		);
-		expect(db.select().from(printers).all()).toHaveLength(0);
+		expect(await db.select().from(printers)).toHaveLength(0);
 	});
 
-	it('keeps the link on edit, ignores a typed address or camera address, and refuses to clear it', () => {
+	it('keeps the link on edit, ignores a typed address or camera address, and refuses to clear it', async () => {
 		const db = setup();
-		const row = createPrinter(
+		const row = await createPrinter(
 			db,
 			'o',
 			'u1',
@@ -209,7 +214,7 @@ describe('shared link storage', () => {
 		expect(row.cameraUrl).toBeNull();
 		expect(row.host).toBe('octoeverywhere');
 		expect(row.port).toBeNull();
-		const a = updatePrinter(db, row.id, 'o', {
+		const a = await updatePrinter(db, row.id, 'o', {
 			name: 'Renamed',
 			cameraUrl: 'http://10.0.0.5/x',
 			host: '10.0.0.5'
@@ -218,43 +223,45 @@ describe('shared link storage', () => {
 		expect(a.host).toBe('octoeverywhere');
 		expect(decryptSecrets(a.secretEnc)).toEqual({ shareLink: LINK });
 		// a link printer cannot go back to an address: clearing the link is refused
-		expect(() => updatePrinter(db, row.id, 'o', { secrets: { shareLink: '' } })).toThrow(
+		expect(() => await updatePrinter(db, row.id, 'o', { secrets: { shareLink: '' } })).toThrow(
 			/shared link/i
 		);
 		// pausing and renaming stay possible
-		expect(updatePrinter(db, row.id, 'o', { enabled: false }).enabled).toBe(false);
+		expect((await updatePrinter(db, row.id, 'o', { enabled: false })).enabled).toBe(false);
 	});
 
-	it('connection tests use the stored link when none is typed', () => {
+	it('connection tests use the stored link when none is typed', async () => {
 		const db = setup();
-		const row = createPrinter(db, 'o', 'u1', body());
-		const cfg = configFromInput(db, 'o', { id: row.id, kind: 'elegoo-sdcp' });
+		const row = await createPrinter(db, 'o', 'u1', body());
+		const cfg = await configFromInput(db, 'o', { id: row.id, kind: 'elegoo-sdcp' });
 		expect(cfg.secrets.shareLink).toBe(LINK);
-		const typed = configFromInput(db, 'o', { kind: 'elegoo-sdcp', secrets: { shareLink: LINK } });
+		const typed = await configFromInput(db, 'o', {
+			kind: 'elegoo-sdcp',
+			secrets: { shareLink: LINK }
+		});
 		expect(typed.host).toBe('octoeverywhere');
 		expect(typed.secrets.shareLink).toBe(LINK);
 	});
 });
 
 describe('credential hygiene (review findings)', () => {
-	const setup = () => {
-		const db = openDb(':memory:');
-		runMigrations(db);
-		db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' }).run();
-		db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() }).run();
+	const setup = async () => {
+		const db = await createTestDb();
+		await db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' });
+		await db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() });
 		return db;
 	};
 
-	it('M1: an address is never stored: a typed host (a pasted link included) is ignored', () => {
+	it('M1: an address is never stored: a typed host (a pasted link included) is ignored', async () => {
 		const db = setup();
 		for (const host of [HOST, LINK, `${LINK}/`, 'foo.octoeverywhere.com', '192.168.0.5']) {
 			expect(
-				() => createPrinter(db, 'o', 'u1', { name: 'x', kind: 'elegoo-sdcp', host }),
+				() => await createPrinter(db, 'o', 'u1', { name: 'x', kind: 'elegoo-sdcp', host }),
 				host
 			).toThrow(/shared link/i);
 		}
-		expect(db.select().from(printers).all()).toHaveLength(0);
-		const row = createPrinter(db, 'o', 'u1', {
+		expect(await db.select().from(printers)).toHaveLength(0);
+		const row = await createPrinter(db, 'o', 'u1', {
 			name: 'x',
 			kind: 'elegoo-sdcp',
 			host: 'printer.local',
@@ -288,25 +295,30 @@ describe('credential hygiene (review findings)', () => {
 		expect(r.message).toMatch(/shared link is missing/i);
 	});
 
-	it('L2: tests cannot end up dialling the placeholder', () => {
+	it('L2: tests cannot end up dialling the placeholder', async () => {
 		const db = setup();
-		const row = createPrinter(db, 'o', 'u1', {
+		const row = await createPrinter(db, 'o', 'u1', {
 			name: 'Shop CC',
 			kind: 'elegoo-sdcp',
 			secrets: { shareLink: LINK }
 		});
-		expect(() =>
-			configFromInput(db, 'o', { id: row.id, kind: 'elegoo-sdcp', secrets: { shareLink: '' } })
+		expect(
+			() =>
+				await configFromInput(db, 'o', {
+					id: row.id,
+					kind: 'elegoo-sdcp',
+					secrets: { shareLink: '' }
+				})
 		).toThrow(/shared link/i);
-		expect(() =>
-			configFromInput(db, 'o', { kind: 'bambu-lan', secrets: { shareLink: LINK } })
+		expect(
+			() => await configFromInput(db, 'o', { kind: 'bambu-lan', secrets: { shareLink: LINK } })
 		).toThrow(/Unknown printer type/);
-		expect(configFromInput(db, 'o', { id: row.id, kind: 'elegoo-sdcp' }).secrets.shareLink).toBe(
-			LINK
-		);
+		expect(
+			(await configFromInput(db, 'o', { id: row.id, kind: 'elegoo-sdcp' })).secrets.shareLink
+		).toBe(LINK);
 	});
 
-	it('L3: link camera URLs must be https on the default port, on every hop', () => {
+	it('L3: link camera URLs must be https on the default port, on every hop', async () => {
 		for (const bad of [
 			`http://${HOST}/video`,
 			`https://${HOST}:8443/video`,
@@ -316,7 +328,7 @@ describe('credential hygiene (review findings)', () => {
 		expect(checkCameraUrl(`https://${HOST}:443/video`, HOST).ok).toBe(true);
 	});
 
-	it('L4: safeError masks share-link hosts', () => {
+	it('L4: safeError masks share-link hosts', async () => {
 		const m = safeError(new Error(`connect failed wss://${HOST}/websocket`));
 		expect(m).not.toContain('octoeverywhere.com');
 		expect(m).not.toContain('testtoken');
@@ -357,9 +369,9 @@ function fakeSockets() {
 }
 const STATUS = JSON.stringify({ Status: { CurrentStatus: [0], PrintInfo: { Status: 0 } } });
 describe('sdcp reconnect backoff', () => {
-	afterEach(() => vi.useRealTimers());
+	afterEach(async () => vi.useRealTimers());
 
-	it('link backoff is slower than the plain backoff and capped at 5 minutes', () => {
+	it('link backoff is slower than the plain backoff and capped at 5 minutes', async () => {
 		for (let a = 0; a < 10; a++) {
 			expect(linkBackoff(a)).toBeGreaterThanOrEqual(10_000);
 			expect(linkBackoff(a)).toBeLessThan(300_500);
@@ -409,7 +421,7 @@ describe('sdcp reconnect backoff', () => {
 });
 
 describe('sdcp untrusted frames', () => {
-	afterEach(() => vi.useRealTimers());
+	afterEach(async () => vi.useRealTimers());
 
 	it('survives bad JSON; a non-text or oversize frame drops the socket (audit: long backoff)', async () => {
 		vi.useFakeTimers();
@@ -431,7 +443,7 @@ describe('sdcp untrusted frames', () => {
 		expect(seen.length).toBe(2);
 	});
 
-	it('learns a MainboardID only when it looks like one', () => {
+	it('learns a MainboardID only when it looks like one', async () => {
 		return (async () => {
 			vi.useFakeTimers();
 			const socks = fakeSockets();
@@ -455,7 +467,7 @@ describe('sdcp untrusted frames', () => {
 		})();
 	});
 
-	it('trims a long, control-character file name', () => {
+	it('trims a long, control-character file name', async () => {
 		const st = normalizeSdcpStatus({
 			CurrentStatus: [1],
 			PrintInfo: { Status: 13, Filename: `a\u0000b\n${'x'.repeat(500)}` }
@@ -468,7 +480,7 @@ describe('sdcp untrusted frames', () => {
 		expect(st.fileName!.startsWith('a b xxx')).toBe(true);
 	});
 
-	it('caps the filament list and its strings', () => {
+	it('caps the filament list and its strings', async () => {
 		const trays = Array.from({ length: 40 }, () => ({
 			filament_color: `0x${'F'.repeat(100)}`,
 			filament_type: 'T'.repeat(100)

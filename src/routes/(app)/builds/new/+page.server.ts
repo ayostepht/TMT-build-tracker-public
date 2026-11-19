@@ -23,11 +23,11 @@ export const actions: Actions = {
 		const db = getDb();
 		let id: string;
 		try {
-			id = createBuild(
+			id = await createBuild(
 				db,
 				{
 					organizationId: s('organizationId') ?? '',
-					templateId: defaultTemplate(db).id,
+					templateId: (await defaultTemplate(db)).id,
 					designId: null,
 					name: s('name') ?? '',
 					recipient: s('recipient'),

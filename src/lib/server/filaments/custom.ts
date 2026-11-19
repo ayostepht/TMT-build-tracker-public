@@ -8,7 +8,7 @@ import {
 } from '#lib/domain/custom-filaments.ts';
 import { isHex, normHex } from '#lib/domain/color.ts';
 import { ApiError, requireEditor, requireMember } from '../access';
-import type { Db } from '../db';
+import { advisoryLock, first, one, type DbOrTx } from '../db';
 import { customFilaments } from '../db/schema';
 import { assertUnder, countCustomFilaments } from '../quota';
 
@@ -73,81 +73,90 @@ export function parseCustomInput(body: unknown): CustomFilamentInput {
 	};
 }
 
-function findDuplicate(db: Db, orgId: string, input: CustomFilamentInput, exceptId?: string) {
+async function findDuplicate(
+	db: DbOrTx,
+	orgId: string,
+	input: CustomFilamentInput,
+	exceptId?: string
+) {
 	const key = customKey(input);
-	return db
-		.select()
-		.from(customFilaments)
-		.where(eq(customFilaments.organizationId, orgId))
-		.all()
-		.find((r) => r.id !== exceptId && customKey({ ...r }) === key);
+	return (
+		await db.select().from(customFilaments).where(eq(customFilaments.organizationId, orgId))
+	).find((r) => r.id !== exceptId && customKey({ ...r }) === key);
 }
 
 /** Any member may read the workspace's filaments (non-members get 404). */
-export function listCustomFilaments(db: Db, orgId: string, userId: string): CustomFilament[] {
-	requireMember(db, orgId, userId);
-	return db
-		.select()
-		.from(customFilaments)
-		.where(eq(customFilaments.organizationId, orgId))
-		.orderBy(asc(customFilaments.brand), asc(customFilaments.colorName))
-		.all()
-		.map(toView);
+export async function listCustomFilaments(
+	db: DbOrTx,
+	orgId: string,
+	userId: string
+): Promise<CustomFilament[]> {
+	await requireMember(db, orgId, userId);
+	return (
+		await db
+			.select()
+			.from(customFilaments)
+			.where(eq(customFilaments.organizationId, orgId))
+			.orderBy(asc(customFilaments.brand), asc(customFilaments.colorName))
+	).map(toView);
 }
 
-export function createCustomFilament(
-	db: Db,
+export async function createCustomFilament(
+	db: DbOrTx,
 	orgId: string,
 	userId: string,
 	body: unknown
-): CustomFilament {
-	requireEditor(db, orgId, userId);
+): Promise<CustomFilament> {
+	await requireEditor(db, orgId, userId);
 	const input = parseCustomInput(body);
-	const dup = findDuplicate(db, orgId, input);
-	if (dup) throw new DuplicateFilamentError(dup.id);
-	// Count and insert in one synchronous transaction so parallel requests cannot both pass.
-	const row = db.transaction((tx) => {
-		assertUnder(tx, 'customFilamentsPerWorkspace', () => countCustomFilaments(tx, orgId), {
+	// Count and insert in one transaction under a per-workspace lock so parallel requests cannot both pass.
+	const row = await db.transaction(async (tx) => {
+		await advisoryLock(tx, `quota:custom-filaments:${orgId}`);
+		const dup = await findDuplicate(tx, orgId, input);
+		if (dup) throw new DuplicateFilamentError(dup.id);
+		await assertUnder(tx, 'customFilamentsPerWorkspace', () => countCustomFilaments(tx, orgId), {
 			userId
 		});
-		return tx
-			.insert(customFilaments)
-			.values({ organizationId: orgId, ...input, notes: input.notes ?? '', createdBy: userId })
-			.returning()
-			.get();
+		return one(
+			tx
+				.insert(customFilaments)
+				.values({ organizationId: orgId, ...input, notes: input.notes ?? '', createdBy: userId })
+				.returning()
+		);
 	});
 	return toView(row);
 }
 
-function load(db: Db, id: string, userId: string, edit: boolean): Row {
-	const row = db.select().from(customFilaments).where(eq(customFilaments.id, id)).get();
+async function load(db: DbOrTx, id: string, userId: string, edit: boolean): Promise<Row> {
+	const row = await first(db.select().from(customFilaments).where(eq(customFilaments.id, id)));
 	if (!row) throw new ApiError(404, 'Not found');
-	if (edit) requireEditor(db, row.organizationId, userId);
-	else requireMember(db, row.organizationId, userId);
+	if (edit) await requireEditor(db, row.organizationId, userId);
+	else await requireMember(db, row.organizationId, userId);
 	return row;
 }
 
-export function updateCustomFilament(
-	db: Db,
+export async function updateCustomFilament(
+	db: DbOrTx,
 	id: string,
 	userId: string,
 	body: unknown
-): CustomFilament {
-	const row = load(db, id, userId, true);
+): Promise<CustomFilament> {
+	const row = await load(db, id, userId, true);
 	const input = parseCustomInput(body);
-	const dup = findDuplicate(db, row.organizationId, input, id);
+	const dup = await findDuplicate(db, row.organizationId, input, id);
 	if (dup) throw new DuplicateFilamentError(dup.id);
-	const out = db
-		.update(customFilaments)
-		.set({ ...input, notes: input.notes ?? '', updatedAt: new Date() })
-		.where(and(eq(customFilaments.id, id)))
-		.returning()
-		.get();
+	const out = await one(
+		db
+			.update(customFilaments)
+			.set({ ...input, notes: input.notes ?? '', updatedAt: new Date() })
+			.where(and(eq(customFilaments.id, id)))
+			.returning()
+	);
 	return toView(out);
 }
 
 /** Builds that already use the filament keep their own copy of name, color and material. */
-export function deleteCustomFilament(db: Db, id: string, userId: string): void {
-	load(db, id, userId, true);
-	db.delete(customFilaments).where(eq(customFilaments.id, id)).run();
+export async function deleteCustomFilament(db: DbOrTx, id: string, userId: string): Promise<void> {
+	await load(db, id, userId, true);
+	await db.delete(customFilaments).where(eq(customFilaments.id, id));
 }

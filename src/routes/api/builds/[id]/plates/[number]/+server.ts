@@ -8,5 +8,5 @@ export const PATCH: RequestHandler = (event) =>
 	respond(async () => {
 		const n = Number(event.params.number);
 		if (!Number.isInteger(n)) throw new ApiError(400, 'Invalid plate number');
-		updatePlate(getDb(), event.params.id, requireUserId(event), n, await readJson(event));
+		await updatePlate(getDb(), event.params.id, requireUserId(event), n, await readJson(event));
 	});

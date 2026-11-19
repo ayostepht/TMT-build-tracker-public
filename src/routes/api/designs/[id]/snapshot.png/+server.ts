@@ -10,7 +10,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 	if (!locals.user) error(401, 'Sign in required');
 	let id: string;
 	try {
-		id = findDesign(getDb(), params.id, locals.user.id).id;
+		id = (await findDesign(getDb(), params.id, locals.user.id)).id;
 	} catch (e) {
 		if (e instanceof ApiError) error(e.status as 404, e.message);
 		throw e;

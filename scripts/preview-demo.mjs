@@ -1,17 +1,22 @@
 // One-command local preview with invented sample data, for reviewing changes on a Mac and a
 // phone before anything is deployed. Review only: a throwaway secret, a throwaway data folder
-// (data/preview/data), a simulated printer. Never point it at real data.
+// (data/preview/data) and database (`tmt_preview`), a manual printer. Never point it at real data.
 //
 //   npm run preview:demo [-- --fresh] [-- --port 5200] [-- --no-build]
 //
 // It builds the working tree, copies the build to data/preview/build (so later builds and
 // Playwright runs do not disturb it), serves that copy, and seeds through the app's HTTP API.
+//
+// Needs a local Postgres (`scripts/dev-postgres.sh`). The preview uses its own database,
+// `tmt_preview`, on the server DATABASE_URL points at (default: the dev Postgres); it is created
+// when missing, and `--fresh` drops and recreates it.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import postgres from 'postgres';
 import { ensureKitPack } from './preview/kitpack.mjs';
 import { DEMO, seedDemo } from './preview/seed.mjs';
 
@@ -63,7 +68,30 @@ if (portErr)
 			: `Cannot listen on port ${port}: ${portErr.message}`
 	);
 
-// ---- fresh: wipe only the preview data folder
+// ---- the preview database (its own database on the dev Postgres; never the dev or real one)
+const serverUrl = new URL(process.env.DATABASE_URL || 'postgres://tmt:tmt@localhost:5432/tmt_dev');
+const previewDbName = 'tmt_preview';
+const adminUrl = new URL(serverUrl);
+adminUrl.pathname = '/postgres';
+const previewUrl = new URL(serverUrl);
+previewUrl.pathname = `/${previewDbName}`;
+const previewDbUrl = previewUrl.toString();
+{
+	const admin = postgres(adminUrl.toString(), { prepare: false, max: 1, onnotice: () => {} });
+	try {
+		if (fresh) await admin.unsafe(`drop database if exists ${previewDbName} with (force)`);
+		const [exists] = await admin`select 1 as ok from pg_database where datname = ${previewDbName}`;
+		if (!exists) await admin.unsafe(`create database ${previewDbName}`);
+	} catch (e) {
+		die(
+			`Cannot reach Postgres (${e.code ?? e.message}). Start it with scripts/dev-postgres.sh or set DATABASE_URL.`
+		);
+	} finally {
+		await admin.end({ timeout: 5 });
+	}
+}
+
+// ---- fresh: wipe the preview data folder too
 if (fresh) {
 	rmSync(dataDir, { recursive: true, force: true });
 	say('--fresh: preview data wiped.');
@@ -99,21 +127,18 @@ if (!kit.ok)
 		`3D model and plate geometry are MISSING: ${kit.message}. Copy the .kitpack into data/preview/kitpacks/ (name and sha256 in kitpacks/index.json) and restart.`
 	);
 
-// ---- the simulated printer (the repo's mock Elegoo printer, in this process, loopback only)
+// ---- the printer catalog (for the sample build's printer)
 const { build } = await import('esbuild');
-const mockFile = join(previewDir, 'mock.mjs');
+const catalogFile = join(previewDir, 'catalog.mjs');
 await build({
-	entryPoints: [join(root, 'scripts', 'preview', 'mock-entry.mjs')],
-	outfile: mockFile,
+	entryPoints: [join(root, 'scripts', 'preview', 'catalog-entry.mjs')],
+	outfile: catalogFile,
 	bundle: true,
 	platform: 'node',
 	format: 'esm',
 	logLevel: 'error'
 });
-const mockLib = await import(`${pathToFileURL(mockFile).href}?t=${Date.now()}`);
-const mock = new mockLib.MockSdcp();
-// A fixed neighbour port keeps the stored printer address valid across runs; any free port if taken.
-await mock.start((await tryListen(port + 1, '127.0.0.1')) ? 0 : port + 1, '127.0.0.1');
+const catalogLib = await import(`${pathToFileURL(catalogFile).href}?t=${Date.now()}`);
 
 // ---- the server
 const base = `http://127.0.0.1:${port}`;
@@ -125,7 +150,8 @@ const server = spawn(process.execPath, ['--import', './scripts/proxy-origin.mjs'
 		NODE_ENV: 'production',
 		HOST: '0.0.0.0',
 		PORT: String(port),
-		DATABASE_URL: join(dataDir, 'tmt.db'),
+		DATABASE_URL: previewDbUrl,
+		DATA_DIR: dataDir,
 		BETTER_AUTH_SECRET: DEMO.secret,
 		TMT_MODE: 'selfhost',
 		SIGNUP: 'open',
@@ -145,7 +171,6 @@ async function shutdown(code = 0) {
 	if (stopping) return;
 	stopping = true;
 	say('stopping...');
-	await mock.stop().catch(() => {});
 	server.kill('SIGTERM');
 	await new Promise((ok) => {
 		if (server.exitCode !== null) return ok();
@@ -180,10 +205,9 @@ let seeded;
 try {
 	seeded = await seedDemo({
 		base,
-		mock,
 		kitExpected: kit.ok,
-		dataFile: join(dataDir, 'tmt.db'),
-		mockLib,
+		databaseUrl: previewDbUrl,
+		catalogLib,
 		log: say
 	});
 } catch (e) {
@@ -203,7 +227,7 @@ const lines = [
 	`  Network:  ${lan ? `http://${lan}:${port}` : '(no LAN address found)'}   (phone on the same Wi-Fi)`,
 	`  Sign in:  ${DEMO.email} / ${DEMO.password}`,
 	`  Second member (editor): ${DEMO.editorEmail} / ${DEMO.password}`,
-	`  Data:     data/preview/data${fresh ? ' (fresh)' : ''}`,
+	`  Data:     data/preview/data + database ${previewDbName}${fresh ? ' (fresh)' : ''}`,
 	...seeded.summary.map((s) => `  ${s}`),
 	kit.ok
 		? '  Kit pack: installed (3D chair and plate geometry available)'

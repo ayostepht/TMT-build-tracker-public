@@ -14,9 +14,9 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async (event) => {
 	try {
 		const db = getDb();
-		const { row } = printerForMember(db, event.params.id, requireUserId(event));
+		const { row } = await printerForMember(db, event.params.id, requireUserId(event));
 		if (!(await sourceFor(db, row.id))) return json({ error: 'No camera' }, { status: 404 });
-		const session = sessionFor(db, row.id);
+		const session = await sessionFor(db, row.id);
 		// Hold the connection while we confirm the camera answers, so a dead camera is a clean 502.
 		const release = session.retain();
 		try {

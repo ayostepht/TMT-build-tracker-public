@@ -17,31 +17,31 @@ const LANDING_BUILD_CAP = 6;
 export const load: PageServerLoad = async ({ parent, locals }) => {
 	const { team } = await parent();
 	const db = getDb();
-	const rows = buildRows(db, [team.id]);
+	const rows = await buildRows(db, [team.id]);
 	if (!locals.user || !rows.length) return { builds: rows, landing: { views: [], more: 0 } };
 
 	// Builds with a part on a printer always come first, then the most recently active unfinished
 	// ones. `loadBuildView` applies the same member check as the build page itself.
 	const printingIds = new Set(
-		db
-			.select({ id: buildParts.buildId })
-			.from(buildParts)
-			.innerJoin(builds, eq(builds.id, buildParts.buildId))
-			.where(
-				and(
-					eq(builds.organizationId, team.id),
-					eq(builds.kind, 'build'),
-					eq(buildParts.status, 'Printing'),
-					inArray(
-						builds.id,
-						rows.map((r) => r.id)
+		(
+			await db
+				.select({ id: buildParts.buildId })
+				.from(buildParts)
+				.innerJoin(builds, eq(builds.id, buildParts.buildId))
+				.where(
+					and(
+						eq(builds.organizationId, team.id),
+						eq(builds.kind, 'build'),
+						eq(buildParts.status, 'Printing'),
+						inArray(
+							builds.id,
+							rows.map((r) => r.id)
+						)
 					)
 				)
-			)
-			.all()
-			.map((r) => r.id)
+		).map((r) => r.id)
 	);
-	const candidates = recentBuilds(db, [team.id], rows.length).filter(
+	const candidates = (await recentBuilds(db, [team.id], rows.length)).filter(
 		(b) => printingIds.has(b.id) || (b.setupStep === null && b.total > 0 && b.printed < b.total)
 	);
 	const ordered = [
@@ -50,7 +50,7 @@ export const load: PageServerLoad = async ({ parent, locals }) => {
 	];
 	const views: BuildView[] = [];
 	for (const b of ordered.slice(0, LANDING_BUILD_CAP)) {
-		const v = loadBuildView(db, b.id, locals.user.id);
+		const v = await loadBuildView(db, b.id, locals.user.id);
 		if (v) views.push(v);
 	}
 	return { builds: rows, landing: { views, more: Math.max(0, ordered.length - views.length) } };

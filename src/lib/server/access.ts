@@ -1,6 +1,6 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { BuildKind, TeamRole } from '#lib/domain/types.ts';
-import type { Db } from './db';
+import { first, type DbOrTx } from './db';
 import { adminEmails, isPublicMode } from './config';
 import { builds, member, siteAdmin, user } from './db/schema';
 
@@ -23,47 +23,58 @@ export function canEditRole(role: TeamRole): boolean {
 }
 
 /** Role of the user in the organization, or null when not a member. */
-export function getMemberRole(db: Db, orgId: string, userId: string): TeamRole | null {
-	const row = db
-		.select({ role: member.role })
-		.from(member)
-		.where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
-		.get();
+export async function getMemberRole(
+	db: DbOrTx,
+	orgId: string,
+	userId: string
+): Promise<TeamRole | null> {
+	const row = await first(
+		db
+			.select({ role: member.role })
+			.from(member)
+			.where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
+	);
 	return row ? normalizeRole(row.role) : null;
 }
 
 /** 404 when not a member (does not leak the organization's existence). */
-export function requireMember(db: Db, orgId: string, userId: string): TeamRole {
-	const role = getMemberRole(db, orgId, userId);
+export async function requireMember(db: DbOrTx, orgId: string, userId: string): Promise<TeamRole> {
+	const role = await getMemberRole(db, orgId, userId);
 	if (!role) throw new ApiError(404, 'Not found');
 	return role;
 }
 
-export function requireEditor(db: Db, orgId: string, userId: string): TeamRole {
-	const role = requireMember(db, orgId, userId);
+export async function requireEditor(db: DbOrTx, orgId: string, userId: string): Promise<TeamRole> {
+	const role = await requireMember(db, orgId, userId);
 	if (!canEditRole(role)) throw new ApiError(403, 'Your role cannot edit');
 	return role;
 }
 
-export function requireOwner(db: Db, orgId: string, userId: string): TeamRole {
-	const role = requireMember(db, orgId, userId);
+export async function requireOwner(db: DbOrTx, orgId: string, userId: string): Promise<TeamRole> {
+	const role = await requireMember(db, orgId, userId);
 	if (role !== 'owner') throw new ApiError(403, 'Only chapter owners can do this');
 	return role;
 }
 
 /** Access to a build via its organization. Null when the build does not exist or the user is not a member. */
-export function buildAccess(
-	db: Db,
+export async function buildAccess(
+	db: DbOrTx,
 	buildId: string,
 	userId: string
-): { organizationId: string; role: TeamRole; canEdit: boolean; kind: BuildKind } | null {
-	const b = db
-		.select({ organizationId: builds.organizationId, kind: builds.kind })
-		.from(builds)
-		.where(eq(builds.id, buildId))
-		.get();
+): Promise<{
+	organizationId: string;
+	role: TeamRole;
+	canEdit: boolean;
+	kind: BuildKind;
+} | null> {
+	const b = await first(
+		db
+			.select({ organizationId: builds.organizationId, kind: builds.kind })
+			.from(builds)
+			.where(eq(builds.id, buildId))
+	);
 	if (!b) return null;
-	const role = getMemberRole(db, b.organizationId, userId);
+	const role = await getMemberRole(db, b.organizationId, userId);
 	if (!role) return null;
 	return {
 		organizationId: b.organizationId,
@@ -99,36 +110,44 @@ export interface SiteAdminCandidate {
  */
 export type SiteAdminSource = 'config' | 'granted' | 'first';
 
-export function siteAdminSource(db: Db, u: SiteAdminCandidate): SiteAdminSource | null {
+export async function siteAdminSource(
+	db: DbOrTx,
+	u: SiteAdminCandidate
+): Promise<SiteAdminSource | null> {
 	const publicMode = isPublicMode();
 	if (publicMode && u.emailVerified !== true) return null;
 	const email = (u.email ?? '').trim().toLowerCase();
 	if (email && adminEmails().includes(email)) return 'config';
-	if (db.select({ id: siteAdmin.userId }).from(siteAdmin).where(eq(siteAdmin.userId, u.id)).get())
+	if (
+		await first(
+			db.select({ id: siteAdmin.userId }).from(siteAdmin).where(eq(siteAdmin.userId, u.id))
+		)
+	)
 		return 'granted';
 	if (publicMode) return null;
-	if (db.select({ id: siteAdmin.userId }).from(siteAdmin).limit(1).get()) return null;
+	if (await first(db.select({ id: siteAdmin.userId }).from(siteAdmin).limit(1))) return null;
 	const envEmails = adminEmails();
 	// One indexed lookup (Better Auth stores emails lower-case).
 	if (
 		envEmails.length &&
-		db.select({ id: user.id }).from(user).where(inArray(user.email, envEmails)).limit(1).get()
+		(await first(
+			db.select({ id: user.id }).from(user).where(inArray(user.email, envEmails)).limit(1)
+		))
 	)
 		return null;
-	const first = db
-		.select({ id: user.id })
-		.from(user)
-		.orderBy(asc(user.createdAt), sql`rowid`)
-		.limit(1)
-		.get();
-	return first?.id === u.id ? 'first' : null;
+	// The rule is computed on read, never stored, so two simultaneous sign-ups cannot both become
+	// admin: the earliest `created_at` wins, ties broken by id (stable, arbitrary).
+	const firstUser = await first(
+		db.select({ id: user.id }).from(user).orderBy(asc(user.createdAt), asc(user.id)).limit(1)
+	);
+	return firstUser?.id === u.id ? 'first' : null;
 }
 
-export function isSiteAdmin(db: Db, u: SiteAdminCandidate): boolean {
-	return siteAdminSource(db, u) !== null;
+export async function isSiteAdmin(db: DbOrTx, u: SiteAdminCandidate): Promise<boolean> {
+	return (await siteAdminSource(db, u)) !== null;
 }
 
 /** Guard for site-admin endpoints and pages (caller must already be signed in): 404 for everyone else (does not reveal the admin area). */
-export function requireSiteAdmin(db: Db, u: SiteAdminCandidate): void {
-	if (!isSiteAdmin(db, u)) throw new ApiError(404, 'Not found');
+export async function requireSiteAdmin(db: DbOrTx, u: SiteAdminCandidate): Promise<void> {
+	if (!(await isSiteAdmin(db, u))) throw new ApiError(404, 'Not found');
 }

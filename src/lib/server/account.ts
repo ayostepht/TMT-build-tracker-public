@@ -2,7 +2,7 @@
  * Account deletion, data export and file cleanup for deleted workspaces.
  *
  * No schema change: `builds.created_by` has no ON DELETE rule, so deletion reassigns those rows in
- * code, in one synchronous transaction, and removes files on disk only after it commits.
+ * code, in one transaction, and removes files on disk only after it commits.
  *
  * What deleting an account does:
  * - the personal workspace goes with everything in it (builds, drafts, photos, uploads, printers,
@@ -21,7 +21,7 @@ import { basename, join, resolve, sep } from 'node:path';
 import { and, asc, eq, inArray, isNull, like, notInArray, or, sql } from 'drizzle-orm';
 import { ApiError, isSiteAdmin, normalizeRole } from './access';
 import { uploadsDir } from './config';
-import type { Db } from './db';
+import { advisoryLock, first, type Db, type DbOrTx } from './db';
 import {
 	buildPhotos,
 	builds,
@@ -77,16 +77,18 @@ function storedPath(rel: string | null | undefined): string | null {
  * Files behind the builds of `orgIds` (plus the single `buildIds`), and the kit copies owned by
  * `orgIds`. Read-only; call it before deleting the rows.
  */
-export function planFiles(db: Db, opts: { orgIds?: string[]; buildIds?: string[] }): FilePlan {
+export async function planFiles(
+	db: DbOrTx,
+	opts: { orgIds?: string[]; buildIds?: string[] }
+): Promise<FilePlan> {
 	const plan = emptyPlan();
 	const orgIds = opts.orgIds ?? [];
 	const ids = new Set(opts.buildIds ?? []);
 	if (orgIds.length)
-		for (const r of db
+		for (const r of await db
 			.select({ id: builds.id })
 			.from(builds)
-			.where(inArray(builds.organizationId, orgIds))
-			.all())
+			.where(inArray(builds.organizationId, orgIds)))
 			ids.add(r.id);
 	const buildIds = [...ids].filter((i) => SAFE_ID.test(i));
 	const root = uploadsDir();
@@ -94,33 +96,31 @@ export function planFiles(db: Db, opts: { orgIds?: string[]; buildIds?: string[]
 		plan.dirs.push(join(root, 'photos', id), join(root, 'plates', id));
 	}
 	if (buildIds.length) {
-		for (const p of db
+		for (const p of await db
 			.select({ path: buildPhotos.path, thumb: buildPhotos.thumbPath })
 			.from(buildPhotos)
-			.where(inArray(buildPhotos.buildId, buildIds))
-			.all())
+			.where(inArray(buildPhotos.buildId, buildIds)))
 			for (const f of [storedPath(p.path), storedPath(p.thumb)]) if (f) plan.files.push(f);
-		for (const u of db
+		for (const u of await db
 			.select({ id: buildUploads.id })
 			.from(buildUploads)
-			.where(inArray(buildUploads.buildId, buildIds))
-			.all())
+			.where(inArray(buildUploads.buildId, buildIds)))
 			if (SAFE_ID.test(u.id)) plan.dirs.push(join(root, '3mf', u.id));
 	}
 	if (orgIds.length) {
-		plan.templateIds = db
-			.select({ id: templates.id })
-			.from(templates)
-			.where(inArray(templates.ownerOrgId, orgIds))
-			.all()
-			.map((t) => t.id);
+		plan.templateIds = (
+			await db
+				.select({ id: templates.id })
+				.from(templates)
+				.where(inArray(templates.ownerOrgId, orgIds))
+		).map((t) => t.id);
 		if (plan.templateIds.length)
-			plan.jobInputs = db
-				.select({ p: templateModelJobs.inputPath })
-				.from(templateModelJobs)
-				.where(inArray(templateModelJobs.templateId, plan.templateIds))
-				.all()
-				.map((j) => j.p);
+			plan.jobInputs = (
+				await db
+					.select({ p: templateModelJobs.inputPath })
+					.from(templateModelJobs)
+					.where(inArray(templateModelJobs.templateId, plan.templateIds))
+			).map((j) => j.p);
 	}
 	return plan;
 }
@@ -135,38 +135,42 @@ export function planFiles(db: Db, opts: { orgIds?: string[]; buildIds?: string[]
  * that still uses a copy (the repoint skips copies with no resolvable base: legacy data) is moved to
  * the default built-in kit; if there is none, nothing is deleted and the call throws 409.
  */
-export function deleteOwnedTemplates(tx: Db, templateIds: string[], doomedOrgIds: string[]): void {
+export async function deleteOwnedTemplates(
+	tx: DbOrTx,
+	templateIds: string[],
+	doomedOrgIds: string[]
+): Promise<void> {
 	if (!templateIds.length) return;
 	if (doomedOrgIds.length)
-		tx.delete(builds)
+		await tx
+			.delete(builds)
 			.where(
 				and(inArray(builds.templateId, templateIds), inArray(builds.organizationId, doomedOrgIds))
-			)
-			.run();
-	const survivors = tx
+			);
+	const survivors = await tx
 		.select({ id: builds.id })
 		.from(builds)
-		.where(inArray(builds.templateId, templateIds))
-		.all();
+		.where(inArray(builds.templateId, templateIds));
 	if (survivors.length) {
-		const fallback = tx
-			.select({ id: templates.id })
-			.from(templates)
-			.where(and(isNull(templates.ownerOrgId), notInArray(templates.id, templateIds)))
-			.orderBy(asc(templates.createdAt), asc(templates.name))
-			.limit(1)
-			.get();
+		const fallback = await first(
+			tx
+				.select({ id: templates.id })
+				.from(templates)
+				.where(and(isNull(templates.ownerOrgId), notInArray(templates.id, templateIds)))
+				.orderBy(asc(templates.createdAt), asc(templates.name))
+				.limit(1)
+		);
 		if (!fallback)
 			throw new ApiError(
 				409,
 				'Other chapters still use this kit copy and there is no built-in kit to move them to, so nothing was deleted.'
 			);
-		tx.update(builds)
+		await tx
+			.update(builds)
 			.set({ templateId: fallback.id })
-			.where(inArray(builds.templateId, templateIds))
-			.run();
+			.where(inArray(builds.templateId, templateIds));
 	}
-	tx.delete(templates).where(inArray(templates.id, templateIds)).run();
+	await tx.delete(templates).where(inArray(templates.id, templateIds));
 }
 
 /** Remove the planned files. Never throws for files that are already gone. */
@@ -189,8 +193,8 @@ export interface WorkspaceFate {
 }
 
 /** What deleting the account would do to each workspace the user belongs to (read-only). */
-export function planAccountDeletion(db: Db, userId: string): WorkspaceFate[] {
-	const mine = db
+export async function planAccountDeletion(db: DbOrTx, userId: string): Promise<WorkspaceFate[]> {
+	const mine = await db
 		.select({
 			orgId: organization.id,
 			name: organization.name,
@@ -200,8 +204,7 @@ export function planAccountDeletion(db: Db, userId: string): WorkspaceFate[] {
 		.from(member)
 		.innerJoin(organization, eq(organization.id, member.organizationId))
 		.where(eq(member.userId, userId))
-		.orderBy(asc(organization.name))
-		.all();
+		.orderBy(asc(organization.name), asc(organization.id));
 	const out: WorkspaceFate[] = [];
 	for (const m of mine) {
 		const meta = parseMetadata(m.metadata);
@@ -209,13 +212,13 @@ export function planAccountDeletion(db: Db, userId: string): WorkspaceFate[] {
 			out.push({ orgId: m.orgId, name: m.name, fate: 'personal' });
 			continue;
 		}
-		const others = db
-			.select({ userId: member.userId, role: member.role })
-			.from(member)
-			.where(eq(member.organizationId, m.orgId))
-			.orderBy(asc(member.createdAt), sql`rowid`)
-			.all()
-			.filter((o) => o.userId !== userId);
+		const others = (
+			await db
+				.select({ userId: member.userId, role: member.role })
+				.from(member)
+				.where(eq(member.organizationId, m.orgId))
+				.orderBy(asc(member.createdAt), asc(member.id))
+		).filter((o) => o.userId !== userId);
 		if (!others.length) {
 			out.push({ orgId: m.orgId, name: m.name, fate: 'delete' });
 			continue;
@@ -246,17 +249,23 @@ export const ONLY_ACCOUNT_MESSAGE =
 	'This is the only account on the server, so it cannot be deleted. To start over, remove the data directory.';
 
 /** Why the account may not be deleted for site-wide reasons, or null. */
-export function siteBlock(db: Db, userId: string): AccountDeletionError | null {
-	const all = db
+export async function siteBlock(db: DbOrTx, userId: string): Promise<AccountDeletionError | null> {
+	const all = await db
 		.select({ id: user.id, email: user.email, emailVerified: user.emailVerified })
-		.from(user)
-		.all();
+		.from(user);
 	const me = all.find((x) => x.id === userId);
 	if (!me) return null;
 	const others = all.filter((x) => x.id !== userId);
 	if (!others.length) return new AccountDeletionError(ONLY_ACCOUNT_MESSAGE, 'only_account');
-	if (isSiteAdmin(db, me) && !others.some((o) => isSiteAdmin(db, o)))
-		return new AccountDeletionError(LAST_ADMIN_MESSAGE, 'last_admin');
+	if (await isSiteAdmin(db, me)) {
+		let other = false;
+		for (const o of others)
+			if (await isSiteAdmin(db, o)) {
+				other = true;
+				break;
+			}
+		if (!other) return new AccountDeletionError(LAST_ADMIN_MESSAGE, 'last_admin');
+	}
 	return null;
 }
 
@@ -282,12 +291,14 @@ export async function deleteAccount(db: Db, userId: string): Promise<DeletionRes
 	const result: DeletionResult = { deletedWorkspaces: [], leftChapters: [] };
 	let designIds: string[] = [];
 
-	db.transaction((tx) => {
-		const u = tx.select().from(user).where(eq(user.id, userId)).get();
+	await db.transaction(async (tx) => {
+		// Same lock as granting/revoking site admins: the last-admin check reads the whole admin set.
+		await advisoryLock(tx, 'site-admins');
+		const u = await first(tx.select().from(user).where(eq(user.id, userId)));
 		if (!u) throw new ApiError(404, 'Not found');
-		const site = siteBlock(tx as unknown as Db, userId);
+		const site = await siteBlock(tx, userId);
 		if (site) throw site;
-		const fates = planAccountDeletion(tx as unknown as Db, userId);
+		const fates = await planAccountDeletion(tx, userId);
 		const blocked = fates.filter((f) => f.fate === 'blocked').map((f) => f.name);
 		if (blocked.length) throw new ApiError(409, blockedMessage(blocked));
 
@@ -297,15 +308,15 @@ export async function deleteAccount(db: Db, userId: string): Promise<DeletionRes
 		result.leftChapters = leaving.map((f) => f.name);
 
 		// Studio drafts are the user's own sandbox, wherever they were made.
-		const myDrafts = tx
-			.select({ id: builds.id })
-			.from(builds)
-			.where(and(eq(builds.createdBy, userId), eq(builds.kind, 'draft')))
-			.all()
-			.map((b) => b.id);
+		const myDrafts = (
+			await tx
+				.select({ id: builds.id })
+				.from(builds)
+				.where(and(eq(builds.createdBy, userId), eq(builds.kind, 'draft')))
+		).map((b) => b.id);
 		// Builds that stay need a new creator; one with nobody to inherit it is removed.
 		const orphanIds: string[] = [];
-		const stay = tx
+		const stay = await tx
 			.select({ id: builds.id, orgId: builds.organizationId })
 			.from(builds)
 			.where(
@@ -319,73 +330,70 @@ export async function deleteAccount(db: Db, userId: string): Promise<DeletionRes
 							)
 						: undefined
 				)
-			)
-			.all();
+			);
 		const heirOf = new Map(leaving.map((f) => [f.orgId, f.heirId!]));
 		for (const b of stay) {
 			let heir = heirOf.get(b.orgId);
 			if (!heir) {
 				// A workspace the user no longer belongs to but still has builds in: any owner, else any member.
-				const rows = tx
-					.select({ userId: member.userId, role: member.role })
-					.from(member)
-					.where(eq(member.organizationId, b.orgId))
-					.orderBy(asc(member.createdAt), sql`rowid`)
-					.all()
-					.filter((r) => r.userId !== userId);
+				const rows = (
+					await tx
+						.select({ userId: member.userId, role: member.role })
+						.from(member)
+						.where(eq(member.organizationId, b.orgId))
+						.orderBy(asc(member.createdAt), asc(member.id))
+				).filter((r) => r.userId !== userId);
 				heir = (rows.find((r) => normalizeRole(r.role) === 'owner') ?? rows[0])?.userId;
 			}
-			if (heir) tx.update(builds).set({ createdBy: heir }).where(eq(builds.id, b.id)).run();
+			if (heir) await tx.update(builds).set({ createdBy: heir }).where(eq(builds.id, b.id));
 			else orphanIds.push(b.id);
 		}
 
 		// Files must be listed while the rows still exist.
-		plan = planFiles(tx as unknown as Db, {
+		plan = await planFiles(tx, {
 			orgIds: doomed.map((f) => f.orgId),
 			buildIds: [...myDrafts, ...orphanIds]
 		});
-		designIds = tx
-			.select({ id: colorDesigns.id })
-			.from(colorDesigns)
-			.where(eq(colorDesigns.authorUserId, userId))
-			.all()
-			.map((d) => d.id);
+		designIds = (
+			await tx
+				.select({ id: colorDesigns.id })
+				.from(colorDesigns)
+				.where(eq(colorDesigns.authorUserId, userId))
+		).map((d) => d.id);
 
-		repointBuildsOffTemplates(tx as unknown as Db, plan.templateIds);
-		deleteOwnedTemplates(
-			tx as unknown as Db,
+		await repointBuildsOffTemplates(tx, plan.templateIds);
+		await deleteOwnedTemplates(
+			tx,
 			plan.templateIds,
 			doomed.map((f) => f.orgId)
 		);
 		const doomedBuilds = [...myDrafts, ...orphanIds];
-		if (doomedBuilds.length) tx.delete(builds).where(inArray(builds.id, doomedBuilds)).run();
+		if (doomedBuilds.length) await tx.delete(builds).where(inArray(builds.id, doomedBuilds));
 		if (doomed.length)
-			tx.delete(organization)
-				.where(
-					inArray(
-						organization.id,
-						doomed.map((f) => f.orgId)
-					)
+			await tx.delete(organization).where(
+				inArray(
+					organization.id,
+					doomed.map((f) => f.orgId)
 				)
-				.run();
+			);
 		if (designIds.length)
-			tx.delete(colorDesigns).where(eq(colorDesigns.authorUserId, userId)).run();
+			await tx.delete(colorDesigns).where(eq(colorDesigns.authorUserId, userId));
 
 		const email = u.email.trim().toLowerCase();
-		tx.delete(invitation)
-			.where(or(eq(invitation.inviterId, userId), sql`lower(${invitation.email}) = ${email}`))
-			.run();
+		await tx
+			.delete(invitation)
+			.where(or(eq(invitation.inviterId, userId), sql`lower(${invitation.email}) = ${email}`));
 		// Better Auth keeps the address (or a token naming it) as the identifier.
-		tx.delete(verification)
+		await tx
+			.delete(verification)
 			.where(
 				or(
-					sql`instr(lower(${verification.identifier}), ${email}) > 0`,
+					sql`strpos(lower(${verification.identifier}), ${email}) > 0`,
 					like(verification.identifier, `%${userId}%`)
 				)
-			)
-			.run();
+			);
 		// Sessions, OAuth links and remaining memberships follow by ON DELETE CASCADE.
-		tx.delete(user).where(eq(user.id, userId)).run();
+		await tx.delete(user).where(eq(user.id, userId));
 	});
 
 	await removePlannedFiles(plan);
@@ -402,10 +410,10 @@ export const MAX_EXPORT_BYTES = 25 * 1024 * 1024;
  * The user's data as one JSON document: profile, memberships, saved designs and the builds in
  * their personal workspace (the build view minus kit data; photos by file name only).
  */
-export function exportAccountData(db: Db, userId: string): string {
-	const u = db.select().from(user).where(eq(user.id, userId)).get();
+export async function exportAccountData(db: DbOrTx, userId: string): Promise<string> {
+	const u = await first(db.select().from(user).where(eq(user.id, userId)));
 	if (!u) throw new ApiError(404, 'Not found');
-	const orgs = db
+	const orgs = await db
 		.select({
 			id: organization.id,
 			name: organization.name,
@@ -417,24 +425,22 @@ export function exportAccountData(db: Db, userId: string): string {
 		.from(member)
 		.innerJoin(organization, eq(organization.id, member.organizationId))
 		.where(eq(member.userId, userId))
-		.orderBy(asc(organization.name))
-		.all();
+		.orderBy(asc(organization.name), asc(organization.id));
 	const mine = orgs.find((o) => {
 		const m = parseMetadata(o.metadata);
 		return m.personal === true && m.userId === userId;
 	});
 
 	const buildRows = mine
-		? db
+		? await db
 				.select({ id: builds.id, kind: builds.kind })
 				.from(builds)
 				.where(eq(builds.organizationId, mine.id))
-				.orderBy(asc(builds.createdAt), sql`rowid`)
-				.all()
+				.orderBy(asc(builds.createdAt), asc(builds.id))
 		: [];
 	const files = new Map<string, string>();
 	if (buildRows.length)
-		for (const p of db
+		for (const p of await db
 			.select({ id: buildPhotos.id, path: buildPhotos.path })
 			.from(buildPhotos)
 			.where(
@@ -442,37 +448,35 @@ export function exportAccountData(db: Db, userId: string): string {
 					buildPhotos.buildId,
 					buildRows.map((b) => b.id)
 				)
-			)
-			.all())
+			))
 			files.set(p.id, basename(p.path));
 
-	const exportedBuilds = buildRows.flatMap((b) => {
-		const v = loadBuildView(db, b.id, userId);
-		if (!v) return [];
-		return [
-			{
-				kind: b.kind,
-				build: v.build,
-				filaments: v.filaments,
-				variantChoices: v.variantChoices,
-				state: v.state,
-				plates: v.plates,
-				runs: v.runs,
-				activity: v.activity,
-				assembly: v.assembly,
-				handoff: v.handoff,
-				printer: v.printer,
-				photos: v.photos.map((p) => ({
-					fileName: files.get(p.id) ?? null,
-					kind: p.kind,
-					caption: p.caption,
-					createdAt: p.createdAt
-				}))
-			}
-		];
-	});
+	const exportedBuilds = [];
+	for (const b of buildRows) {
+		const v = await loadBuildView(db, b.id, userId);
+		if (!v) continue;
+		exportedBuilds.push({
+			kind: b.kind,
+			build: v.build,
+			filaments: v.filaments,
+			variantChoices: v.variantChoices,
+			state: v.state,
+			plates: v.plates,
+			runs: v.runs,
+			activity: v.activity,
+			assembly: v.assembly,
+			handoff: v.handoff,
+			printer: v.printer,
+			photos: v.photos.map((p) => ({
+				fileName: files.get(p.id) ?? null,
+				kind: p.kind,
+				caption: p.caption,
+				createdAt: p.createdAt
+			}))
+		});
+	}
 
-	const designs = db
+	const designs = await db
 		.select({
 			name: colorDesigns.name,
 			roles: colorDesigns.roles,
@@ -481,10 +485,9 @@ export function exportAccountData(db: Db, userId: string): string {
 			createdAt: colorDesigns.createdAt
 		})
 		.from(colorDesigns)
-		.where(eq(colorDesigns.authorUserId, userId))
-		.all();
+		.where(eq(colorDesigns.authorUserId, userId));
 	const filamentsOwn = mine
-		? db
+		? await db
 				.select({
 					brand: customFilaments.brand,
 					material: customFilaments.material,
@@ -493,7 +496,6 @@ export function exportAccountData(db: Db, userId: string): string {
 				})
 				.from(customFilaments)
 				.where(eq(customFilaments.organizationId, mine.id))
-				.all()
 		: [];
 
 	const json = JSON.stringify(

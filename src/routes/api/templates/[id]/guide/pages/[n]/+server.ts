@@ -40,11 +40,11 @@ async function readBounded(request: Request, max: number): Promise<Uint8Array> {
  */
 export const POST: RequestHandler = (event) =>
 	respond(async () => {
-		const userId = requireAdminForTemplate(event, event.params.id);
+		const userId = await requireAdminForTemplate(event, event.params.id);
 		const db = getDb();
-		const release = acquireUploadSlot(db, event.locals.user!);
+		const release = await acquireUploadSlot(db, event.locals.user!);
 		try {
-			admitKitUpload(db, userId, event.params.id);
+			await admitKitUpload(db, userId, event.params.id);
 			const declared = Number(event.request.headers.get('content-length') ?? '');
 			if (Number.isFinite(declared) && declared > MAX_GUIDE_PAGE_BYTES)
 				throw new ApiError(413, 'The page image is larger than 3 MB');
@@ -58,7 +58,7 @@ export const POST: RequestHandler = (event) =>
 /** Site admin: the uploaded PDF page image (for the mapping preview). */
 export const GET: RequestHandler = async (event) => {
 	try {
-		requireAdminForTemplate(event, event.params.id);
+		await requireAdminForTemplate(event, event.params.id);
 		const f = await readUploadedPdfPage(event.params.id, event.params.n);
 		return new Response(f.bytes as Uint8Array<ArrayBuffer>, {
 			headers: { 'content-type': f.type, 'cache-control': 'private, no-cache', etag: f.etag }

@@ -14,7 +14,8 @@ import {
 } from '#lib/domain/print-footprint.ts';
 import { bounds, convexHull, type Pt } from '#lib/domain/geom2d.ts';
 import { uploadsDir } from '../config';
-import type { Db } from '../db';
+import type { DbOrTx } from '../db';
+import { first } from '../db';
 import { templatePrintGeometry } from '../db/schema';
 import { SEED_NOTE } from '../seed/run';
 import type { ExtractedGroup, ExtractedPart } from './extract';
@@ -39,12 +40,12 @@ function removeMeshFiles(templateId: string, fp: PrintFootprint | undefined) {
  * earlier import of that slug). The piece with the largest footprint is piece 0 and
  * fills the row's `hull`, `height`, `tris` and `settings`.
  */
-export function storeExtractedParts(
-	db: Db,
+export async function storeExtractedParts(
+	db: DbOrTx,
 	templateId: string,
 	parts: ExtractedPart[],
 	note: string
-): number {
+): Promise<number> {
 	let n = 0;
 	for (const part of parts) {
 		if (!safeSlug(part.slug)) continue;
@@ -52,16 +53,17 @@ export function storeExtractedParts(
 			(a, b) =>
 				b.geometry.w * b.geometry.d - a.geometry.w * a.geometry.d || a.name.localeCompare(b.name)
 		);
-		const old = db
-			.select({ footprint: templatePrintGeometry.footprint })
-			.from(templatePrintGeometry)
-			.where(
-				and(
-					eq(templatePrintGeometry.templateId, templateId),
-					eq(templatePrintGeometry.slug, part.slug)
+		const old = await first(
+			db
+				.select({ footprint: templatePrintGeometry.footprint })
+				.from(templatePrintGeometry)
+				.where(
+					and(
+						eq(templatePrintGeometry.templateId, templateId),
+						eq(templatePrintGeometry.slug, part.slug)
+					)
 				)
-			)
-			.get();
+		);
 		removeMeshFiles(templateId, old?.footprint as unknown as PrintFootprint | undefined);
 		mkdirSync(printDir(templateId), { recursive: true });
 		const fp: PrintFootprint = {
@@ -113,13 +115,13 @@ export function storeExtractedParts(
 			sourceNote: note,
 			updatedAt: new Date()
 		};
-		db.insert(templatePrintGeometry)
+		await db
+			.insert(templatePrintGeometry)
 			.values({ templateId, slug: part.slug, ...row })
 			.onConflictDoUpdate({
 				target: [templatePrintGeometry.templateId, templatePrintGeometry.slug],
 				set: row
-			})
-			.run();
+			});
 		n++;
 	}
 	return n;
@@ -202,23 +204,23 @@ function silOf(mesh: { positions: ArrayLike<number>; indices: ArrayLike<number> 
 }
 
 /** Remove all imported geometry of a template (meshes and rows); seed rows stay. */
-export function clearImportedGeometry(db: Db, templateId: string): number {
-	const rows = db
-		.select()
-		.from(templatePrintGeometry)
-		.where(eq(templatePrintGeometry.templateId, templateId))
-		.all()
-		.filter((r) => r.sourceNote !== SEED_NOTE);
+export async function clearImportedGeometry(db: DbOrTx, templateId: string): Promise<number> {
+	const rows = (
+		await db
+			.select()
+			.from(templatePrintGeometry)
+			.where(eq(templatePrintGeometry.templateId, templateId))
+	).filter((r) => r.sourceNote !== SEED_NOTE);
 	for (const r of rows) {
 		removeMeshFiles(templateId, r.footprint as unknown as PrintFootprint);
-		db.delete(templatePrintGeometry)
+		await db
+			.delete(templatePrintGeometry)
 			.where(
 				and(
 					eq(templatePrintGeometry.templateId, templateId),
 					eq(templatePrintGeometry.slug, r.slug)
 				)
-			)
-			.run();
+			);
 	}
 	return rows.length;
 }
@@ -234,14 +236,17 @@ export function readPieceMesh(templateId: string, meshName: string): PrintMesh {
  * they existed or with an older version. Limited to `slugs` when given
  * (the diagram only needs the parts on the plates). Returns the number of pieces computed.
  */
-export function ensureSilhouettes(db: Db, templateId: string, slugs?: Iterable<string>): number {
+export async function ensureSilhouettes(
+	db: DbOrTx,
+	templateId: string,
+	slugs?: Iterable<string>
+): Promise<number> {
 	const only = slugs ? new Set(slugs) : null;
 	let n = 0;
-	const rows = db
+	const rows = await db
 		.select()
 		.from(templatePrintGeometry)
-		.where(eq(templatePrintGeometry.templateId, templateId))
-		.all();
+		.where(eq(templatePrintGeometry.templateId, templateId));
 	for (const r of rows) {
 		if (only && !only.has(r.slug)) continue;
 		const fp = r.footprint as unknown as PrintFootprint;
@@ -260,15 +265,15 @@ export function ensureSilhouettes(db: Db, templateId: string, slugs?: Iterable<s
 			}
 		}
 		if (changed)
-			db.update(templatePrintGeometry)
+			await db
+				.update(templatePrintGeometry)
 				.set({ footprint: fp as unknown as Record<string, unknown> })
 				.where(
 					and(
 						eq(templatePrintGeometry.templateId, templateId),
 						eq(templatePrintGeometry.slug, r.slug)
 					)
-				)
-				.run();
+				);
 	}
 	return n;
 }

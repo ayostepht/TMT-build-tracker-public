@@ -12,12 +12,12 @@ import { convertStepZip } from '../models/convert';
 import { templateModels } from '../db/schema';
 import { templateModelPath } from '../config';
 import { findTemplate, importFiles, initDb, listPrintGeometry } from '../print-geometry/import-cli';
-import { openDb, type Db } from '../db';
+import { closeDb, openDb, type Db } from '../db';
 
 export { buildKitPack } from './build';
 export { addModelNodeFrom3mf, applyProjectSettings } from './model-node';
 export { installKitPacks } from './install';
-export { findTemplate, importFiles, initDb, listPrintGeometry, openDb };
+export { closeDb, findTemplate, importFiles, initDb, listPrintGeometry, openDb };
 export type { Db };
 
 /** Convert a STEP zip into the template's GLB and register it (what the kit admin upload does). */

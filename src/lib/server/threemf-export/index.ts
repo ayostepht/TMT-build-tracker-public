@@ -12,7 +12,7 @@ import { ApiError } from '../access';
 import { buildArrangement } from '../builds/plates';
 import { loadFootprints, planArrangement } from '../builds/arrange-plan';
 import { loadBuildView } from '../builds/view';
-import type { Db } from '../db';
+import type { DbOrTx } from '../db';
 import { printDir, readPieceMesh } from '../print-geometry/store';
 import {
 	buildExportPlan,
@@ -59,20 +59,20 @@ export function parsePlates(v: string | null | undefined): number[] | undefined 
 }
 
 /** Resolve the plan for a build: access check, arrangement, geometry. Throws ApiError. */
-export function prepareExport(
-	db: Db,
+export async function prepareExport(
+	db: DbOrTx,
 	buildId: string,
 	userId: string,
 	opts: ExportOptions
-): PreparedExport {
-	const loaded = loadBuildView(db, buildId, userId);
+): Promise<PreparedExport> {
+	const loaded = await loadBuildView(db, buildId, userId);
 	if (!loaded) throw new ApiError(404, 'Not found');
 	// a built-in MakeGood layout stands for its bed when the build has no printer of its own
 	const view = loaded.printer ? loaded : { ...loaded, printer: loaded.layoutPrinter ?? null };
 	if (!view.printer)
 		throw new ApiError(400, 'Choose a printer first (Print tab) so the export knows your bed.');
-	const footprints = loadFootprints(db, view.build.templateId);
-	const info = buildArrangement(db, buildId, userId);
+	const footprints = await loadFootprints(db, view.build.templateId);
+	const info = await buildArrangement(db, buildId, userId);
 	const notes: ExportWarning[] = [];
 	let plates: ArrangedPlate[] = info.plates;
 	// Arrangements stored before the 3D re-orientation code was removed may still carry a
@@ -132,13 +132,13 @@ export function prepareExport(
 }
 
 /** Everything the UI shows before download. Never throws for "no geometry"; `ready` says so. */
-export function previewExport(
-	db: Db,
+export async function previewExport(
+	db: DbOrTx,
 	buildId: string,
 	userId: string,
 	opts: ExportOptions
-): ExportPreview {
-	const { plan } = prepareExport(db, buildId, userId, opts);
+): Promise<ExportPreview> {
+	const { plan } = await prepareExport(db, buildId, userId, opts);
 	const objectOf = new Map(plan.objects.map((o) => [o.id, o]));
 	return {
 		flavor: plan.flavor,
@@ -226,13 +226,13 @@ export function exportFilename(plan: ExportPlan): string {
 }
 
 /** Stream the export of a build; throws ApiError (400 without a printer, 409 without geometry). */
-export function exportBuild3mf(
-	db: Db,
+export async function exportBuild3mf(
+	db: DbOrTx,
 	buildId: string,
 	userId: string,
 	opts: ExportOptions
-): ExportResult {
-	const prepared = prepareExport(db, buildId, userId, opts);
+): Promise<ExportResult> {
+	const prepared = await prepareExport(db, buildId, userId, opts);
 	const { plan } = prepared;
 	if (!plan.plates.length)
 		throw new ApiError(

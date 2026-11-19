@@ -11,9 +11,9 @@ import type { RequestHandler } from './$types';
 /** Streams the optional hardware GLB. Signed-in users only; the URL carries `?v=`, so it is cached for a year. */
 export const GET: RequestHandler = async ({ params, locals, request }) => {
 	if (!locals.user) error(401, 'Sign in required');
-	if (!/^[A-Za-z0-9_-]+$/.test(params.id)) error(404, 'Not found');
+	if (!/^[A-Za-z0-9_-]+$/.test(params.id))) error(404, 'Not found');
 	// Another workspace's kit copy is not readable (404, same as a missing file).
-	if (!canViewTemplate(getDb(), locals.user, params.id)) error(404, 'Not found');
+	if (!(await canViewTemplate(getDb(), locals.user, params.id))) error(404, 'Not found');
 	const path = templateHardwarePath(params.id);
 	let size: number;
 	let mtimeMs: number;

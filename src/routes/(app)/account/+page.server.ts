@@ -1,5 +1,5 @@
 import { fail, redirect } from '@sveltejs/kit';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, count, eq } from 'drizzle-orm';
 import { ApiError } from '#lib/server/access.ts';
 import {
 	AccountDeletionError,
@@ -11,20 +11,23 @@ import { getAuth } from '#lib/server/auth-instance.ts';
 import { isPublicMode } from '#lib/server/config.ts';
 import { isSiteAdmin } from '#lib/server/access.ts';
 import { grantSiteAdmin, listSiteAdmins, revokeSiteAdmin } from '#lib/server/site-admins.ts';
-import { getDb } from '#lib/server/db/index.ts';
+import { first, getDb } from '#lib/server/db/index.ts';
 import { account, builds } from '#lib/server/db/schema.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /** Without a password to type (SSO), the session must be this young to delete an account. */
 const FRESH_SESSION_MS = 10 * 60 * 1000;
 
-function passwordHash(userId: string): string | null {
+async function passwordHash(userId: string): Promise<string | null> {
 	return (
-		getDb()
-			.select({ password: account.password })
-			.from(account)
-			.where(and(eq(account.userId, userId), eq(account.providerId, 'credential')))
-			.get()?.password ?? null
+		(
+			await first(
+				getDb()
+					.select({ password: account.password })
+					.from(account)
+					.where(and(eq(account.userId, userId), eq(account.providerId, 'credential')))
+			)
+		)?.password ?? null
 	);
 }
 
@@ -51,25 +54,25 @@ function noteFailure(userId: string) {
 	else f.n++;
 }
 
-export const load: PageServerLoad = ({ locals }) => {
+export const load: PageServerLoad = async ({ locals }) => {
 	const u = locals.user!;
 	const db = getDb();
-	const fates = planAccountDeletion(db, u.id);
+	const fates = await planAccountDeletion(db, u.id);
 	const personal = fates.find((f) => f.fate === 'personal');
 	const personalBuilds = personal
-		? (db
-				.select({ n: sql<number>`count(*)` })
-				.from(builds)
-				.where(eq(builds.organizationId, personal.orgId))
-				.get()?.n ?? 0)
+		? ((
+				await first(
+					db.select({ n: count() }).from(builds).where(eq(builds.organizationId, personal.orgId))
+				)
+			)?.n ?? 0)
 		: 0;
-	const usesPassword = !isPublicMode() && passwordHash(u.id) !== null;
-	const site = siteBlock(db, u.id);
-	const isAdmin = isSiteAdmin(db, u);
+	const usesPassword = !isPublicMode() && (await passwordHash(u.id)) !== null;
+	const site = await siteBlock(db, u.id);
+	const isAdmin = await isSiteAdmin(db, u);
 	return {
 		isAdmin,
 		/** Site admins and where each role comes from; only site admins get the list. */
-		siteAdmins: isAdmin ? listSiteAdmins(db, u) : [],
+		siteAdmins: isAdmin ? await listSiteAdmins(db, u) : [],
 		/** `last_admin`, `only_account` or null: refused for site-wide reasons. */
 		siteBlock: site?.code ?? null,
 		siteBlockMessage: site?.message ?? null,
@@ -90,7 +93,7 @@ export const actions: Actions = {
 		if (!locals.user) redirect(303, '/login');
 		const id = String((await request.formData()).get('userId') ?? '');
 		try {
-			grantSiteAdmin(getDb(), locals.user, id);
+			await grantSiteAdmin(getDb(), locals.user, id);
 		} catch (e) {
 			if (e instanceof ApiError) return fail(e.status, { adminError: e.message });
 			throw e;
@@ -101,7 +104,7 @@ export const actions: Actions = {
 		if (!locals.user) redirect(303, '/login');
 		const id = String((await request.formData()).get('userId') ?? '');
 		try {
-			revokeSiteAdmin(getDb(), locals.user, id);
+			await revokeSiteAdmin(getDb(), locals.user, id);
 		} catch (e) {
 			if (e instanceof ApiError) return fail(e.status, { adminError: e.message });
 			throw e;
@@ -118,7 +121,7 @@ export const actions: Actions = {
 		if (typed !== u.email.trim().toLowerCase())
 			return fail(400, { error: 'Type your account email exactly as shown to confirm.' });
 
-		const hash = isPublicMode() ? null : passwordHash(u.id);
+		const hash = isPublicMode() ? null : await passwordHash(u.id);
 		if (hash) {
 			if (tooManyAttempts(u.id))
 				return fail(429, { error: 'Too many wrong passwords. Wait a few minutes and try again.' });

@@ -438,8 +438,8 @@ describe('quotas', () => {
 });
 
 describe('linkPrintersPerWorkspace', () => {
-	it('is unlimited self-hosted, 3 in public mode, and configurable', async () => {
-		expect((await load()).linkPrintersPerWorkspace()).toBeNull();
+	it('defaults to 3 in every mode, and is configurable', async () => {
+		expect((await load()).linkPrintersPerWorkspace()).toBe(3);
 		expect((await load({ TMT_MODE: 'public' })).linkPrintersPerWorkspace()).toBe(3);
 		expect(
 			(
@@ -459,10 +459,10 @@ describe('linkPrintersPerWorkspace', () => {
 });
 
 describe('link printer totals and manual printer cap', () => {
-	it('defaults: 200 link printers instance-wide and 10 manual per workspace in public mode only', async () => {
+	it('defaults: 200 link printers instance-wide and 10 manual per workspace in every mode', async () => {
 		const sh = await load();
-		expect(sh.linkPrintersTotal()).toBeNull();
-		expect(sh.manualPrintersPerWorkspace()).toBeNull();
+		expect(sh.linkPrintersTotal()).toBe(200);
+		expect(sh.manualPrintersPerWorkspace()).toBe(10);
 		const pub = await load({ TMT_MODE: 'public' });
 		expect(pub.linkPrintersTotal()).toBe(200);
 		expect(pub.manualPrintersPerWorkspace()).toBe(10);

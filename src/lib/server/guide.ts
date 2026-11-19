@@ -3,7 +3,7 @@ import { join, resolve, sep } from 'node:path';
 import { and, asc, eq } from 'drizzle-orm';
 import { ApiError } from './access';
 import { uploadsDir } from './config';
-import type { Db } from './db';
+import { first, type DbOrTx } from './db';
 import { templateGuidePages } from './db/schema';
 import { assertUploadRoom } from './quota';
 import { templateOwnerOrg } from './templates/kit-upload';
@@ -57,7 +57,7 @@ export async function saveGuidePage(
 	templateId: string,
 	n: unknown,
 	bytes: Uint8Array,
-	quota?: { db: Db; userId: string }
+	quota?: { db: DbOrTx; userId: string }
 ): Promise<{ pdfPage: number; size: number }> {
 	const pdfPage = parsePage(n);
 	if (bytes.length === 0) throw new ApiError(400, 'The page image is empty');
@@ -71,7 +71,7 @@ export async function saveGuidePage(
 	if (!old && existing.size >= MAX_GUIDE_PAGES)
 		throw new ApiError(409, `A guide can hold at most ${MAX_GUIDE_PAGES} page images`);
 	if (quota) {
-		const orgId = templateOwnerOrg(quota.db, templateId);
+		const orgId = await templateOwnerOrg(quota.db, templateId);
 		if (orgId) {
 			let oldBytes = 0;
 			if (old)
@@ -81,7 +81,7 @@ export async function saveGuidePage(
 					/* vanished */
 				}
 			const delta = clean.length - oldBytes;
-			if (delta > 0) assertUploadRoom(quota.db, orgId, delta, { userId: quota.userId });
+			if (delta > 0) await assertUploadRoom(quota.db, orgId, delta, { userId: quota.userId });
 		}
 	}
 	await mkdir(guideDir(templateId), { recursive: true });
@@ -99,18 +99,17 @@ export interface GuideStatus {
 	pages: { page: number; title: string; pdfPage: number | null }[];
 }
 
-export async function guideStatus(db: Db, templateId: string): Promise<GuideStatus> {
+export async function guideStatus(db: DbOrTx, templateId: string): Promise<GuideStatus> {
 	const uploaded = [...(await uploadedFiles(templateId)).keys()].sort((a, b) => a - b);
-	const pages = db
+	const rows = await db
 		.select()
 		.from(templateGuidePages)
 		.where(eq(templateGuidePages.templateId, templateId))
-		.orderBy(asc(templateGuidePages.sort))
-		.all()
-		.map((g) => {
-			const m = g.imagePath ? /\/(\d+)\.(?:webp|jpg|png)$/.exec(g.imagePath) : null;
-			return { page: g.page, title: g.title, pdfPage: m ? Number(m[1]) : null };
-		});
+		.orderBy(asc(templateGuidePages.sort));
+	const pages = rows.map((g) => {
+		const m = g.imagePath ? /\/(\d+)\.(?:webp|jpg|png)$/.exec(g.imagePath) : null;
+		return { page: g.page, title: g.title, pdfPage: m ? Number(m[1]) : null };
+	});
 	return { uploaded, pages };
 }
 
@@ -118,17 +117,21 @@ export async function guideStatus(db: Db, templateId: string): Promise<GuideStat
  * Point guide pages at uploaded images: `{ "<our page>": <pdf page> | null }`. Unknown guide pages and
  * pdf pages that were never uploaded are rejected; null clears the image. Returns how many pages changed.
  */
-export async function setGuideMapping(db: Db, templateId: string, map: unknown): Promise<number> {
+export async function setGuideMapping(
+	db: DbOrTx,
+	templateId: string,
+	map: unknown
+): Promise<number> {
 	if (typeof map !== 'object' || map === null || Array.isArray(map))
 		throw new ApiError(400, 'map must be an object of page numbers');
 	const files = await uploadedFiles(templateId);
 	const known = new Set(
-		db
-			.select({ page: templateGuidePages.page })
-			.from(templateGuidePages)
-			.where(eq(templateGuidePages.templateId, templateId))
-			.all()
-			.map((g) => g.page)
+		(
+			await db
+				.select({ page: templateGuidePages.page })
+				.from(templateGuidePages)
+				.where(eq(templateGuidePages.templateId, templateId))
+		).map((g) => g.page)
 	);
 	const plan: [number, string | null][] = [];
 	for (const [k, v] of Object.entries(map)) {
@@ -144,24 +147,24 @@ export async function setGuideMapping(db: Db, templateId: string, map: unknown):
 		if (!file) throw new ApiError(400, `PDF page ${pdfPage} has not been uploaded`);
 		plan.push([page, `guide/${templateId}/${file}`]);
 	}
-	db.transaction((tx) => {
+	await db.transaction(async (tx) => {
 		for (const [page, imagePath] of plan)
-			tx.update(templateGuidePages)
+			await tx
+				.update(templateGuidePages)
 				.set({ imagePath })
 				.where(
 					and(eq(templateGuidePages.templateId, templateId), eq(templateGuidePages.page, page))
-				)
-				.run();
+				);
 	});
 	return plan.length;
 }
 
 /** Forget every imported guide image (files and mappings). */
-export async function clearGuide(db: Db, templateId: string): Promise<void> {
-	db.update(templateGuidePages)
+export async function clearGuide(db: DbOrTx, templateId: string): Promise<void> {
+	await db
+		.update(templateGuidePages)
 		.set({ imagePath: null })
-		.where(eq(templateGuidePages.templateId, templateId))
-		.run();
+		.where(eq(templateGuidePages.templateId, templateId));
 	await rm(guideDir(templateId), { recursive: true, force: true });
 }
 
@@ -187,12 +190,17 @@ async function readFileInfo(rel: string): Promise<GuideFile> {
 }
 
 /** The image of one of our guide pages (any signed-in user). */
-export async function readGuidePage(db: Db, templateId: string, page: number): Promise<GuideFile> {
-	const row = db
-		.select({ imagePath: templateGuidePages.imagePath })
-		.from(templateGuidePages)
-		.where(and(eq(templateGuidePages.templateId, templateId), eq(templateGuidePages.page, page)))
-		.get();
+export async function readGuidePage(
+	db: DbOrTx,
+	templateId: string,
+	page: number
+): Promise<GuideFile> {
+	const row = await first(
+		db
+			.select({ imagePath: templateGuidePages.imagePath })
+			.from(templateGuidePages)
+			.where(and(eq(templateGuidePages.templateId, templateId), eq(templateGuidePages.page, page)))
+	);
 	if (!row?.imagePath) throw new ApiError(404, 'Not found');
 	return readFileInfo(row.imagePath);
 }

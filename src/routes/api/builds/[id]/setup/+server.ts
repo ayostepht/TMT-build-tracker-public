@@ -5,6 +5,7 @@ import type { RequestHandler } from './$types';
 
 /** Setup wizard progress: `{ step: 1..5 | null }` (null = finished). */
 export const PATCH: RequestHandler = (event) =>
-	respond(async () =>
-		setSetupStep(getDb(), event.params.id, requireUserId(event), await readJson(event))
+	respond(
+		async () =>
+			await setSetupStep(getDb(), event.params.id, requireUserId(event), await readJson(event))
 	);

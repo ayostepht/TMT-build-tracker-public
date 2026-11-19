@@ -17,12 +17,12 @@ import {
 	setResolver,
 	type ResolvedTarget
 } from './outbound';
-import { openDb, runMigrations } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import { organization, user } from '../db/schema';
 import { createPrinter, toPublic, updatePrinter } from './store';
 import { testConnection } from './supervisor';
 
-afterEach(() => setResolver(null));
+afterEach(async () => setResolver(null));
 
 const HOST = 'shared-testtoken12345678.octoeverywhere.com';
 const fake = (map: Record<string, string[]>) => async (h: string) => {
@@ -45,8 +45,8 @@ describe('only an OctoEverywhere link host is ever a destination', () => {
 		const asked = noDns();
 		expect(() => assertOutboundAllowed()).toThrow(OutboundError);
 		expect(() => assertOutboundAllowed()).toThrow(LINK_ONLY_MESSAGE);
-		await expect(resolveAllowed(HOST)).rejects.toThrow(LINK_ONLY_MESSAGE);
-		await expect(guardedFetch(`https://${HOST}/api/job`)).rejects.toThrow(LINK_ONLY_MESSAGE);
+		(await expect(resolveAllowed(HOST))).rejects.toThrow(LINK_ONLY_MESSAGE);
+		(await expect(guardedFetch(`https://${HOST}/api/job`))).rejects.toThrow(LINK_ONLY_MESSAGE);
 		expect(asked).toEqual([]);
 	});
 
@@ -62,11 +62,11 @@ describe('only an OctoEverywhere link host is ever a destination', () => {
 		['octoeverywhere.com']
 	])('refuses %s even when a link is allowed, with no DNS lookup', async (host) => {
 		const asked = noDns();
-		await expect(resolveAllowed(host, undefined, { allowShareLink: true })).rejects.toThrow(
+		(await expect(resolveAllowed(host, undefined, { allowShareLink: true }))).rejects.toThrow(
 			LINK_ONLY_MESSAGE
 		);
-		await expect(
-			guardedFetch(`https://${host}/x`, { allowShareLink: true } as RequestInit)
+		(
+			await expect(guardedFetch(`https://${host}/x`, { allowShareLink: true } as RequestInit))
 		).rejects.toBeInstanceOf(OutboundError);
 		expect(asked).toEqual([]);
 	});
@@ -74,7 +74,7 @@ describe('only an OctoEverywhere link host is ever a destination', () => {
 	it('a link is reached over https on the default port only', async () => {
 		noDns();
 		for (const u of [`http://${HOST}/x`, `https://${HOST}:8443/x`])
-			await expect(guardedFetch(u, { allowShareLink: true } as RequestInit)).rejects.toThrow(
+			(await expect(guardedFetch(u, { allowShareLink: true } as RequestInit))).rejects.toThrow(
 				/default port/
 			);
 	});
@@ -108,12 +108,11 @@ describe('only an OctoEverywhere link host is ever a destination', () => {
 		expect(asked).toEqual([]);
 	});
 
-	it('a saved row with no link shows why it is never connected', () => {
-		const db = openDb(':memory:');
-		runMigrations(db);
-		db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' }).run();
-		db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() }).run();
-		const row = createPrinter(db, 'o', 'u1', {
+	it('a saved row with no link shows why it is never connected', async () => {
+		const db = await createTestDb();
+		await db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' });
+		await db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() });
+		const row = await createPrinter(db, 'o', 'u1', {
 			name: 'Shop',
 			kind: 'moonraker',
 			secrets: { shareLink: `https://${HOST}` }
@@ -124,7 +123,7 @@ describe('only an OctoEverywhere link host is ever a destination', () => {
 		const legacy = { ...row, host: '192.168.0.9', secretEnc: null };
 		expect(toPublic(legacy).blocked).toBe(LINK_ONLY_MESSAGE);
 		// pausing and renaming it still work; anything else needs a link
-		expect(updatePrinter(db, row.id, 'o', { name: 'Renamed' }).name).toBe('Renamed');
+		expect((await updatePrinter(db, row.id, 'o', { name: 'Renamed' })).name).toBe('Renamed');
 	});
 });
 
@@ -158,7 +157,7 @@ describe('fetchPinned', () => {
 		await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
 		port = (srv.address() as AddressInfo).port;
 	});
-	afterEach(() => new Promise<void>((r) => srv.close(() => r())));
+	afterEach(async () => new Promise<void>((r) => srv.close(() => r())));
 
 	it('connects to the validated address and keeps the name in the Host header', async () => {
 		const res = await go('/api/job', { headers: { 'x-api-key': 'KEY' } });
@@ -173,20 +172,22 @@ describe('fetchPinned', () => {
 		expect(hits).toHaveLength(1); // only the original request
 	});
 	it('refuses non-text request bodies and caps JSON bodies', async () => {
-		await expect(
-			go('/', { method: 'POST', body: new Uint8Array(2) as never })
+		(
+			await expect(go('/', { method: 'POST', body: new Uint8Array(2) as never }))
 		).rejects.toBeInstanceOf(OutboundError);
 		const res = await go('/big');
-		await expect(readJsonCapped(res, 100)).rejects.toThrow();
+		(await expect(readJsonCapped(res, 100))).rejects.toThrow();
 	});
 
 	describe('redirects are failures on every path', () => {
 		it('camera', async () => {
 			const sig = new AbortController().signal;
-			const err = await openUpstream(`http://printer.lan:${port}/redirect`, 'printer.lan', sig, {
-				connectTimeoutMs: 2000,
-				fetchFn: ((u: string | URL) => fetchPinned(new URL(String(u)), target)) as typeof fetch
-			}).catch((e) => e);
+			const err = (
+				await openUpstream(`http://printer.lan:${port}/redirect`, 'printer.lan', sig, {
+					connectTimeoutMs: 2000,
+					fetchFn: ((u: string | URL) => fetchPinned(new URL(String(u)), target)) as typeof fetch
+				})
+			).catch((e) => e);
 			expect(err).toBeInstanceOf(CameraError);
 			expect(String(err.message)).toMatch(/redirected/);
 			expect(hits).toHaveLength(1);
@@ -198,19 +199,21 @@ describe('fetchPinned', () => {
 describe('resolveAllowed for a link host', () => {
 	it('every answer must be public; one inward answer refuses the host', async () => {
 		for (const bad of ['10.0.0.1', '169.254.169.254', '127.0.0.1', 'fd00::5'])
-			await expect(
-				resolveAllowed(HOST, fake({ [HOST]: ['93.184.216.34', bad] }), { allowShareLink: true })
+			(
+				await expect(
+					resolveAllowed(HOST, fake({ [HOST]: ['93.184.216.34', bad] }), { allowShareLink: true })
+				)
 			).rejects.toThrow(/public address/);
 	});
 	it('an unknown link name fails without echoing the link', async () => {
-		const err = await resolveAllowed(HOST, fake({}), { allowShareLink: true }).catch((e) => e);
+		const err = (await resolveAllowed(HOST, fake({}), { allowShareLink: true })).catch((e) => e);
 		expect(err).toBeInstanceOf(OutboundError);
 		expect(String(err.message)).not.toContain('testtoken');
 	});
 });
 
 describe('safeText', () => {
-	it('strips control characters, collapses space and caps length', () => {
+	it('strips control characters, collapses space and caps length', async () => {
 		expect(safeText('a\u0000b\r\nc\u0007d')).toBe('a b c d');
 		expect(safeText('x'.repeat(500), 50)).toHaveLength(50);
 		expect(safeText(42)).toBe('');

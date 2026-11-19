@@ -1,13 +1,9 @@
 // Seeds the preview through the app's own HTTP API (sign-up, chapter, builds, runs, printer),
-// the way the e2e helpers do it, with invented people and data only. Safe to call on every
+// the way the e2e helpers do it, with invented people and data only (one manual printer, no live
+// printer connection). Safe to call on every
 // start: it does nothing when the demo account already exists.
-import { createRequire } from 'node:module';
+import postgres from 'postgres';
 import { crc32, deflateSync } from 'node:zlib';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-
 export const DEMO = {
 	// Throwaway, used only by the preview server. Not a real secret.
 	secret: 'preview-demo-throwaway-8f3a91c7d2e45b60',
@@ -17,8 +13,7 @@ export const DEMO = {
 	editorEmail: 'demo.editor@example.com',
 	password: 'preview-demo-pass',
 	chapter: 'Demo Chapter',
-	printerName: 'Demo printer',
-	activeFile: 'demo-chair-a-plate.gcode.3mf'
+	printerName: 'Demo printer'
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -108,15 +103,13 @@ const today = (daysAgo = 0) => {
 	return d.toISOString().slice(0, 10);
 };
 
-function templateIdFromDb(dataFile) {
-	const require = createRequire(join(root, 'package.json'));
-	const Database = require('better-sqlite3');
-	const db = new Database(dataFile, { readonly: true, fileMustExist: true });
+async function templateIdFromDb(databaseUrl) {
+	const sql = postgres(databaseUrl, { prepare: false, max: 1 });
 	try {
-		const row = db.prepare('select id from templates order by created_at limit 1').get();
+		const [row] = await sql`select id from templates order by created_at limit 1`;
 		return row?.id;
 	} finally {
-		db.close();
+		await sql.end({ timeout: 5 });
 	}
 }
 
@@ -132,11 +125,10 @@ async function until(what, fn, ms = 40_000) {
 }
 
 /**
- * Seeds when the demo account is missing; always makes sure the simulated printer points at the
- * running mock. `mock` is the repo's MockSdcp, `dataFile` the preview database (read once, to find
- * the template id).
+ * Seeds when the demo account is missing. `databaseUrl` is the preview database (read once, to find
+ * the template id), `catalogLib` the bundled printer catalog.
  */
-export async function seedDemo({ base, mock, kitExpected, dataFile, mockLib, log }) {
+export async function seedDemo({ base, kitExpected, databaseUrl, catalogLib, log }) {
 	const owner = new Client(base);
 	const existing = await owner.req('POST', '/api/auth/sign-in/email', {
 		email: DEMO.email,
@@ -144,10 +136,10 @@ export async function seedDemo({ base, mock, kitExpected, dataFile, mockLib, log
 	});
 	if (existing.status === 200) {
 		log('demo account exists: keeping the data, no seeding.');
-		return { seeded: false, summary: await resumePrinter(owner, mock, log) };
+		return { seeded: false, summary: [] };
 	}
 
-	const templateId = templateIdFromDb(dataFile);
+	const templateId = await templateIdFromDb(databaseUrl);
 	if (!templateId) throw new Error('No template in the database (startup seeding did not run).');
 
 	// ---- people, workspaces
@@ -224,7 +216,7 @@ export async function seedDemo({ base, mock, kitExpected, dataFile, mockLib, log
 		hospital: 'Sample children’s clinic',
 		phase: 'printing'
 	});
-	const { catalogPrinter, printerFromCatalog, PRINTER_CATALOG } = mockLib;
+	const { catalogPrinter, printerFromCatalog, PRINTER_CATALOG } = catalogLib;
 	const cat =
 		PRINTER_CATALOG.find((p) => p.brand === 'Elegoo' && p.model === 'Centauri Carbon') ??
 		catalogPrinter(null);
@@ -339,15 +331,8 @@ export async function seedDemo({ base, mock, kitExpected, dataFile, mockLib, log
 		log(`no Studio draft seeded (${e.message}).`);
 	}
 
-	// ---- the simulated printer, an older unlinked job, and a job linked to the printing plate
-	const printerNote = await seedPrinter({
-		owner,
-		mock,
-		org: chapter.id,
-		buildA,
-		printingPlate,
-		log
-	});
+	// ---- a manual printer (no connection; the maker updates plate status by hand)
+	const printerNote = await seedPrinter({ owner, org: chapter.id, log });
 
 	const summary = [
 		`Seeded: owner + chapter "${DEMO.chapter}" with an editor member, a personal workspace`,
@@ -359,97 +344,16 @@ export async function seedDemo({ base, mock, kitExpected, dataFile, mockLib, log
 	return { seeded: true, summary };
 }
 
-async function printersOf(owner, org) {
-	return owner.ok('GET', `/api/printers?org=${org}`);
-}
-
-async function seedPrinter({ owner, mock, org, buildA, printingPlate, log }) {
-	await owner.ok('POST', '/api/printers', {
-		organizationId: org,
-		name: DEMO.printerName,
-		kind: 'elegoo-sdcp',
-		host: '127.0.0.1',
-		port: mock.port,
-		secrets: { mainboardId: 'ABCDEF' }
-	});
-	// 1. An older print that is not linked to any build (it finishes).
-	mock.set({ printStatus: 0, machineStatus: [0], progress: 0, file: '' });
-	mock.printing('demo-bracket-test.gcode.3mf', 35);
-	await until('the first print to show up', async () => {
-		const v = await printersOf(owner, org);
-		return v.jobs.some((j) => /bracket/.test(JSON.stringify(j)));
-	});
-	mock.set({ printStatus: 9, machineStatus: [0], progress: 100, layer: 400, totalLayer: 400 });
-	await sleep(2500);
-	mock.set({ printStatus: 0, machineStatus: [0], progress: 0, file: '' });
-	await sleep(2500);
-	// 2. The print that is running now, linked to the Printing plate of build A.
-	mock.printing(DEMO.activeFile, 42);
-	const job = await until('the running print to show up', async () => {
-		const v = await printersOf(owner, org);
-		return v.jobs.find((j) => JSON.stringify(j).includes(DEMO.activeFile) && !j.buildId);
-	});
-	let linked = false;
-	if (printingPlate) {
-		try {
-			await owner.ok('POST', `/api/printers/jobs/${job.id}`, {
-				action: 'link',
-				buildId: buildA,
-				plateNumber: printingPlate.number,
-				partSlugs: printingPlate.parts
-			});
-			linked = true;
-		} catch (e) {
-			log(`could not link the job to the plate (${e.message}).`);
-		}
-	}
-	return `Printer "${DEMO.printerName}" (simulated, loopback only): one older unlinked print, one running print${linked ? ` linked to plate ${printingPlate.number}` : ' (not linked)'}`;
-}
-
-/** Later runs: the mock restarts idle and on its own port, so point the printer at it again. */
-async function resumePrinter(owner, mock, log) {
+async function seedPrinter({ owner, org, log }) {
 	try {
-		const orgs = await owner.ok('GET', '/api/auth/organization/list');
-		const chapter = orgs.find((o) => o.name === DEMO.chapter);
-		const v = await printersOf(owner, chapter.id);
-		const p = v.printers.find((x) => x.name === DEMO.printerName);
-		if (!p) return [];
-		const pv0 = v;
-		await owner.ok('PATCH', `/api/printers/${p.id}`, { port: mock.port });
-		mock.printing(DEMO.activeFile, 42);
-		// The mock lost its job when the preview stopped: link the new running job to the plate of
-		// build A that is still Printing, as before.
-		let linked = '';
-		const a = v.builds.find((b) => b.name === 'Demo chair A');
-		if (a) {
-			const view = await owner.ok('GET', `/api/builds/${a.id}/view`);
-			// The plate the earlier job was linked to (a part can sit on several plates).
-			const before = pv0.jobs.filter((j) => j.buildId === a.id && j.plateNumber);
-			const want = before.length ? before[0].plateNumber : null;
-			const plate = view.plates.find((pl) =>
-				want
-					? pl.number === want
-					: pl.parts.length && pl.parts.every((s) => view.state[s]?.status === 'Printing')
-			);
-			if (plate) {
-				const job = await until('the running print to show up', async () => {
-					const pv = await printersOf(owner, chapter.id);
-					return pv.jobs.find((j) => JSON.stringify(j).includes(DEMO.activeFile) && !j.buildId);
-				});
-				await owner.ok('POST', `/api/printers/jobs/${job.id}`, {
-					action: 'link',
-					buildId: a.id,
-					plateNumber: plate.number,
-					partSlugs: plate.parts
-				});
-				linked = `, linked to plate ${plate.number}`;
-			}
-		}
-		return [
-			`Existing data kept; the simulated printer is printing "${DEMO.activeFile}" again${linked}.`
-		];
+		await owner.ok('POST', '/api/printers', {
+			organizationId: org,
+			name: DEMO.printerName,
+			kind: 'manual'
+		});
+		return `Printer "${DEMO.printerName}" (manual: no connection, no live status)`;
 	} catch (e) {
-		log(`could not reconnect the simulated printer (${e.message}).`);
-		return [];
+		log(`no printer seeded (${e.message}).`);
+		return 'No printer seeded';
 	}
 }

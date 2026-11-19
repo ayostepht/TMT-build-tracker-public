@@ -1,10 +1,8 @@
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { ApiError, isSiteAdmin } from './access';
-import { openDb, runMigrations, type Db } from './db';
+import { first, type Db } from './db';
+import { createTestDb, dropTestDb } from './db/testing';
 import { activity, member, organization, templateGuidePages, templates, user } from './db/schema';
 import { templateSeeds } from './seed';
 import { seedTemplates } from './seed/run';
@@ -14,8 +12,6 @@ import { loadBuildView } from './builds/view';
 import { assertTemplateAdmin } from './models/guard';
 import { clearGuide, guideStatus, readGuidePage, saveGuidePage, setGuideMapping } from './guide';
 import { sniffImage, stripImageMetadata } from './images';
-
-process.env.DATABASE_URL = join(mkdtempSync(join(tmpdir(), 'tmt-photos-')), 'unused.db');
 
 const PNG = Uint8Array.from(
 	atob(
@@ -37,38 +33,36 @@ let db: Db;
 let templateId: string;
 let buildId: string;
 
-beforeEach(() => {
-	db = openDb(':memory:');
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
-	templateId = db.select({ id: templates.id }).from(templates).get()!.id;
-	db.insert(organization)
-		.values({ id: 'org1', name: 'Chapter', slug: 'chapter', createdAt: new Date() })
-		.run();
+beforeEach(async () => {
+	db = await createTestDb();
+	await seedTemplates(db, templateSeeds);
+	templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
+	await db
+		.insert(organization)
+		.values({ id: 'org1', name: 'Chapter', slug: 'chapter', createdAt: new Date() });
 	// Created in this order so "first" is the site admin.
 	for (const [i, u] of ['first', 'editor', 'viewer', 'outsider'].entries())
-		db.insert(user)
-			.values({
-				id: u,
-				name: `User ${u}`,
-				email: `${u}@example.test`,
-				createdAt: new Date(2026, 0, 1 + i)
-			})
-			.run();
+		await db.insert(user).values({
+			id: u,
+			name: `User ${u}`,
+			email: `${u}@example.test`,
+			createdAt: new Date(2026, 0, 1 + i)
+		});
 	for (const [u, role] of [
 		['first', 'owner'],
 		['editor', 'editor'],
 		['viewer', 'viewer']
 	])
-		db.insert(member)
-			.values({ id: `m-${u}`, organizationId: 'org1', userId: u, role, createdAt: new Date() })
-			.run();
-	buildId = createBuild(
+		await db
+			.insert(member)
+			.values({ id: `m-${u}`, organizationId: 'org1', userId: u, role, createdAt: new Date() });
+	buildId = await createBuild(
 		db,
 		{ organizationId: 'org1', templateId, designId: null, name: 'Chair' },
 		'first'
 	);
 });
+afterEach(() => dropTestDb(db));
 
 describe('photos', () => {
 	it('stores a PNG, lists it, serves it to members only, and deletes it', async () => {
@@ -80,7 +74,7 @@ describe('photos', () => {
 			file: PNG,
 			thumb: PNG
 		});
-		const v = loadBuildView(db, buildId, 'viewer')!;
+		const v = (await loadBuildView(db, buildId, 'viewer'))!;
 		expect(v.photos).toHaveLength(1);
 		expect(v.photos[0]).toMatchObject({
 			id,
@@ -88,14 +82,14 @@ describe('photos', () => {
 			caption: 'side',
 			createdByName: 'User editor'
 		});
-		expect(db.select().from(activity).where(eq(activity.kind, 'photo.add')).all()).toHaveLength(1);
+		expect(await db.select().from(activity).where(eq(activity.kind, 'photo.add'))).toHaveLength(1);
 		const got = await readPhoto(db, buildId, 'viewer', id, false);
 		expect(got.type).toBe('image/png');
 		expect((await readPhoto(db, buildId, 'viewer', id, true)).bytes.length).toBeGreaterThan(0);
 		expect(await status(readPhoto(db, buildId, 'outsider', id, false))).toBe(404);
 		expect(await status(deletePhoto(db, buildId, 'viewer', id))).toBe(403);
 		await deletePhoto(db, buildId, 'editor', id);
-		expect(loadBuildView(db, buildId, 'editor')!.photos).toHaveLength(0);
+		expect((await loadBuildView(db, buildId, 'editor'))!.photos).toHaveLength(0);
 		expect(await status(readPhoto(db, buildId, 'editor', id, false))).toBe(404);
 	});
 
@@ -115,7 +109,7 @@ describe('photos', () => {
 		const big = new Uint8Array(8 * 1024 * 1024 + 1);
 		big.set(PNG);
 		expect(await status(addPhoto(db, buildId, 'editor', { ...ok, file: big }))).toBe(413);
-		expect(loadBuildView(db, buildId, 'editor')!.photos).toHaveLength(0);
+		expect((await loadBuildView(db, buildId, 'editor'))!.photos).toHaveLength(0);
 	});
 });
 
@@ -185,13 +179,13 @@ describe('metadata stripping', () => {
 });
 
 describe('guide pages', () => {
-	it('only site admins pass the template guard', () => {
+	it('only site admins pass the template guard', async () => {
 		const get = (id: string) => ({ id, email: `${id}@example.test` });
-		expect(isSiteAdmin(db, get('first'))).toBe(true);
-		expect(() => assertTemplateAdmin(db, get('first'), templateId)).not.toThrow();
+		expect(await isSiteAdmin(db, get('first'))).toBe(true);
+		await expect(assertTemplateAdmin(db, get('first'), templateId)).resolves.toBeUndefined();
 		for (const u of ['editor', 'viewer', 'outsider'])
-			expect(() => assertTemplateAdmin(db, get(u), templateId)).toThrow(ApiError);
-		expect(() => assertTemplateAdmin(db, get('first'), 'missing')).toThrow(ApiError);
+			await expect(assertTemplateAdmin(db, get(u), templateId)).rejects.toThrow(ApiError);
+		await expect(assertTemplateAdmin(db, get('first'), 'missing')).rejects.toThrow(ApiError);
 	});
 
 	it('accepts images only (3 MB cap), maps our pages to PDF pages and serves them', async () => {
@@ -210,25 +204,17 @@ describe('guide pages', () => {
 		expect(await status(setGuideMapping(db, templateId, { 4: 15 }))).toBe(400); // not one of our pages
 		expect(await setGuideMapping(db, templateId, { 18: 15, 19: 16 })).toBe(2);
 
-		const view = () => loadBuildView(db, buildId, 'viewer')!.guidePages;
-		expect(
-			view()
-				.filter((g) => g.hasImage)
-				.map((g) => g.page)
-		).toEqual([18, 19]);
+		const view = async () => (await loadBuildView(db, buildId, 'viewer'))!.guidePages;
+		expect((await view()).filter((g) => g.hasImage).map((g) => g.page)).toEqual([18, 19]);
 		const f = await readGuidePage(db, templateId, 18);
 		expect(f.type).toBe('image/png');
 		expect(await status(readGuidePage(db, templateId, 14))).toBe(404);
 
 		await setGuideMapping(db, templateId, { 18: null });
-		expect(
-			view()
-				.filter((g) => g.hasImage)
-				.map((g) => g.page)
-		).toEqual([19]);
+		expect((await view()).filter((g) => g.hasImage).map((g) => g.page)).toEqual([19]);
 		await clearGuide(db, templateId);
-		expect(view().some((g) => g.hasImage)).toBe(false);
+		expect((await view()).some((g) => g.hasImage)).toBe(false);
 		expect((await guideStatus(db, templateId)).uploaded).toEqual([]);
-		expect(db.select().from(templateGuidePages).all().length).toBeGreaterThan(0);
+		expect((await db.select().from(templateGuidePages)).length).toBeGreaterThan(0);
 	});
 });

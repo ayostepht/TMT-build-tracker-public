@@ -1,20 +1,21 @@
 import { error } from '@sveltejs/kit';
 import { and, eq } from 'drizzle-orm';
 import { normalizeRole } from '#lib/server/access.ts';
-import { getDb } from '#lib/server/db/index.ts';
+import { first, getDb } from '#lib/server/db/index.ts';
 import { member, organization } from '#lib/server/db/schema.ts';
 import { isPersonalMetadata } from '#lib/server/teams.ts';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ params, locals }) => {
+export const load: PageServerLoad = async ({ params, locals }) => {
 	const db = getDb();
-	const org = db.select().from(organization).where(eq(organization.slug, params.slug)).get();
+	const org = await first(db.select().from(organization).where(eq(organization.slug, params.slug)));
 	if (!org) error(404, 'Not found');
-	const m = db
-		.select({ role: member.role })
-		.from(member)
-		.where(and(eq(member.organizationId, org.id), eq(member.userId, locals.user!.id)))
-		.get();
+	const m = await first(
+		db
+			.select({ role: member.role })
+			.from(member)
+			.where(and(eq(member.organizationId, org.id), eq(member.userId, locals.user!.id)))
+	);
 	if (!m) error(404, 'Not found');
 	const role = normalizeRole(m.role);
 	const personal = isPersonalMetadata(org.metadata);

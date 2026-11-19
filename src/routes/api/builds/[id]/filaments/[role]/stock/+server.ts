@@ -6,7 +6,7 @@ import type { RequestHandler } from './$types';
 /** Add a spool to a color's stock: `{ kg, note? }` -> `{ id }`. Editors and owners; not for drafts. */
 export const POST: RequestHandler = (event) =>
 	respond(async () => ({
-		id: addSpool(
+		id: await addSpool(
 			getDb(),
 			event.params.id,
 			requireUserId(event),

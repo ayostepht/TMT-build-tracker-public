@@ -2,8 +2,8 @@ import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getDb } from '#lib/server/db/index.ts';
-import { runMigrations } from '#lib/server/db/index.ts';
+import type { Db } from '#lib/server/db/index.ts';
+import { createTestDb, dropTestDb } from '#lib/server/db/testing.ts';
 import { user } from '#lib/server/db/schema.ts';
 import { templateSeeds } from '#lib/server/seed/index.ts';
 import { seedTemplates } from '#lib/server/seed/run.ts';
@@ -11,6 +11,13 @@ import { defaultTemplate } from '#lib/server/templates/fork.ts';
 import { importsDir } from '#lib/server/config.ts';
 import { POST } from './+server.ts';
 
+const h = vi.hoisted(() => ({ db: null as unknown }));
+vi.mock('#lib/server/db/index.ts', async (orig) => ({
+	...(await orig<object>()),
+	getDb: () => h.db
+}));
+
+let db: Db;
 let tid: string;
 
 function event(body: BodyInit | null, user_ = { id: 'adm', email: 'adm@x.test' }) {
@@ -26,18 +33,21 @@ function event(body: BodyInit | null, user_ = { id: 'adm', email: 'adm@x.test' }
 	} as unknown as Parameters<typeof POST>[0];
 }
 
-beforeEach(() => {
-	vi.stubEnv('DATABASE_URL', join(mkdtempSync(join(tmpdir(), 'tmt-up-')), 'tmt.db'));
-	const db = getDb();
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
-	db.insert(user)
+beforeEach(async () => {
+	vi.stubEnv('DATA_DIR', mkdtempSync(join(tmpdir(), 'tmt-up-')));
+	db = await createTestDb();
+	h.db = db;
+	await seedTemplates(db, templateSeeds);
+	await db
+		.insert(user)
 		.values({ id: 'adm', name: 'A', email: 'adm@x.test', createdAt: new Date(1) })
-		.onConflictDoNothing()
-		.run();
-	tid = defaultTemplate(db).id;
+		.onConflictDoNothing();
+	tid = (await defaultTemplate(db)).id;
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(async () => {
+	vi.unstubAllEnvs();
+	await dropTestDb(db);
+});
 
 describe('STEP zip upload route', () => {
 	it('507 before creating any file when the disk is full', async () => {

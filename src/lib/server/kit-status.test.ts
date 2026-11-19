@@ -1,9 +1,7 @@
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
-import { describe, expect, it } from 'vitest';
-import { openDb, runMigrations } from './db';
+import { afterAll, describe, expect, it } from 'vitest';
+import { first, type Db } from './db';
+import { createTestDb, dropTestDb } from './db/testing';
 import { templateModels, templatePartPlacements, templates } from './db/schema';
 import { templateSeeds } from './seed';
 import { seedTemplates } from './seed/run';
@@ -22,35 +20,36 @@ describe('hasNonStepSource', () => {
 });
 
 describe('kitStatus missing parts', () => {
+	const dbs: Db[] = [];
+	afterAll(async () => {
+		for (const d of dbs) await dropTestDb(d);
+	});
 	async function setup(slugs: string[], placed: string[]) {
-		const dir = mkdtempSync(join(tmpdir(), `tmt-ks-${process.pid}-`));
-		process.env.DATABASE_URL = join(dir, 'tmt.db');
-		const db = openDb(process.env.DATABASE_URL);
-		runMigrations(db);
-		seedTemplates(db, templateSeeds);
-		const tid = db.select().from(templates).where(eq(templates.slug, templateSeeds[0].slug)).get()!
-			.id;
-		db.insert(templateModels)
-			.values({
-				templateId: tid,
-				glbPath: 'x.glb',
-				version: 'v1',
-				slugs,
-				sourceNote: 'STEP import'
-			})
-			.run();
-		db.update(templatePartPlacements)
+		const db = await createTestDb();
+		dbs.push(db);
+		await seedTemplates(db, templateSeeds);
+		const tid = (await first(
+			db.select().from(templates).where(eq(templates.slug, templateSeeds[0].slug))
+		))!.id;
+		await db.insert(templateModels).values({
+			templateId: tid,
+			glbPath: 'x.glb',
+			version: 'v1',
+			slugs,
+			sourceNote: 'STEP import'
+		});
+		await db
+			.update(templatePartPlacements)
 			.set({ placed: false })
-			.where(eq(templatePartPlacements.templateId, tid))
-			.run();
+			.where(eq(templatePartPlacements.templateId, tid));
 		for (const slug of placed) {
-			db.insert(templatePartPlacements)
+			await db
+				.insert(templatePartPlacements)
 				.values({ templateId: tid, slug, matrix: I, instances: [], placed: true })
 				.onConflictDoUpdate({
 					target: [templatePartPlacements.templateId, templatePartPlacements.slug],
 					set: { placed: true }
-				})
-				.run();
+				});
 		}
 		return { db, tid };
 	}

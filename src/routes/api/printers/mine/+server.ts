@@ -10,21 +10,22 @@ import type { RequestHandler } from './$types';
  * and like the per-team list it never includes secrets.
  */
 export const GET: RequestHandler = (event) =>
-	respond(() => {
+	respond(async () => {
 		const db = getDb();
 		const userId = requireUserId(event);
 		const first = event.url.searchParams.get('first');
-		const teams = listTeams(db, userId).sort(
+		const teams = (await listTeams(db, userId)).sort(
 			(a, b) => Number(b.id === first) - Number(a.id === first)
 		);
-		return {
-			workspaces: teams.map((t) => ({
+		const workspaces = [];
+		for (const t of teams)
+			workspaces.push({
 				id: t.id,
 				slug: t.slug,
 				name: t.personal ? 'My builds' : t.name,
 				personal: t.personal,
 				canEdit: t.role !== 'viewer',
-				printers: listPrinters(db, t.id).map((p) => toPublic(p))
-			}))
-		};
+				printers: (await listPrinters(db, t.id)).map((p) => toPublic(p))
+			});
+		return { workspaces };
 	});

@@ -662,14 +662,11 @@ export const printers = pgTable(
 		/** elegoo-sdcp | moonraker | octoprint | bambu-lan | (share-link kinds added by the printers agent) */
 		kind: text('kind').notNull(),
 		host: text('host').notNull(),
-		port: integer('port'),
 		/** printer catalog id (src/lib/printers/catalog.ts) */
 		catalogId: text('catalog_id'),
 		/** AES-GCM encrypted JSON of secrets (API key, access code, serial); never sent to the browser. */
 		secretEnc: text('secret_enc'),
 		enabled: boolean('enabled').notNull().default(true),
-		/** Camera override (http/https, same host as the printer); null = automatic default per printer type. LAN-only; may be dropped later. */
-		cameraUrl: text('camera_url'),
 		cameraEnabled: boolean('camera_enabled').notNull().default(true),
 		lastSeenAt: timestamp('last_seen_at', TS),
 		/** Last normalised status snapshot (state, progress, file, temps, remaining). */

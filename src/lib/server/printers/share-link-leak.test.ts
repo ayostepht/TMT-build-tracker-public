@@ -4,7 +4,8 @@
  * DNS and sockets are stubbed: nothing here leaves the machine.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openDb, runMigrations, type Db } from '../db';
+import { type Db } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import { member, organization, user } from '../db/schema';
 import { getCameraHub } from './camera';
 import { cameraChanged } from './camera-access';
@@ -35,29 +36,28 @@ const { POST: cameraTestPOST } =
 	await import('../../../routes/api/printers/camera-test/+server.ts');
 
 let printerId = '';
-beforeEach(() => {
-	db = openDb(':memory:');
-	runMigrations(db);
+beforeEach(async () => {
+	db = await createTestDb();
 	for (const id of ['ed', 'view'])
-		db.insert(user)
-			.values({ id, name: id, email: `${id}@example.test` })
-			.run();
-	db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() }).run();
+		await db.insert(user).values({ id, name: id, email: `${id}@example.test` });
+	await db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() });
 	for (const [id, role] of [
 		['ed', 'editor'],
 		['view', 'viewer']
 	])
-		db.insert(member)
-			.values({ id: `m-${id}`, organizationId: 'o', userId: id, role, createdAt: new Date() })
-			.run();
-	printerId = createPrinter(db, 'o', 'ed', {
-		name: 'Linked',
-		kind: 'elegoo-sdcp',
-		host: 'octoeverywhere',
-		secrets: { shareLink: `https://${HOST}` }
-	}).id;
+		await db
+			.insert(member)
+			.values({ id: `m-${id}`, organizationId: 'o', userId: id, role, createdAt: new Date() });
+	printerId = (
+		await createPrinter(db, 'o', 'ed', {
+			name: 'Linked',
+			kind: 'elegoo-sdcp',
+			host: 'octoeverywhere',
+			secrets: { shareLink: `https://${HOST}` }
+		})
+	).id;
 });
-afterEach(() => {
+afterEach(async () => {
 	cameraChanged(printerId);
 	getCameraHub().invalidate(printerId);
 	setResolver(null);
@@ -137,11 +137,11 @@ describe('the share-host exception is opt-in', () => {
 	it('resolveAllowed / guardedFetch refuse a share host without allowShareLink', async () => {
 		const dns = async () => [PUBLIC4];
 		setResolver(dns);
-		await expect(resolveAllowed(HOST, dns)).rejects.toMatchObject({ kind: 'public' });
-		await expect(resolveAllowed(HOST, dns)).rejects.toThrow(/shared link only/);
-		await expect(resolveAllowed(HOST, dns, { allowShareLink: false })).rejects.toThrow();
-		await expect(guardedFetch(`https://${HOST}/video`)).rejects.toThrow();
-		await expect(resolveAllowed(HOST, dns, { allowShareLink: true })).resolves.toMatchObject({
+		(await expect(resolveAllowed(HOST, dns))).rejects.toMatchObject({ kind: 'public' });
+		(await expect(resolveAllowed(HOST, dns))).rejects.toThrow(/shared link only/);
+		(await expect(resolveAllowed(HOST, dns, { allowShareLink: false }))).rejects.toThrow();
+		(await expect(guardedFetch(`https://${HOST}/video`))).rejects.toThrow();
+		(await expect(resolveAllowed(HOST, dns, { allowShareLink: true }))).resolves.toMatchObject({
 			shareLink: true
 		});
 		try {
@@ -167,8 +167,8 @@ describe('the share-host exception is opt-in', () => {
 			secrets: { shareLink: `https://${HOST}` }
 		});
 		expect(src).toMatchObject({ host: HOST, shareLink: true });
-		await expect(
-			resolveAllowed(HOST, async () => [PUBLIC4], { allowShareLink: true })
+		(
+			await expect(resolveAllowed(HOST, async () => [PUBLIC4], { allowShareLink: true }))
 		).resolves.toMatchObject({ ip: PUBLIC4 });
 	});
 });

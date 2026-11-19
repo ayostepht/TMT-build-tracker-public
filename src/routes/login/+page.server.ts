@@ -5,7 +5,7 @@ import { getDb } from '#lib/server/db/index.ts';
 import { safeRedirect } from '#lib/server/teams.ts';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ locals, url }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
 	const to = safeRedirect(url.searchParams.get('redirect'));
 	if (locals.user) redirect(303, to ?? '/workspace');
 	const publicMode = appMode() === 'public';
@@ -16,8 +16,8 @@ export const load: PageServerLoad = ({ locals, url }) => {
 		// Public mode: SSO-only with these providers. Self-hosted: the optional OIDC button.
 		providers: publicMode ? (['google', 'github'] as const).filter((p) => social[p]) : [],
 		sso: oidc ? { providerName: oidc.providerName } : null,
-		signup: effectiveSignup(getDb(), { publicMode, signup: signupMode() }),
-		accountsPaused: accountsPaused(getDb()),
+		signup: await effectiveSignup(getDb(), { publicMode, signup: signupMode() }),
+		accountsPaused: await accountsPaused(getDb()),
 		redirectTo: to,
 		// Fixed texts only: the query string never reaches the page as text.
 		notice: url.searchParams.get('notice') === 'deleted' ? 'Your account was deleted.' : null,

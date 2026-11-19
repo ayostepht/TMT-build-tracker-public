@@ -6,10 +6,14 @@ import { searchUsers } from '#lib/server/site-admins.ts';
 import type { RequestHandler } from './$types';
 
 /** Accounts for the site-admin picker (`?q=` filters by name or email). Site admins only: 403 for everyone else. */
-export const GET: RequestHandler = (event) => {
+export const GET: RequestHandler = async (event) => {
 	try {
 		requireUserId(event);
-		const users = searchUsers(getDb(), event.locals.user!, event.url.searchParams.get('q') ?? '');
+		const users = await searchUsers(
+			getDb(),
+			event.locals.user!,
+			event.url.searchParams.get('q') ?? ''
+		);
 		return json({ users }, { headers: { 'cache-control': 'no-store' } });
 	} catch (e) {
 		if (e instanceof ApiError) return json({ error: e.message }, { status: e.status });

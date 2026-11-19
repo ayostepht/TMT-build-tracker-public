@@ -1,58 +1,60 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { APIError } from 'better-auth/api';
 import { normalizeRole } from '#lib/server/access.ts';
 import { getAuth } from '#lib/server/auth-instance.ts';
-import { getDb } from '#lib/server/db/index.ts';
+import { first, getDb } from '#lib/server/db/index.ts';
 import { invitation, member, organization, user } from '#lib/server/db/schema.ts';
 import { isPersonalMetadata } from '#lib/server/teams.ts';
 import type { Actions, PageServerLoad } from './$types';
 
-function teamFor(slug: string, userId: string) {
+async function teamFor(slug: string, userId: string) {
 	const db = getDb();
-	const org = db.select().from(organization).where(eq(organization.slug, slug)).get();
+	const org = await first(db.select().from(organization).where(eq(organization.slug, slug)));
 	if (!org) error(404, 'Not found');
-	const m = db
-		.select({ role: member.role })
-		.from(member)
-		.where(and(eq(member.organizationId, org.id), eq(member.userId, userId)))
-		.get();
+	const m = await first(
+		db
+			.select({ role: member.role })
+			.from(member)
+			.where(and(eq(member.organizationId, org.id), eq(member.userId, userId)))
+	);
 	if (!m) error(404, 'Not found');
 	return { org, role: normalizeRole(m.role) };
 }
 
-export const load: PageServerLoad = ({ params, locals }) => {
-	const { org, role } = teamFor(params.slug, locals.user!.id);
+export const load: PageServerLoad = async ({ params, locals }) => {
+	const { org, role } = await teamFor(params.slug, locals.user!.id);
 	// A personal workspace has no members to manage.
 	if (isPersonalMetadata(org.metadata)) redirect(303, `/teams/${org.slug}`);
 	const db = getDb();
-	const members = db
-		.select({
-			id: member.id,
-			userId: member.userId,
-			name: user.name,
-			email: user.email,
-			role: member.role
-		})
-		.from(member)
-		.innerJoin(user, eq(user.id, member.userId))
-		.where(eq(member.organizationId, org.id))
-		.all()
-		.map((m) => ({ ...m, role: normalizeRole(m.role) }));
+	const members = (
+		await db
+			.select({
+				id: member.id,
+				userId: member.userId,
+				name: user.name,
+				email: user.email,
+				role: member.role
+			})
+			.from(member)
+			.innerJoin(user, eq(user.id, member.userId))
+			.where(eq(member.organizationId, org.id))
+			.orderBy(asc(member.createdAt), asc(member.id))
+	).map((m) => ({ ...m, role: normalizeRole(m.role) }));
 
 	const invites =
 		role === 'owner'
-			? db
-					.select({
-						id: invitation.id,
-						email: invitation.email,
-						role: invitation.role,
-						expiresAt: invitation.expiresAt
-					})
-					.from(invitation)
-					.where(and(eq(invitation.organizationId, org.id), eq(invitation.status, 'pending')))
-					.all()
-					.map((i) => ({ ...i, expiresAt: i.expiresAt.toISOString() }))
+			? (
+					await db
+						.select({
+							id: invitation.id,
+							email: invitation.email,
+							role: invitation.role,
+							expiresAt: invitation.expiresAt
+						})
+						.from(invitation)
+						.where(and(eq(invitation.organizationId, org.id), eq(invitation.status, 'pending')))
+				).map((i) => ({ ...i, expiresAt: i.expiresAt.toISOString() }))
 			: [];
 	return { members, invites };
 };
@@ -64,7 +66,7 @@ function authFail(e: unknown) {
 
 export const actions: Actions = {
 	invite: async ({ request, params, locals }) => {
-		const { org, role } = teamFor(params.slug, locals.user!.id);
+		const { org, role } = await teamFor(params.slug, locals.user!.id);
 		if (role !== 'owner') return fail(403, { error: 'Only owners can invite' });
 		if (isPersonalMetadata(org.metadata))
 			return fail(400, { error: 'Create a chapter to invite people' });
@@ -87,7 +89,7 @@ export const actions: Actions = {
 	},
 
 	revoke: async ({ request, params, locals }) => {
-		const { role } = teamFor(params.slug, locals.user!.id);
+		const { role } = await teamFor(params.slug, locals.user!.id);
 		if (role !== 'owner') return fail(403, { error: 'Only owners can do this' });
 		const invitationId = String((await request.formData()).get('id') ?? '');
 		try {
@@ -98,7 +100,7 @@ export const actions: Actions = {
 	},
 
 	setRole: async ({ request, params, locals }) => {
-		const { org, role } = teamFor(params.slug, locals.user!.id);
+		const { org, role } = await teamFor(params.slug, locals.user!.id);
 		if (role !== 'owner') return fail(403, { error: 'Only owners can do this' });
 		const f = await request.formData();
 		const r = String(f.get('role') ?? '');
@@ -118,7 +120,7 @@ export const actions: Actions = {
 	},
 
 	remove: async ({ request, params, locals }) => {
-		const { org, role } = teamFor(params.slug, locals.user!.id);
+		const { org, role } = await teamFor(params.slug, locals.user!.id);
 		if (role !== 'owner') return fail(403, { error: 'Only owners can do this' });
 		const memberId = String((await request.formData()).get('memberId') ?? '');
 		try {

@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { catalogPrinter } from '#lib/printers/catalog.ts';
 import { printerFromCatalog } from '#lib/printers/printer.ts';
-import { openDb, runMigrations, type Db } from '../db';
+import { first, type Db } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import { member, organization, printerJobs, templates, user } from '../db/schema';
 import { templateSeeds } from '../seed';
 import { seedTemplates } from '../seed/run';
@@ -20,12 +21,10 @@ import { loadBuildView } from './view';
 let db: Db;
 let templateId: string;
 const orgId = 'org1';
-process.env.DATABASE_URL = join(mkdtempSync(join(tmpdir(), 'tmt-pguard-')), 'unused.db');
 const cc = printerFromCatalog(catalogPrinter('elegoo-centauri-carbon')!, 0);
 
 beforeEach(() => {
-	db = openDb(':memory:');
-	runMigrations(db);
+	db = await createTestDb();
 	seedTemplates(db, templateSeeds);
 	templateId = db.select({ id: templates.id }).from(templates).get()!.id;
 	db.insert(organization)

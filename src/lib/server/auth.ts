@@ -14,7 +14,7 @@ import { decideNewUser, mayUseInvitations, userCount, type PolicyConfig } from '
 import * as schema from './db/schema';
 import { user as userTable } from './db/schema';
 import { eq } from 'drizzle-orm';
-import type { Db } from './db';
+import { first, type Db } from './db';
 import { APIError } from 'better-auth/api';
 import {
 	assertCanAddMember,
@@ -96,9 +96,9 @@ export const ORGANIZATION_DISABLED_PATHS = [
 ];
 
 /** Quota refusals reach Better Auth callers as 409 `QUOTA` with the sentence as the message. */
-function quotaGuard(fn: () => void): void {
+async function quotaGuard(fn: () => Promise<void>): Promise<void> {
 	try {
-		fn();
+		await fn();
 	} catch (e) {
 		if (e instanceof QuotaError)
 			throw new APIError('CONFLICT', { code: 'QUOTA', message: e.message });
@@ -138,8 +138,7 @@ export function createAuth(db: Db) {
 		secret: authSecret(),
 		database: drizzleAdapter(db, { provider: 'pg', schema }),
 		// Public mode is SSO-only (Google, GitHub): no passwords, no generic OIDC.
-		// Reset links are minted only by the operator CLI (scripts/reset-password-link.mjs); finishing
-		// one also signs the user out everywhere.
+		// There is no password reset flow (the operator CLI and the reset page were removed).
 		emailAndPassword: {
 			enabled: !publicMode,
 			minPasswordLength: 8,
@@ -182,13 +181,15 @@ export function createAuth(db: Db) {
 					// Public: provider-verified email only. Self-hosted: the SIGNUP switch.
 					// Runs for email sign-up and SSO first login alike.
 					before: async (u) => {
-						const d = decideNewUser(db, u, policy);
+						const d = await decideNewUser(db, u, policy);
 						if (!d.ok) throw new APIError('FORBIDDEN', { code: d.code, message: d.message });
 						// Bootstrap race: with SIGNUP=closed|invite the "empty database" exception lets
 						// one account through, but the user-count check and the insert are separated by
-						// awaits, so two simultaneous first sign-ups could both pass. The check and this
-						// claim run in one synchronous stretch (one Node process), so only one wins.
-						if (!policy.publicMode && policy.signup !== 'open' && userCount(db) === 0) {
+						// awaits, so two simultaneous first sign-ups could both pass. The claim check and
+						// set run in one synchronous stretch right after the count (one Node process), so
+						// only one wins. Not shared across several app instances: the unique email index
+						// still bounds a double bootstrap to accounts that were both allowed in anyway.
+						if (!policy.publicMode && policy.signup !== 'open' && (await userCount(db)) === 0) {
 							if (bootstrapClaimedAt && Date.now() - bootstrapClaimedAt < BOOTSTRAP_CLAIM_MS)
 								throw new APIError('FORBIDDEN', {
 									code: 'signup_closed',
@@ -200,7 +201,7 @@ export function createAuth(db: Db) {
 					// Every account (email, OIDC, invited) gets a personal workspace.
 					after: async (u) => {
 						bootstrapClaimedAt = 0;
-						ensurePersonalWorkspace(db, { id: u.id, name: u.name });
+						await ensurePersonalWorkspace(db, { id: u.id, name: u.name });
 					}
 				}
 			},
@@ -209,11 +210,12 @@ export function createAuth(db: Db) {
 					before: async (session) => {
 						// Public mode: no session for an unverified email, checked before any early return.
 						if (publicMode) {
-							const v = db
-								.select({ emailVerified: userTable.emailVerified })
-								.from(userTable)
-								.where(eq(userTable.id, session.userId))
-								.get();
+							const v = await first(
+								db
+									.select({ emailVerified: userTable.emailVerified })
+									.from(userTable)
+									.where(eq(userTable.id, session.userId))
+							);
 							if (!v?.emailVerified)
 								throw new APIError('FORBIDDEN', {
 									code: 'email_not_verified',
@@ -226,15 +228,17 @@ export function createAuth(db: Db) {
 						if ((session as { activeOrganizationId?: string | null }).activeOrganizationId)
 							return { data: noIp };
 						// The user's after-create hook may not have run yet; ensure is idempotent.
-						const u = db
-							.select({ name: userTable.name, emailVerified: userTable.emailVerified })
-							.from(userTable)
-							.where(eq(userTable.id, session.userId))
-							.get();
+						const u = await first(
+							db
+								.select({ name: userTable.name, emailVerified: userTable.emailVerified })
+								.from(userTable)
+								.where(eq(userTable.id, session.userId))
+						);
 						if (!u) return { data: noIp };
-						const { id } = ensurePersonalWorkspace(db, { id: session.userId, name: u.name });
+						const { id } = await ensurePersonalWorkspace(db, { id: session.userId, name: u.name });
 						// Users who already belong to chapters keep their own default (see the app layout).
-						if (listTeams(db, session.userId).some((t) => !t.personal)) return { data: noIp };
+						if ((await listTeams(db, session.userId)).some((t) => !t.personal))
+							return { data: noIp };
 						return { data: { ...noIp, activeOrganizationId: id } };
 					}
 				}
@@ -249,15 +253,15 @@ export function createAuth(db: Db) {
 				// cannot share a transaction with the plugin's insert). The checks throw our sentence.
 				// Personal workspaces are not chapters and never reach the plugin's endpoints.
 				organizationLimit: async (u) => {
-					quotaGuard(() => assertCanCreateChapter(db, u.id));
+					await quotaGuard(() => assertCanCreateChapter(db, u.id));
 					return false;
 				},
 				membershipLimit: async (u, org) => {
-					quotaGuard(() => assertCanAddMember(db, u.id, org.id));
+					await quotaGuard(() => assertCanAddMember(db, u.id, org.id));
 					return plugin(quotaLimit('membersPerChapter'));
 				},
 				invitationLimit: async ({ user: u, organization: org }) => {
-					quotaGuard(() => assertCanInvite(db, u.id, org.id));
+					await quotaGuard(() => assertCanInvite(db, u.id, org.id));
 					return plugin(quotaLimit('pendingInvitesPerChapter'));
 				},
 				// Public mode: accepting, declining and reading an invitation needs a verified
@@ -270,46 +274,46 @@ export function createAuth(db: Db) {
 							throw new APIError('FORBIDDEN', {
 								message: 'Verify your email address before accepting an invitation'
 							});
-						quotaGuard(() => assertCanJoinChapter(db, u.id, org.id));
+						await quotaGuard(() => assertCanJoinChapter(db, u.id, org.id));
 					},
 					// Personal workspaces are created by the server only.
 					beforeCreateOrganization: async ({ organization: org, user: u }) => {
 						if (isPersonalMetadata(org.metadata))
 							throw new APIError('BAD_REQUEST', { message: 'Reserved organization metadata' });
-						quotaGuard(() => assertCanCreateChapter(db, u.id));
+						await quotaGuard(() => assertCanCreateChapter(db, u.id));
 					},
 					// Server-side adds (no HTTP route): same caps as joining.
 					beforeAddMember: async ({ user: u, organization: org }) => {
-						if (isPersonalOrg(db, org.id)) return;
-						quotaGuard(() => assertCanAddMember(db, u.id, org.id));
+						if (await isPersonalOrg(db, org.id)) return;
+						await quotaGuard(() => assertCanAddMember(db, u.id, org.id));
 					},
 					beforeCreateInvitation: async ({ organization: org, inviter }) => {
-						if (isPersonalMetadata(org.metadata) || isPersonalOrg(db, org.id))
+						if (isPersonalMetadata(org.metadata) || (await isPersonalOrg(db, org.id)))
 							throw new APIError('BAD_REQUEST', {
 								message: 'Create a chapter to invite people; My builds is just for you'
 							});
-						quotaGuard(() => assertCanInvite(db, inviter.id, org.id));
+						await quotaGuard(() => assertCanInvite(db, inviter.id, org.id));
 						// Keep the invitation table bounded under invite/cancel loops.
-						pruneOldInvitations(db, org.id);
+						await pruneOldInvitations(db, org.id);
 					},
 					beforeDeleteOrganization: async ({ organization: org }) => {
 						if (
-							(isPersonalMetadata(org.metadata) || isPersonalOrg(db, org.id)) &&
-							buildCount(db, org.id) > 0
+							(isPersonalMetadata(org.metadata) || (await isPersonalOrg(db, org.id))) &&
+							(await buildCount(db, org.id)) > 0
 						)
 							throw new APIError('BAD_REQUEST', {
 								message: 'Move or delete the builds in My builds first'
 							});
 						// The rows cascade away with the chapter; list their files first, remove them after.
-						const plan = planFiles(db, { orgIds: [org.id] });
+						const plan = await planFiles(db, { orgIds: [org.id] });
 						// Builds in other workspaces that use this chapter's kit copies go back to the base kit.
 						// One transaction: a refusal (409) leaves the chapter untouched. The plugin has already
 						// checked session, membership and the delete permission before this hook, and its own
 						// delete is a single statement that our part has cleared of FK blockers.
 						try {
-							db.transaction((tx) => {
-								repointBuildsOffTemplates(tx as unknown as typeof db, plan.templateIds);
-								deleteOwnedTemplates(tx as unknown as typeof db, plan.templateIds, [org.id]);
+							await db.transaction(async (tx) => {
+								await repointBuildsOffTemplates(tx, plan.templateIds);
+								await deleteOwnedTemplates(tx, plan.templateIds, [org.id]);
 							});
 						} catch (e) {
 							if (e instanceof ApiError) throw new APIError('CONFLICT', { message: e.message });

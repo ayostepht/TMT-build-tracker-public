@@ -6,7 +6,7 @@ import type { RequestHandler } from './$types';
 /** Undo a just-logged run (`{ parts, runIds? }`); `runIds` names both runs of a split Partial. */
 export const POST: RequestHandler = (event) =>
 	respond(async () => {
-		undoRun(
+		await undoRun(
 			getDb(),
 			event.params.id,
 			requireUserId(event),

@@ -20,9 +20,9 @@ export const POST: RequestHandler = (event) =>
 		const body = (await readJson(event)) as Record<string, unknown>;
 		const org = typeof body?.organizationId === 'string' ? body.organizationId : '';
 		if (!org) throw new ApiError(400, 'organizationId is required');
-		requireEditor(db, org, userId);
+		await requireEditor(db, org, userId);
 		limitTests(userId);
-		const cfg = configFromInput(db, org, body);
+		const cfg = await configFromInput(db, org, body);
 		// Not connected: nothing to dial, nothing to test.
 		if (cfg.kind === 'manual')
 			return {

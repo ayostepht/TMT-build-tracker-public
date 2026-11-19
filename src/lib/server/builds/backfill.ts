@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import type { Db } from '../db';
+import type { DbOrTx } from '../db';
 
 /**
  * Gives every build a `build_parts` row for every part of its template. Builds made
@@ -7,8 +7,8 @@ import type { Db } from '../db';
  * with default state, so switching variants never loses or lacks progress rows.
  * Idempotent; returns the number of rows added. Called at startup after seeding.
  */
-export function backfillBuildParts(db: Db): number {
-	const res = db.run(sql`
+export async function backfillBuildParts(db: DbOrTx): Promise<number> {
+	const res = await db.execute(sql`
 		INSERT INTO build_parts (build_id, part_slug)
 		SELECT b.id, tp.slug
 		FROM builds b
@@ -16,6 +16,7 @@ export function backfillBuildParts(db: Db): number {
 		WHERE NOT EXISTS (
 			SELECT 1 FROM build_parts bp WHERE bp.build_id = b.id AND bp.part_slug = tp.slug
 		)
+		RETURNING 1
 	`);
-	return res.changes;
+	return res.length;
 }

@@ -2,7 +2,7 @@ import { lstat, readdir, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { inArray } from 'drizzle-orm';
 import { importsDir } from './config.ts';
-import type { Db } from './db/index.ts';
+import type { DbOrTx } from './db/index.ts';
 import { templateModelJobs } from './db/schema.ts';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -19,7 +19,7 @@ const DIR_RE = /^nested-[A-Za-z0-9]{6}$/;
  * Returns the number of entries removed.
  */
 export async function sweepImportsDir(
-	db: Db,
+	db: DbOrTx,
 	opts: { dir?: string; now?: number; maxAgeMs?: number } = {}
 ): Promise<number> {
 	let removed = 0;
@@ -34,12 +34,12 @@ export async function sweepImportsDir(
 			return 0; // no directory yet
 		}
 		const keep = new Set(
-			db
-				.select({ p: templateModelJobs.inputPath })
-				.from(templateModelJobs)
-				.where(inArray(templateModelJobs.status, ['queued', 'running']))
-				.all()
-				.map((j) => resolve(j.p))
+			(
+				await db
+					.select({ p: templateModelJobs.inputPath })
+					.from(templateModelJobs)
+					.where(inArray(templateModelJobs.status, ['queued', 'running']))
+			).map((j) => resolve(j.p))
 		);
 		for (const name of names) {
 			const isFile = FILE_RE.test(name);

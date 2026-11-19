@@ -7,9 +7,15 @@ import type { RequestHandler } from './$types';
 /** Site admin: change where a part sits in the 3D model. Body `{ matrix?, instances?, placed? }`. */
 export const PATCH: RequestHandler = (event) =>
 	respond(async () => {
-		const userId = requireAdminForTemplate(event, event.params.id);
+		const userId = await requireAdminForTemplate(event, event.params.id);
 		const patch = parsePlacementPatch(await readJson(event));
 		return {
-			placement: applyPlacementPatch(getDb(), event.params.id, event.params.slug, patch, userId)
+			placement: await applyPlacementPatch(
+				getDb(),
+				event.params.id,
+				event.params.slug,
+				patch,
+				userId
+			)
 		};
 	});

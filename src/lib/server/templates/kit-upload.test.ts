@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openDb, runMigrations, type Db } from '../db';
+import type { Db } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import { member, organization, user } from '../db/schema';
 import { templateSeeds } from '../seed';
 import { seedTemplates } from '../seed/run';
@@ -30,39 +31,37 @@ let copyId: string;
 let baseId: string;
 const owner = { id: 'owner', email: 'owner@example.test', emailVerified: false };
 
-beforeEach(() => {
+beforeEach(async () => {
 	dir = mkdtempSync(join(tmpdir(), 'tmt-kit-upload-'));
-	vi.stubEnv('DATABASE_URL', join(dir, 'tmt.db'));
+	vi.stubEnv('DATA_DIR', dir);
 	vi.stubEnv('TMT_MODE', 'public');
 	vi.stubEnv('PUBLIC_URL', 'https://example.test');
 	vi.stubEnv('QUOTA_UPLOAD_MB_PER_WORKSPACE', '1');
-	db = openDb(':memory:');
+	db = await createTestDb();
 	h.db = db;
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
-	db.insert(organization)
-		.values({ id: 'org1', name: 'Chapter', slug: 'chapter', createdAt: new Date() })
-		.run();
+	await seedTemplates(db, templateSeeds);
+	await db
+		.insert(organization)
+		.values({ id: 'org1', name: 'Chapter', slug: 'chapter', createdAt: new Date() });
 	// Created first: the first user is the site admin in self-host mode; in public mode admins come from ADMIN_EMAILS.
 	for (const u of ['boss', 'owner'])
-		db.insert(user)
-			.values({ id: u, name: u, email: `${u}@example.test`, emailVerified: u === 'boss' })
-			.run();
-	db.insert(member)
-		.values({
-			id: 'm1',
-			organizationId: 'org1',
-			userId: 'owner',
-			role: 'owner',
-			createdAt: new Date()
-		})
-		.run();
+		await db
+			.insert(user)
+			.values({ id: u, name: u, email: `${u}@example.test`, emailVerified: u === 'boss' });
+	await db.insert(member).values({
+		id: 'm1',
+		organizationId: 'org1',
+		userId: 'owner',
+		role: 'owner',
+		createdAt: new Date()
+	});
 	vi.stubEnv('ADMIN_EMAILS', 'boss@example.test');
-	baseId = defaultTemplate(db).id;
-	copyId = forkTemplate(db, 'org1', baseId, 'Copy', 'owner');
+	baseId = (await defaultTemplate(db)).id;
+	copyId = await forkTemplate(db, 'org1', baseId, 'Copy', 'owner');
 });
-afterEach(() => {
+afterEach(async () => {
 	vi.unstubAllEnvs();
+	await dropTestDb(db);
 	rmSync(dir, { recursive: true, force: true });
 });
 
@@ -189,7 +188,7 @@ describe('guide page upload', () => {
 
 describe('guide image GET', () => {
 	it('is a 404 for a signed-in user outside the copy', async () => {
-		db.insert(user).values({ id: 'out', name: 'o', email: 'out@example.test' }).run();
+		await db.insert(user).values({ id: 'out', name: 'o', email: 'out@example.test' });
 		const { GET } = await import('../../../routes/api/templates/[id]/guide/[page].webp/+server');
 		const call = (u: object) =>
 			GET({

@@ -6,8 +6,8 @@ import type { RequestHandler } from './$types';
 
 /** Built-in plate layouts of a template (templates are visible to every signed-in user). */
 export const GET: RequestHandler = (event) =>
-	respond(() => {
+	respond(async () => {
 		requireUserId(event);
-		assertTemplateViewable(getDb(), event.locals.user!, event.params.id);
-		return { layouts: listLayouts(getDb(), event.params.id) };
+		await assertTemplateViewable(getDb(), event.locals.user!, event.params.id);
+		return { layouts: await listLayouts(getDb(), event.params.id) };
 	});

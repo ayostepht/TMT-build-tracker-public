@@ -9,37 +9,34 @@ import {
 	type TimeLayoutPlate,
 	type TimeModel
 } from '#lib/domain/time-estimate.ts';
-import type { Db } from '../db';
+import { first, type DbOrTx } from '../db';
 import { templateParts, templatePlateLayouts, templatePlates, templates } from '../db/schema';
 
-export function loadTimeModel(
-	db: Db,
+export async function loadTimeModel(
+	db: DbOrTx,
 	templateId: string,
 	learned?: ReadonlyMap<string, LearnedTime>
-): TimeModel {
-	const parts = db
+): Promise<TimeModel> {
+	const parts = await db
 		.select({ slug: templateParts.slug, bomGrams: templateParts.bomGrams, qty: templateParts.qty })
 		.from(templateParts)
-		.where(eq(templateParts.templateId, templateId))
-		.all();
-	const layouts = db
+		.where(eq(templateParts.templateId, templateId));
+	const layouts = await db
 		.select()
 		.from(templatePlateLayouts)
-		.where(eq(templatePlateLayouts.templateId, templateId))
-		.all();
+		.where(eq(templatePlateLayouts.templateId, templateId));
 	const xpa = layouts.find((l) => l.key === 'xpa') ?? layouts.find((l) => l.isDefault);
 	const plates: TimeLayoutPlate[] = xpa
 		? xpa.plates
-		: db
+		: await db
 				.select()
 				.from(templatePlates)
-				.where(and(eq(templatePlates.templateId, templateId)))
-				.all();
-	const groups = db
-		.select({ g: templates.variantGroups })
-		.from(templates)
-		.where(eq(templates.id, templateId))
-		.get()?.g;
+				.where(and(eq(templatePlates.templateId, templateId)));
+	const groups = (
+		await first(
+			db.select({ g: templates.variantGroups }).from(templates).where(eq(templates.id, templateId))
+		)
+	)?.g;
 	return buildTimeModel(parts, plates, groups ?? [], learned);
 }
 

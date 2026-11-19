@@ -15,14 +15,14 @@ import { objectKey } from '#lib/domain/plates-match.ts';
 import type { StoredSummary } from '#lib/domain/threemf.ts';
 import type { PartDef, PartProfileInfo, PrintTemplateInfo } from '#lib/domain/types.ts';
 import type { PrintFootprint } from '#lib/domain/print-footprint.ts';
-import type { Db } from '../db';
+import type { DbOrTx } from '../db';
 import { buildPartProfiles, templatePrintGeometry } from '../db/schema';
 import { readPieceMesh } from '../print-geometry/store';
 
 type Row = typeof buildPartProfiles.$inferSelect;
 
-export const loadProfileRows = (db: Db, buildId: string): Row[] =>
-	db.select().from(buildPartProfiles).where(eq(buildPartProfiles.buildId, buildId)).all();
+export const loadProfileRows = (db: DbOrTx, buildId: string): Promise<Row[]> =>
+	db.select().from(buildPartProfiles).where(eq(buildPartProfiles.buildId, buildId));
 
 /** The stored profiles as they apply to the parts' current roles, plus the template summary. */
 export function resolveProfiles(
@@ -89,17 +89,16 @@ interface PieceVolume {
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
 
 /** Volumes of the pieces of each part, from the stored print meshes (null where a piece has no mesh). */
-export function pieceVolumes(
-	db: Db,
+export async function pieceVolumes(
+	db: DbOrTx,
 	templateId: string,
 	slugs: Set<string>
-): Map<string, PieceVolume[]> {
+): Promise<Map<string, PieceVolume[]>> {
 	const out = new Map<string, PieceVolume[]>();
-	for (const r of db
+	for (const r of await db
 		.select()
 		.from(templatePrintGeometry)
-		.where(eq(templatePrintGeometry.templateId, templateId))
-		.all()) {
+		.where(eq(templatePrintGeometry.templateId, templateId))) {
 		if (!slugs.has(r.slug)) continue;
 		const fp = r.footprint as unknown as PrintFootprint;
 		out.set(
@@ -148,9 +147,9 @@ export interface LearnInput {
 }
 
 /** Pure part of learning from a stored upload summary: the per-part profiles (nothing written). */
-export function learnFromSummary(db: Db, inp: LearnInput): LearnedProfile[] {
+export async function learnFromSummary(db: DbOrTx, inp: LearnInput): Promise<LearnedProfile[]> {
 	const slugs = new Set(Object.values(inp.mapping).filter((s): s is string => !!s));
-	const vols = pieceVolumes(db, inp.templateId, slugs);
+	const vols = await pieceVolumes(db, inp.templateId, slugs);
 	const plates: LearnPlate[] = inp.summary.plates
 		.filter((pl) => (pl.estSeconds ?? 0) > 0 || Object.keys(pl.filamentGrams).length)
 		.map((pl) => ({
@@ -204,36 +203,39 @@ export function learnFromSummary(db: Db, inp: LearnInput): LearnedProfile[] {
 }
 
 /** Replace the build's learned data with `profiles` (inside a transaction). Returns how many parts were stored. */
-export function storeProfiles(
-	tx: Db,
+export async function storeProfiles(
+	tx: DbOrTx,
 	buildId: string,
 	profiles: LearnedProfile[],
 	meta: { source: string; fileName: string; plates: number; printer: string | null }
-): number {
-	tx.delete(buildPartProfiles).where(eq(buildPartProfiles.buildId, buildId)).run();
+): Promise<number> {
+	await tx.delete(buildPartProfiles).where(eq(buildPartProfiles.buildId, buildId));
 	const now = new Date();
 	for (const p of profiles)
-		tx.insert(buildPartProfiles)
-			.values({
-				buildId,
-				partSlug: p.slug,
-				secondsPerCopy: p.secondsPerCopy,
-				gramsByRole: p.gramsByRole,
-				source: meta.source,
-				method: p.method,
-				context: {
-					partRole: p.partRole,
-					copies: p.copies,
-					fileName: meta.fileName,
-					plates: meta.plates,
-					printer: meta.printer
-				},
-				updatedAt: now
-			})
-			.run();
+		await tx.insert(buildPartProfiles).values({
+			buildId,
+			partSlug: p.slug,
+			secondsPerCopy: p.secondsPerCopy,
+			gramsByRole: p.gramsByRole,
+			source: meta.source,
+			method: p.method,
+			context: {
+				partRole: p.partRole,
+				copies: p.copies,
+				fileName: meta.fileName,
+				plates: meta.plates,
+				printer: meta.printer
+			},
+			updatedAt: now
+		});
 	return profiles.length;
 }
 
-export function clearProfiles(tx: Db, buildId: string): number {
-	return tx.delete(buildPartProfiles).where(eq(buildPartProfiles.buildId, buildId)).run().changes;
+export async function clearProfiles(tx: DbOrTx, buildId: string): Promise<number> {
+	return (
+		await tx
+			.delete(buildPartProfiles)
+			.where(eq(buildPartProfiles.buildId, buildId))
+			.returning({ slug: buildPartProfiles.partSlug })
+	).length;
 }

@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { KitStatusDto } from '#lib/domain/kit-import.ts';
-import type { Db } from './db/index.ts';
+import { first, type DbOrTx } from './db/index.ts';
 import { templateModels, templateParts, templates } from './db/schema.ts';
 import { guideStatus } from './guide.ts';
 import { loadTemplateModelInfo } from './models/info.ts';
@@ -15,23 +15,20 @@ export function hasNonStepSource(sourceFile: string): boolean {
 }
 
 /** What the install holds for a template's kit files (model, print geometry, guide). */
-export async function kitStatus(db: Db, templateId: string): Promise<KitStatusDto> {
-	const parts = db
+export async function kitStatus(db: DbOrTx, templateId: string): Promise<KitStatusDto> {
+	const parts = await db
 		.select()
 		.from(templateParts)
-		.where(eq(templateParts.templateId, templateId))
-		.all();
+		.where(eq(templateParts.templateId, templateId));
 	const name = new Map(parts.map((p) => [p.slug, p.name]));
 	const label = (slug: string) => name.get(slug) ?? slug;
 
-	const info = loadTemplateModelInfo(db, templateId);
+	const info = await loadTemplateModelInfo(db, templateId);
 	let model: KitStatusDto['model'] = null;
 	if (info) {
-		const row = db
-			.select()
-			.from(templateModels)
-			.where(eq(templateModels.templateId, templateId))
-			.get();
+		const row = await first(
+			db.select().from(templateModels).where(eq(templateModels.templateId, templateId))
+		);
 		const has = new Set(info.slugs);
 		const placed = new Set(info.placements.filter((p) => p.placed).map((p) => p.slug));
 		const inModel = parts.filter((p) => has.has(p.slug));
@@ -53,13 +50,13 @@ export async function kitStatus(db: Db, templateId: string): Promise<KitStatusDt
 		};
 	}
 
-	const slug = db
-		.select({ slug: templates.slug })
-		.from(templates)
-		.where(eq(templates.id, templateId))
-		.get()?.slug;
+	const slug = (
+		await first(
+			db.select({ slug: templates.slug }).from(templates).where(eq(templates.id, templateId))
+		)
+	)?.slug;
 	const install = slug ? kitInstallState(slug) : { installing: false, message: '' };
-	const rows = listPrintGeometry(db, templateId);
+	const rows = await listPrintGeometry(db, templateId);
 	const imported = rows.filter((r) => r.source !== 'seed');
 	const g = await guideStatus(db, templateId);
 	return {

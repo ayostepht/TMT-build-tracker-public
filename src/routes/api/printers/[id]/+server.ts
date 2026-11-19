@@ -6,27 +6,27 @@ import { getSupervisor } from '#lib/server/printers/supervisor.ts';
 import { cameraChanged } from '#lib/server/printers/camera-access.ts';
 import type { RequestHandler } from './$types';
 
-function orgOf(id: string, userId: string): string {
+async function orgOf(id: string, userId: string): Promise<string> {
 	const db = getDb();
-	const p = getPrinter(db, id);
+	const p = await getPrinter(db, id);
 	if (!p) throw new ApiError(404, 'Not found');
-	requireEditor(db, p.organizationId, userId); // 404 for non-members, 403 for viewers
+	await requireEditor(db, p.organizationId, userId); // 404 for non-members, 403 for viewers
 	return p.organizationId;
 }
 
 export const PATCH: RequestHandler = (event) =>
 	respond(async () => {
-		const org = orgOf(event.params.id, requireUserId(event));
-		const row = updatePrinter(getDb(), event.params.id, org, await readJson(event));
-		getSupervisor()?.refresh(row.id);
+		const org = await orgOf(event.params.id, requireUserId(event));
+		const row = await updatePrinter(getDb(), event.params.id, org, await readJson(event));
+		await getSupervisor()?.refresh(row.id);
 		cameraChanged(row.id);
 		return { printer: toPublic(row) };
 	});
 
 export const DELETE: RequestHandler = (event) =>
-	respond(() => {
-		const org = orgOf(event.params.id, requireUserId(event));
-		deletePrinter(getDb(), event.params.id, org);
+	respond(async () => {
+		const org = await orgOf(event.params.id, requireUserId(event));
+		await deletePrinter(getDb(), event.params.id, org);
 		cameraChanged(event.params.id);
 		getSupervisor()?.remove(event.params.id);
 	});

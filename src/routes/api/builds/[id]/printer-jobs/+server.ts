@@ -7,14 +7,14 @@ import type { RequestHandler } from './$types';
 
 /** Active and awaiting-confirmation printer jobs for a build, plus the team's printers (for "Link to plate" and "Start on printer"). */
 export const GET: RequestHandler = (event) =>
-	respond(() => {
+	respond(async () => {
 		const db = getDb();
-		const access = buildAccess(db, event.params.id, requireUserId(event));
+		const access = await buildAccess(db, event.params.id, requireUserId(event));
 		if (!access) throw new ApiError(404, 'Not found');
 		return {
 			organizationId: access.organizationId,
-			jobs: buildJobs(db, event.params.id, access.organizationId),
-			expected: pendingExpected(db, access.organizationId, event.params.id),
-			printers: listPrinters(db, access.organizationId).map((p) => toPublic(p))
+			jobs: await buildJobs(db, event.params.id, access.organizationId),
+			expected: await pendingExpected(db, access.organizationId, event.params.id),
+			printers: (await listPrinters(db, access.organizationId)).map((p) => toPublic(p))
 		};
 	});

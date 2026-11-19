@@ -5,7 +5,7 @@ import { getDb } from '#lib/server/db/index.ts';
 import { safeRedirect } from '#lib/server/teams.ts';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ locals, url }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
 	const to = safeRedirect(url.searchParams.get('redirect'));
 	if (locals.user) redirect(303, to ?? '/workspace');
 	const publicMode = appMode() === 'public';
@@ -14,8 +14,8 @@ export const load: PageServerLoad = ({ locals, url }) => {
 	const oidc = oidcConfig();
 	return {
 		sso: oidc ? { providerName: oidc.providerName } : null,
-		signup: effectiveSignup(getDb(), { publicMode, signup: signupMode() }),
-		accountsPaused: accountsPaused(getDb()),
+		signup: await effectiveSignup(getDb(), { publicMode, signup: signupMode() }),
+		accountsPaused: await accountsPaused(getDb()),
 		redirectTo: to
 	};
 };

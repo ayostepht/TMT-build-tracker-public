@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { openDb, runMigrations } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import { organization, user } from '../db/schema';
 import { CameraHub, CameraError, grabFrame, streamResponse } from './camera';
 import { resolveCameraSource, type CameraSource, type CameraTarget } from './camera-source';
@@ -61,7 +61,7 @@ const B = fakeJpeg('BBBB', 333);
 const C = fakeJpeg('CCCC', 50);
 
 describe('MJPEG parser', () => {
-	it('extracts the boundary parameter', () => {
+	it('extracts the boundary parameter', async () => {
 		expect(boundaryOf('multipart/x-mixed-replace; boundary=frame')).toBe('frame');
 		expect(boundaryOf('multipart/x-mixed-replace;boundary="--my foo"')).toBe('--my foo');
 		expect(boundaryOf('multipart/x-mixed-replace; boundary=--foo; charset=x')).toBe('--foo');
@@ -76,7 +76,7 @@ describe('MJPEG parser', () => {
 	] as const) {
 		for (const length of [true, false]) {
 			for (const chunk of [1, 7, 4096]) {
-				it(`${name}, Content-Length ${length ? 'present' : 'absent'}, ${chunk}-byte chunks`, () => {
+				it(`${name}, Content-Length ${length ? 'present' : 'absent'}, ${chunk}-byte chunks`, async () => {
 					const p = new MjpegParser(boundary);
 					const got = feed(p, body([A, B, C], { delim, length }), chunk);
 					expect(got.map((f) => f.length)).toEqual(
@@ -92,13 +92,13 @@ describe('MJPEG parser', () => {
 		}
 	}
 
-	it('delivers a length-less frame at once when the chunk ends right after its EOI', () => {
+	it('delivers a length-less frame at once when the chunk ends right after its EOI', async () => {
 		const p = new MjpegParser('frame');
 		const head = Buffer.from('--frame\r\nContent-Type: image/jpeg\r\n\r\n');
 		expect(p.push(Buffer.concat([head, A]))).toHaveLength(1);
 	});
 
-	it('a delimiter split right after the frame does not lose the next frame', () => {
+	it('a delimiter split right after the frame does not lose the next frame', async () => {
 		const p = new MjpegParser('frame');
 		const all = body([A, B], { length: false });
 		const cut = all.indexOf(Buffer.from('--frame'), A.length) + 2; // mid-delimiter
@@ -106,13 +106,13 @@ describe('MJPEG parser', () => {
 		expect(got.map((f) => f.length)).toEqual([A.length, B.length]);
 	});
 
-	it('works with LF-only line endings', () => {
+	it('works with LF-only line endings', async () => {
 		const p = new MjpegParser('frame');
 		const got = feed(p, body([A, B], { eol: '\n' }), 5);
 		expect(got.map((f) => f.length)).toEqual([A.length, B.length]);
 	});
 
-	it('skips preamble junk and non-JPEG parts', () => {
+	it('skips preamble junk and non-JPEG parts', async () => {
 		const p = new MjpegParser('frame');
 		const junk = Buffer.from('HTTP noise\r\n');
 		const notJpeg = Buffer.from('this is not a jpeg at all');
@@ -121,7 +121,7 @@ describe('MJPEG parser', () => {
 		expect(got[0].equals(A)).toBe(true);
 	});
 
-	it('does not mistake an embedded EOI for the end when Content-Length is present', () => {
+	it('does not mistake an embedded EOI for the end when Content-Length is present', async () => {
 		const tricky = Buffer.concat([
 			Buffer.from([0xff, 0xd8, 1, 2, 0xff, 0xd9, 3, 4, 5]),
 			Buffer.from([0xff, 0xd9])
@@ -131,7 +131,7 @@ describe('MJPEG parser', () => {
 		expect(got[0].equals(tricky)).toBe(true);
 	});
 
-	it('refuses frames over the cap', () => {
+	it('refuses frames over the cap', async () => {
 		const p = new MjpegParser('frame', 100);
 		const got = p.push(body([fakeJpeg('big', 500)]));
 		expect(got).toHaveLength(0);
@@ -143,7 +143,7 @@ describe('MJPEG parser', () => {
 		expect(q.error).toMatch(/too large/);
 	});
 
-	it('cleanJpeg trims padding and rejects non-JPEG', () => {
+	it('cleanJpeg trims padding and rejects non-JPEG', async () => {
 		expect(cleanJpeg(Buffer.concat([A, Buffer.from([0, 0, 0])]))!.equals(A)).toBe(true);
 		expect(cleanJpeg(Buffer.from('<html>'))).toBeNull();
 	});
@@ -243,31 +243,37 @@ describe('camera source (through an OctoEverywhere link)', () => {
 	});
 });
 
-describe('camera settings on a saved printer', () => {
+describe('camera settings on a saved printer', async () => {
 	const LINK = 'https://shared-testtoken12345678.octoeverywhere.com';
-	function setup() {
-		const db = openDb(':memory:');
-		runMigrations(db);
-		db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' }).run();
-		db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() }).run();
+	async function setup() {
+		const db = await createTestDb();
+		await db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' });
+		await db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() });
 		return db;
 	}
 	const base = { name: 'P', kind: 'elegoo-sdcp', secrets: { shareLink: LINK } };
-	it('a custom camera address is never stored, on create or edit', () => {
+	it('a custom camera address is never stored, on create or edit', async () => {
 		const db = setup();
-		const row = createPrinter(db, 'o', 'u1', { ...base, cameraUrl: 'http://10.0.0.5:8080/s' });
+		const row = await createPrinter(db, 'o', 'u1', {
+			...base,
+			cameraUrl: 'http://10.0.0.5:8080/s'
+		});
 		expect(row.cameraUrl).toBeNull();
-		expect(updatePrinter(db, row.id, 'o', { cameraUrl: 'http://10.0.0.6/s' }).cameraUrl).toBeNull();
+		expect(
+			(await updatePrinter(db, row.id, 'o', { cameraUrl: 'http://10.0.0.6/s' })).cameraUrl
+		).toBeNull();
 		const view = JSON.stringify(toPublic(row));
 		expect(view).not.toContain('cameraUrl');
 		expect(view).not.toContain('10.0.0.5');
 	});
-	it('the camera can be switched off; a manual printer has none', () => {
+	it('the camera can be switched off; a manual printer has none', async () => {
 		const db = setup();
-		const row = createPrinter(db, 'o', 'u1', { ...base });
+		const row = await createPrinter(db, 'o', 'u1', { ...base });
 		expect(toPublic(row).cameraEnabled).toBe(true);
-		expect(updatePrinter(db, row.id, 'o', { cameraEnabled: false }).cameraEnabled).toBe(false);
-		const m = createPrinter(db, 'o', 'u1', { name: 'M', kind: 'manual' });
+		expect((await updatePrinter(db, row.id, 'o', { cameraEnabled: false })).cameraEnabled).toBe(
+			false
+		);
+		const m = await createPrinter(db, 'o', 'u1', { name: 'M', kind: 'manual' });
 		expect(m.cameraEnabled).toBe(false);
 	});
 });
@@ -385,7 +391,7 @@ describe('camera hub', () => {
 			c.mode = 'error';
 		});
 		const s = hub.session('p1', async () => src());
-		await expect(s.snapshot()).rejects.toThrow(CameraError);
+		(await expect(s.snapshot())).rejects.toThrow(CameraError);
 		expect(s.status).toBe('error');
 		const stop = s.watch(() => {});
 		const before = cam.total;
@@ -416,7 +422,7 @@ describe('camera hub', () => {
 			origin: 'default' as const,
 			host: '10.9.9.9' // not the camera's host
 		}));
-		await expect(s.snapshot()).rejects.toThrow(/away from the printer/);
+		(await expect(s.snapshot())).rejects.toThrow(/away from the printer/);
 		expect(cam.total).toBe(0);
 	});
 

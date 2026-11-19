@@ -9,15 +9,16 @@ import { account, session } from './db/auth.schema';
  * (used at sign-out); `scope`, `password` and all other columns are never touched.
  * Runs in one transaction; later starts match no rows. Returns counts only.
  */
-export function cleanupAuthData(db: Db): { sessions: number; accounts: number } {
-	return db.transaction((tx) => {
-		const sessions = tx
+export async function cleanupAuthData(db: Db): Promise<{ sessions: number; accounts: number }> {
+	return db.transaction(async (tx) => {
+		const sessions = await tx
 			.update(session)
 			.set({ ipAddress: '' })
 			.where(and(isNotNull(session.ipAddress), ne(session.ipAddress, '')))
-			.run().changes;
+			.returning({ id: session.id });
+		const sessionCount = sessions.length;
 		// Rows holding any token, or an id token on a non-OIDC provider.
-		const accounts = tx
+		const accounts = await tx
 			.update(account)
 			.set({
 				accessToken: null,
@@ -35,15 +36,15 @@ export function cleanupAuthData(db: Db): { sessions: number; accounts: number } 
 					and(isNotNull(account.idToken), ne(account.providerId, 'oidc'))
 				)
 			)
-			.run().changes;
-		return { sessions, accounts };
+			.returning({ id: account.id });
+		return { sessions: sessionCount, accounts: accounts.length };
 	});
 }
 
 /** Startup step: runs the cleanup and logs one counts-only line when something changed. */
-export function cleanupAuthDataAtStartup(db: Db): void {
+export async function cleanupAuthDataAtStartup(db: Db): Promise<void> {
 	try {
-		const { sessions, accounts } = cleanupAuthData(db);
+		const { sessions, accounts } = await cleanupAuthData(db);
 		if (sessions || accounts)
 			console.log(
 				`[tmt] auth cleanup: cleared IP address on ${sessions} session(s), stored sign-in tokens on ${accounts} account(s)`

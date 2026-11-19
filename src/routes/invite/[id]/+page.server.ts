@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { getAuth } from '#lib/server/auth-instance.ts';
 import { effectiveSignup, mayUseInvitations } from '#lib/server/auth-policy.ts';
 import { appMode, signupMode } from '#lib/server/config.ts';
-import { getDb } from '#lib/server/db/index.ts';
+import { first, getDb } from '#lib/server/db/index.ts';
 import { invitation, organization, user } from '#lib/server/db/schema.ts';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -12,26 +12,27 @@ function policyAllows(u: { emailVerified?: boolean | null }) {
 }
 
 function find(id: string) {
-	return getDb()
-		.select({
-			id: invitation.id,
-			email: invitation.email,
-			role: invitation.role,
-			status: invitation.status,
-			expiresAt: invitation.expiresAt,
-			team: organization.name,
-			slug: organization.slug,
-			inviter: user.name
-		})
-		.from(invitation)
-		.innerJoin(organization, eq(organization.id, invitation.organizationId))
-		.innerJoin(user, eq(user.id, invitation.inviterId))
-		.where(eq(invitation.id, id))
-		.get();
+	return first(
+		getDb()
+			.select({
+				id: invitation.id,
+				email: invitation.email,
+				role: invitation.role,
+				status: invitation.status,
+				expiresAt: invitation.expiresAt,
+				team: organization.name,
+				slug: organization.slug,
+				inviter: user.name
+			})
+			.from(invitation)
+			.innerJoin(organization, eq(organization.id, invitation.organizationId))
+			.innerJoin(user, eq(user.id, invitation.inviterId))
+			.where(eq(invitation.id, id))
+	);
 }
 
-export const load: PageServerLoad = ({ params, locals }) => {
-	const inv = find(params.id);
+export const load: PageServerLoad = async ({ params, locals }) => {
+	const inv = await find(params.id);
 	if (!inv) error(404, 'Invitation not found');
 	return {
 		invitation: {
@@ -49,7 +50,10 @@ export const load: PageServerLoad = ({ params, locals }) => {
 		},
 		signedIn: !!locals.user,
 		// 'open' | 'invite' | 'closed' as for /signup; public mode has no sign-up page, only SSO sign-in.
-		signup: effectiveSignup(getDb(), { publicMode: appMode() === 'public', signup: signupMode() }),
+		signup: await effectiveSignup(getDb(), {
+			publicMode: appMode() === 'public',
+			signup: signupMode()
+		}),
 		publicMode: appMode() === 'public',
 		needsVerifiedEmail: !!locals.user && !policyAllows(locals.user),
 		wrongAccount: !!locals.user && locals.user.email.toLowerCase() !== inv.email.toLowerCase(),
@@ -60,7 +64,7 @@ export const load: PageServerLoad = ({ params, locals }) => {
 export const actions: Actions = {
 	accept: async ({ params, request, locals }) => {
 		if (!locals.user) redirect(303, `/login?redirect=/invite/${params.id}`);
-		const inv = find(params.id);
+		const inv = await find(params.id);
 		if (!inv) error(404, 'Invitation not found');
 		if (!policyAllows(locals.user))
 			return fail(403, { error: 'Verify your email address before accepting an invitation' });

@@ -1,4 +1,4 @@
-import { and, eq, ne, sql } from 'drizzle-orm';
+import { and, count, eq, ne } from 'drizzle-orm';
 import {
 	MANUAL_HOST_PLACEHOLDER,
 	PRINTER_KIND_INFO,
@@ -16,7 +16,7 @@ import {
 	SHARE_LINK_KEY
 } from '#lib/printers/share-link.ts';
 import { ApiError } from '../access';
-import type { Db } from '../db';
+import { advisoryLock, first, one, type Db, type DbOrTx, type Tx } from '../db';
 import { linkPrintersPerWorkspace, linkPrintersTotal, manualPrintersPerWorkspace } from '../config';
 import { QuotaError } from '../quota';
 import { printers } from '../db/schema';
@@ -74,17 +74,16 @@ export function toConfig(r: Row): PrinterConfig {
 	};
 }
 
-export function listPrinters(db: Db, orgId: string): Row[] {
+export async function listPrinters(db: DbOrTx, orgId: string): Promise<Row[]> {
 	return db
 		.select()
 		.from(printers)
 		.where(eq(printers.organizationId, orgId))
-		.orderBy(printers.name)
-		.all();
+		.orderBy(printers.name);
 }
 
-export function getPrinter(db: Db, id: string): Row | undefined {
-	return db.select().from(printers).where(eq(printers.id, id)).get();
+export async function getPrinter(db: DbOrTx, id: string): Promise<Row | undefined> {
+	return first(db.select().from(printers).where(eq(printers.id, id)));
 }
 
 interface ParsedInput {
@@ -166,25 +165,32 @@ function mergeSecrets(kind: PrinterKind, current: Secrets, supplied: Secrets | u
 /**
  * Hosted site: a workspace may hold only so many printers reached through an OctoEverywhere link
  * (`linkPrintersPerWorkspace`, default 3): each is a long-lived connection to a third party. Link
- * printers are exactly the rows whose host is the link placeholder. Call it synchronously right
- * before the write (the database is synchronous, so two requests cannot both pass).
+ * printers are exactly the rows whose host is the link placeholder. Call it inside the write's
+ * transaction, right before the insert/update: it takes advisory locks (per workspace, and a
+ * global one when a server-wide cap is set) so two requests cannot both pass the count.
  */
-export function assertLinkRoom(db: Db, orgId: string, exceptId?: string): void {
-	const count = (inOrg: boolean) =>
-		db
-			.select({ n: sql<number>`count(*)` })
-			.from(printers)
-			.where(
-				and(
-					inOrg ? eq(printers.organizationId, orgId) : undefined,
-					eq(printers.host, SHARE_LINK_HOST_PLACEHOLDER),
-					exceptId ? ne(printers.id, exceptId) : undefined
-				)
+export async function assertLinkRoom(tx: Tx, orgId: string, exceptId?: string): Promise<void> {
+	await advisoryLock(tx, 'quota:printers:' + orgId);
+	const total = linkPrintersTotal();
+	if (total !== null) await advisoryLock(tx, 'quota:printers:link-total');
+	const countLinks = async (inOrg: boolean) =>
+		(
+			await first(
+				tx
+					.select({ n: count() })
+					.from(printers)
+					.where(
+						and(
+							inOrg ? eq(printers.organizationId, orgId) : undefined,
+							eq(printers.host, SHARE_LINK_HOST_PLACEHOLDER),
+							exceptId ? ne(printers.id, exceptId) : undefined
+						)
+					)
 			)
-			.get()?.n ?? 0;
+		)?.n ?? 0;
 	const limit = linkPrintersPerWorkspace();
 	if (limit !== null) {
-		const n = count(true);
+		const n = await countLinks(true);
 		if (n >= limit)
 			throw new QuotaError(
 				limit === 0
@@ -192,29 +198,32 @@ export function assertLinkRoom(db: Db, orgId: string, exceptId?: string): void {
 					: `This workspace already has ${n} ${n === 1 ? 'printer' : 'printers'} connected through OctoEverywhere links, the limit on this server. Remove one or ask the admin.`
 			);
 	}
-	const total = linkPrintersTotal();
-	if (total !== null && count(false) >= total)
+	if (total !== null && (await countLinks(false)) >= total)
 		throw new QuotaError(
 			'This server has reached its limit of printers connected through OctoEverywhere links. Ask the admin.'
 		);
 }
 
 /** Hosted site: a workspace may hold only so many not-connected printers (`manualPrintersPerWorkspace`, default 10). */
-export function assertManualRoom(db: Db, orgId: string, exceptId?: string): void {
+export async function assertManualRoom(tx: Tx, orgId: string, exceptId?: string): Promise<void> {
 	const limit = manualPrintersPerWorkspace();
 	if (limit === null) return;
+	await advisoryLock(tx, 'quota:printers:' + orgId);
 	const n =
-		db
-			.select({ n: sql<number>`count(*)` })
-			.from(printers)
-			.where(
-				and(
-					eq(printers.organizationId, orgId),
-					eq(printers.kind, 'manual'),
-					exceptId ? ne(printers.id, exceptId) : undefined
-				)
+		(
+			await first(
+				tx
+					.select({ n: count() })
+					.from(printers)
+					.where(
+						and(
+							eq(printers.organizationId, orgId),
+							eq(printers.kind, 'manual'),
+							exceptId ? ne(printers.id, exceptId) : undefined
+						)
+					)
 			)
-			.get()?.n ?? 0;
+		)?.n ?? 0;
 	if (n < limit) return;
 	throw new QuotaError(
 		limit === 0
@@ -246,48 +255,57 @@ export function secretsForLink(
 	return {}; // a different link (or a cleared one): start from nothing
 }
 
-export function createPrinter(db: Db, orgId: string, userId: string, body: unknown): Row {
+export async function createPrinter(
+	db: Db,
+	orgId: string,
+	userId: string,
+	body: unknown
+): Promise<Row> {
 	const p = parsePrinterInput(body, false);
 	const kind = p.kind!;
 	const secrets = mergeSecrets(kind, {}, p.secrets);
 	const linked = !!shareLinkFor(kind, secrets);
 	if (kind !== 'manual' && !linked) bad('Paste the OctoEverywhere shared link');
 	if (kind === 'manual') p.cameraEnabled = false;
-	return db.transaction((tx) => {
+	return db.transaction(async (tx) => {
 		// Duplicate-link check (same link already used in another workspace) would go here: skipped, it needs a keyed-hash column (schema change).
-		if (linked) assertLinkRoom(tx, orgId);
-		if (kind === 'manual') assertManualRoom(tx, orgId);
-		return tx
+		if (linked) await assertLinkRoom(tx, orgId);
+		if (kind === 'manual') await assertManualRoom(tx, orgId);
+		const [row] = await tx
 			.insert(printers)
 			.values({
 				organizationId: orgId,
 				name: p.name!,
 				kind,
 				host: linked ? SHARE_LINK_HOST_PLACEHOLDER : MANUAL_HOST_PLACEHOLDER,
-				port: null,
 				catalogId: p.catalogId ?? null,
 				enabled: p.enabled ?? true,
-				cameraUrl: null,
 				cameraEnabled: p.cameraEnabled ?? true,
 				secretEnc: Object.keys(secrets).length ? encryptSecrets(secrets) : null,
 				createdBy: userId
 			})
-			.returning()
-			.get();
+			.returning();
+		return row;
 	});
 }
 
-export function updatePrinter(db: Db, id: string, orgId: string, body: unknown): Row {
+export async function updatePrinter(
+	db: Db,
+	id: string,
+	orgId: string,
+	body: unknown
+): Promise<Row> {
 	// Pausing and renaming always stay possible so an old row can be tidied.
 	const o = (typeof body === 'object' && body !== null ? body : {}) as Obj;
 	const harmless = Object.entries(o).every(
 		([k, v]) => k === 'name' || (k === 'enabled' && v === false)
 	);
-	const cur = db
-		.select()
-		.from(printers)
-		.where(and(eq(printers.id, id), eq(printers.organizationId, orgId)))
-		.get();
+	const cur = await first(
+		db
+			.select()
+			.from(printers)
+			.where(and(eq(printers.id, id), eq(printers.organizationId, orgId)))
+	);
 	if (!cur) throw new ApiError(404, 'Not found');
 	const p = parsePrinterInput(body, true, cur.kind as PrinterKind);
 	const kind = p.kind ?? (cur.kind as PrinterKind);
@@ -307,45 +325,48 @@ export function updatePrinter(db: Db, id: string, orgId: string, body: unknown):
 	if (p.kind !== undefined) set.kind = p.kind;
 	if (manual) {
 		set.host = MANUAL_HOST_PLACEHOLDER;
-		set.port = null;
 		set.cameraEnabled = false;
 	} else if (linked) {
 		set.host = SHARE_LINK_HOST_PLACEHOLDER; // the link is the destination
-		set.port = null;
 	}
 	if (p.catalogId !== undefined) set.catalogId = p.catalogId;
 	if (p.enabled !== undefined) set.enabled = p.enabled;
 	if (p.cameraEnabled !== undefined && !manual) set.cameraEnabled = p.cameraEnabled;
-	set.cameraUrl = null; // a custom camera address no longer exists
-	return db.transaction((tx) => {
+	return db.transaction(async (tx) => {
 		// A printer that becomes (or stays) a link printer counts against the cap, except when this
 		// edit only tidies it (pause, rename) or it was one already.
 		if (linked && !harmless && cur.host !== SHARE_LINK_HOST_PLACEHOLDER)
-			assertLinkRoom(tx, orgId, id);
-		if (manual && cur.kind !== 'manual') assertManualRoom(tx, orgId, id);
-		return tx.update(printers).set(set).where(eq(printers.id, id)).returning().get();
+			await assertLinkRoom(tx, orgId, id);
+		if (manual && cur.kind !== 'manual') await assertManualRoom(tx, orgId, id);
+		const [row] = await tx.update(printers).set(set).where(eq(printers.id, id)).returning();
+		if (!row) throw new ApiError(404, 'Not found');
+		return row;
 	});
 }
 
-export function deletePrinter(db: Db, id: string, orgId: string): void {
-	const r = db
+export async function deletePrinter(db: Db, id: string, orgId: string): Promise<void> {
+	const [r] = await db
 		.delete(printers)
 		.where(and(eq(printers.id, id), eq(printers.organizationId, orgId)))
-		.returning({ id: printers.id })
-		.get();
+		.returning({ id: printers.id });
 	if (!r) throw new ApiError(404, 'Not found');
 }
 
 /** Config for a connection test from the form: stored secrets of `id` (if given) overlaid with typed ones. */
-export function configFromInput(db: Db, orgId: string, body: unknown): PrinterConfig {
+export async function configFromInput(
+	db: DbOrTx,
+	orgId: string,
+	body: unknown
+): Promise<PrinterConfig> {
 	const o = (typeof body === 'object' && body !== null ? body : {}) as Obj;
 	let stored: Row | undefined;
 	if (typeof o.id === 'string') {
-		stored = db
-			.select()
-			.from(printers)
-			.where(and(eq(printers.id, o.id), eq(printers.organizationId, orgId)))
-			.get();
+		stored = await first(
+			db
+				.select()
+				.from(printers)
+				.where(and(eq(printers.id, o.id), eq(printers.organizationId, orgId)))
+		);
 		if (!stored) throw new ApiError(404, 'Not found');
 	}
 	const kind = ((o.kind as string) ?? stored?.kind) as PrinterKind;
@@ -363,8 +384,8 @@ export function configFromInput(db: Db, orgId: string, body: unknown): PrinterCo
 }
 
 /** Number of printers per workspace, for the given workspaces (the top nav's Printers link). */
-export function printerCounts(db: Db, orgIds: string[]): Record<string, number> {
+export async function printerCounts(db: DbOrTx, orgIds: string[]): Promise<Record<string, number>> {
 	const out: Record<string, number> = {};
-	for (const id of orgIds) out[id] = listPrinters(db, id).length;
+	for (const id of orgIds) out[id] = (await listPrinters(db, id)).length;
 	return out;
 }

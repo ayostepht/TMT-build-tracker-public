@@ -7,8 +7,8 @@ import type { RequestHandler } from './$types';
 
 /** The build's photos (members). */
 export const GET: RequestHandler = (event) =>
-	respond(() => {
-		const view = loadBuildView(getDb(), event.params.id, requireUserId(event));
+	respond(async () => {
+		const view = await loadBuildView(getDb(), event.params.id, requireUserId(event));
 		if (!view) throw new ApiError(404, 'Not found');
 		return { photos: view.photos };
 	});

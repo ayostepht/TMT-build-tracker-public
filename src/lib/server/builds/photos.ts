@@ -5,7 +5,7 @@ import { and, eq } from 'drizzle-orm';
 import { PHOTO_KINDS, type PhotoKind } from '#lib/domain/types.ts';
 import { ApiError, buildAccess } from '../access';
 import { diskHasRoom, uploadsDir } from '../config';
-import type { Db } from '../db';
+import { first, type Db } from '../db';
 import { buildPhotos } from '../db/schema';
 import { extensionOf, sniffImage, stripImageMetadata, type ImageType } from '../images';
 import { assertUnder, assertUploadRoom, countPhotos } from '../quota';
@@ -56,7 +56,7 @@ export async function addPhoto(
 	userId: string,
 	input: PhotoInput
 ): Promise<string> {
-	const access = buildAccess(db, buildId, userId);
+	const access = await buildAccess(db, buildId, userId);
 	if (!access) throw new ApiError(404, 'Not found');
 	if (!access.canEdit) throw new ApiError(403, 'Your role cannot edit');
 	if (typeof input.kind !== 'string' || !(PHOTO_KINDS as readonly string[]).includes(input.kind))
@@ -70,9 +70,12 @@ export async function addPhoto(
 	// front so an over-limit upload writes nothing, and again inside the insert transaction.
 	const addBytes = full.bytes.length + (thumb?.bytes.length ?? 0);
 	if (!diskHasRoom()) throw new ApiError(507, 'The server is almost out of disk space');
-	db.transaction((tx) => {
-		assertUnder(tx, 'photosPerBuild', () => countPhotos(tx, buildId), { userId });
-		assertUploadRoom(tx, access.organizationId, addBytes, { userId });
+	await db.transaction(async (tx) => {
+		await assertUnder(tx, 'photosPerBuild', () => countPhotos(tx, buildId), {
+			userId,
+			scope: buildId
+		});
+		await assertUploadRoom(tx, access.organizationId, addBytes, { userId });
 	});
 
 	const id = randomUUID();
@@ -82,24 +85,25 @@ export async function addPhoto(
 	await writeFile(absolute(path), full.bytes);
 	if (thumb && thumbPath) await writeFile(absolute(thumbPath), thumb.bytes);
 	try {
-		mutateBuild(db, buildId, userId, (tx, _view, now) => {
+		await mutateBuild(db, buildId, userId, async (tx, _view, now) => {
 			// Re-check in the same transaction as the insert (the files are not counted until the row exists).
-			assertUnder(tx, 'photosPerBuild', () => countPhotos(tx, buildId), { userId });
-			assertUploadRoom(tx, access.organizationId, addBytes, { userId });
-			tx.insert(buildPhotos)
-				.values({
-					id,
-					buildId,
-					kind,
-					path,
-					thumbPath,
-					caption,
-					width: dim(input.width),
-					height: dim(input.height),
-					createdBy: userId,
-					createdAt: now
-				})
-				.run();
+			await assertUnder(tx, 'photosPerBuild', () => countPhotos(tx, buildId), {
+				userId,
+				scope: buildId
+			});
+			await assertUploadRoom(tx, access.organizationId, addBytes, { userId });
+			await tx.insert(buildPhotos).values({
+				id,
+				buildId,
+				kind,
+				path,
+				thumbPath,
+				caption,
+				width: dim(input.width),
+				height: dim(input.height),
+				createdBy: userId,
+				createdAt: now
+			});
 			return { kind: 'photo.add', payload: { photoId: id, photoKind: kind } };
 		});
 	} catch (e) {
@@ -118,11 +122,11 @@ export async function deletePhoto(
 	photoId: string
 ): Promise<void> {
 	let files: string[] = [];
-	mutateBuild(db, buildId, userId, (tx) => {
+	await mutateBuild(db, buildId, userId, async (tx) => {
 		const where = and(eq(buildPhotos.buildId, buildId), eq(buildPhotos.id, photoId));
-		const row = tx.select().from(buildPhotos).where(where).get();
+		const row = await first(tx.select().from(buildPhotos).where(where));
 		if (!row) throw new ApiError(404, 'Not found');
-		tx.delete(buildPhotos).where(where).run();
+		await tx.delete(buildPhotos).where(where);
 		files = [row.path, ...(row.thumbPath ? [row.thumbPath] : [])];
 		return { kind: 'photo.delete', payload: { photoId, photoKind: row.kind } };
 	});
@@ -137,12 +141,13 @@ export async function readPhoto(
 	photoId: string,
 	thumb: boolean
 ): Promise<{ bytes: Uint8Array; type: ImageType }> {
-	if (!buildAccess(db, buildId, userId)) throw new ApiError(404, 'Not found');
-	const row = db
-		.select()
-		.from(buildPhotos)
-		.where(and(eq(buildPhotos.buildId, buildId), eq(buildPhotos.id, photoId)))
-		.get();
+	if (!(await buildAccess(db, buildId, userId))) throw new ApiError(404, 'Not found');
+	const row = await first(
+		db
+			.select()
+			.from(buildPhotos)
+			.where(and(eq(buildPhotos.buildId, buildId), eq(buildPhotos.id, photoId)))
+	);
 	if (!row) throw new ApiError(404, 'Not found');
 	const rel = thumb && row.thumbPath ? row.thumbPath : row.path;
 	try {

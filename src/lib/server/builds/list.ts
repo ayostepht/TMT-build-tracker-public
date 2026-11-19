@@ -1,8 +1,15 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, max } from 'drizzle-orm';
 import type { BuildKind } from '#lib/domain/types.ts';
 import { inactiveSlugs } from '#lib/domain/variants.ts';
-import type { Db } from '../db';
-import { activity, buildFilaments, buildParts, builds, templates } from '../db/schema';
+import type { DbOrTx } from '../db';
+import {
+	activity,
+	buildFilaments,
+	buildParts,
+	builds,
+	templateFilamentRoles,
+	templates
+} from '../db/schema';
 
 export interface BuildRow {
 	id: string;
@@ -22,16 +29,18 @@ export interface BuildRow {
  * Builds with printed/total counts that respect each build's variant choices. Studio drafts
  * (kind 'draft') are left out unless asked for: they are not builds and never count as progress.
  */
-export function buildRows(db: Db, orgIds: string[], kind: BuildKind = 'build'): BuildRow[] {
+export async function buildRows(
+	db: DbOrTx,
+	orgIds: string[],
+	kind: BuildKind = 'build'
+): Promise<BuildRow[]> {
 	if (!orgIds.length) return [];
 	const groupsByTemplate = new Map(
-		db
-			.select({ id: templates.id, groups: templates.variantGroups })
-			.from(templates)
-			.all()
-			.map((t) => [t.id, t.groups])
+		(await db.select({ id: templates.id, groups: templates.variantGroups }).from(templates)).map(
+			(t) => [t.id, t.groups]
+		)
 	);
-	return db
+	const list = await db
 		.select({
 			id: builds.id,
 			organizationId: builds.organizationId,
@@ -45,46 +54,47 @@ export function buildRows(db: Db, orgIds: string[], kind: BuildKind = 'build'): 
 		})
 		.from(builds)
 		.where(and(inArray(builds.organizationId, orgIds), eq(builds.kind, kind)))
-		.orderBy(sql`${builds.createdAt} desc`)
-		.all()
-		.map(({ templateId, choices, createdAt, ...b }) => {
-			const off = inactiveSlugs(groupsByTemplate.get(templateId) ?? [], choices);
-			const rows = db
+		.orderBy(desc(builds.createdAt), desc(builds.id));
+	const out: BuildRow[] = [];
+	for (const { templateId, choices, createdAt, ...b } of list) {
+		const off = inactiveSlugs(groupsByTemplate.get(templateId) ?? [], choices);
+		const rows = (
+			await db
 				.select({ slug: buildParts.partSlug, status: buildParts.status })
 				.from(buildParts)
 				.where(eq(buildParts.buildId, b.id))
-				.all()
-				.filter((r) => !off.has(r.slug));
-			const total = rows.length;
-			const printed = rows.filter((r) => r.status === 'Printed').length;
-			return {
-				...b,
-				created: createdAt.getTime(),
-				total,
-				printed,
-				progress: total ? Math.round((printed / total) * 100) : 0
-			};
+		).filter((r) => !off.has(r.slug));
+		const total = rows.length;
+		const printed = rows.filter((r) => r.status === 'Printed').length;
+		out.push({
+			...b,
+			created: createdAt.getTime(),
+			total,
+			printed,
+			progress: total ? Math.round((printed / total) * 100) : 0
 		});
+	}
+	return out;
 }
 
 /** The builds touched most recently (last activity, else creation) across the given workspaces. */
-export function recentBuilds(db: Db, orgIds: string[], limit = 6): BuildRow[] {
-	const rows = buildRows(db, orgIds);
+export async function recentBuilds(db: DbOrTx, orgIds: string[], limit = 6): Promise<BuildRow[]> {
+	const rows = await buildRows(db, orgIds);
 	if (rows.length <= 1) return rows;
 	const last = new Map(
-		db
-			.select({ id: activity.buildId, at: sql<number>`max(${activity.at})` })
-			.from(activity)
-			.where(
-				inArray(
-					activity.buildId,
-					rows.map((r) => r.id)
+		(
+			await db
+				.select({ id: activity.buildId, at: max(activity.at) })
+				.from(activity)
+				.where(
+					inArray(
+						activity.buildId,
+						rows.map((r) => r.id)
+					)
 				)
-			)
-			.groupBy(activity.buildId)
-			.orderBy(desc(sql`max(${activity.at})`))
-			.all()
-			.map((r) => [r.id, Number(r.at)])
+				.groupBy(activity.buildId)
+				.orderBy(desc(max(activity.at)))
+		).map((r) => [r.id, r.at ? r.at.getTime() : 0])
 	);
 	// `rows` is newest-created first; a stable sort keeps that order for builds without activity.
 	return [...rows]
@@ -104,10 +114,11 @@ export interface DraftRow {
 }
 
 /** Studio drafts in the given workspaces, most recently changed first. */
-export function draftRows(db: Db, orgIds: string[]): DraftRow[] {
+export async function draftRows(db: DbOrTx, orgIds: string[]): Promise<DraftRow[]> {
 	if (!orgIds.length) return [];
-	const rows = db
+	const rows = await db
 		.select({
+			templateId: builds.templateId,
 			id: builds.id,
 			organizationId: builds.organizationId,
 			name: builds.name,
@@ -117,20 +128,19 @@ export function draftRows(db: Db, orgIds: string[]): DraftRow[] {
 		})
 		.from(builds)
 		.innerJoin(templates, eq(templates.id, builds.templateId))
-		.where(and(inArray(builds.organizationId, orgIds), eq(builds.kind, 'draft')))
-		.all();
+		.where(and(inArray(builds.organizationId, orgIds), eq(builds.kind, 'draft')));
 	if (!rows.length) return [];
 	const ids = rows.map((r) => r.id);
 	const last = new Map(
-		db
-			.select({ id: activity.buildId, at: sql<number>`max(${activity.at})` })
-			.from(activity)
-			.where(inArray(activity.buildId, ids))
-			.groupBy(activity.buildId)
-			.all()
-			.map((r) => [r.id, Number(r.at)])
+		(
+			await db
+				.select({ id: activity.buildId, at: max(activity.at) })
+				.from(activity)
+				.where(inArray(activity.buildId, ids))
+				.groupBy(activity.buildId)
+		).map((r) => [r.id, r.at ? r.at.getTime() : 0])
 	);
-	const fils = db
+	const fils = await db
 		.select({
 			buildId: buildFilaments.buildId,
 			hex: buildFilaments.hex,
@@ -138,15 +148,35 @@ export function draftRows(db: Db, orgIds: string[]): DraftRow[] {
 		})
 		.from(buildFilaments)
 		.where(inArray(buildFilaments.buildId, ids))
-		.orderBy(sql`${buildFilaments}.rowid`)
-		.all();
+		.orderBy(asc(buildFilaments.roleKey));
+	// Slot order: the kit's own roles in their template order, colors a design added after them.
+	const roleOrder = new Map<string, string[]>();
+	const roles = await db
+		.select({ templateId: templateFilamentRoles.templateId, key: templateFilamentRoles.key })
+		.from(templateFilamentRoles)
+		.where(
+			inArray(
+				templateFilamentRoles.templateId,
+				rows.map((r) => r.templateId)
+			)
+		);
+	for (const t of roles)
+		roleOrder.set(t.templateId, [...(roleOrder.get(t.templateId) ?? []), t.key]);
+	const slotRank = (templateId: string, key: string) => {
+		const order = roleOrder.get(templateId) ?? [];
+		const i = order.indexOf(key);
+		return i < 0 ? order.length : i;
+	};
 	return rows
 		.map((r) => ({
 			id: r.id,
 			organizationId: r.organizationId,
 			name: r.name,
 			templateName: r.templateName,
-			colors: fils.filter((f) => f.buildId === r.id).map((f) => f.hex),
+			colors: fils
+				.filter((f) => f.buildId === r.id)
+				.sort((a, c) => slotRank(r.templateId, a.key) - slotRank(r.templateId, c.key))
+				.map((f) => f.hex),
 			updated: last.get(r.id) ?? r.createdAt.getTime()
 		}))
 		.sort((a, b) => b.updated - a.updated);

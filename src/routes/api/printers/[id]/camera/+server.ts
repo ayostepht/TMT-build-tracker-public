@@ -10,7 +10,7 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = (event) =>
 	respond(async () => {
 		const db = getDb();
-		const { row } = printerForMember(db, event.params.id, requireUserId(event));
+		const { row } = await printerForMember(db, event.params.id, requireUserId(event));
 		const supported = cameraSupported(row.kind as PrinterKind);
 		// Only a printer on an OctoEverywhere link has a camera; for any other the
 		// refusal means no tile (sourceFor throws a 403 there, which is "no camera" here).

@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { twinGroups, twinsOf, splitTwinRuns } from '#lib/domain/twins.ts';
 import { inactiveSlugs, resolveChoices } from '#lib/domain/variants.ts';
-import type { Db } from '../db';
+import { first, type DbOrTx } from '../db';
 import { buildPlates, builds, templateParts, templates } from '../db/schema';
 
 export interface TwinRepair {
@@ -25,19 +25,18 @@ export interface TwinRepair {
  * run, `filamentGrams` {} (accounting takes the roles from the parts). Print runs are not touched.
  * Idempotent: a repaired plate (or the maintainer's hand-fixed ones) no longer matches. Returns what changed.
  */
-export function repairTwinPlates(db: Db): TwinRepair[] {
+export async function repairTwinPlates(db: DbOrTx): Promise<TwinRepair[]> {
 	const done: TwinRepair[] = [];
-	for (const b of db.select().from(builds).all()) {
-		const rows = db.select().from(buildPlates).where(eq(buildPlates.buildId, b.id)).all();
+	for (const b of await db.select().from(builds)) {
+		const rows = await db.select().from(buildPlates).where(eq(buildPlates.buildId, b.id));
 		const uploaded = rows.filter((p) => p.source.startsWith('upload:') && !p.perPartRuns);
 		if (!uploaded.length) continue;
-		const tpl = db.select().from(templates).where(eq(templates.id, b.templateId)).get();
+		const tpl = await first(db.select().from(templates).where(eq(templates.id, b.templateId)));
 		if (!tpl) continue;
-		const parts = db
+		const parts = await db
 			.select()
 			.from(templateParts)
-			.where(eq(templateParts.templateId, b.templateId))
-			.all();
+			.where(eq(templateParts.templateId, b.templateId));
 		const groups = twinGroups(parts);
 		if (!groups.length) continue;
 		const groupsV = tpl.variantGroups ?? [];
@@ -53,7 +52,8 @@ export function repairTwinPlates(db: Db): TwinRepair[] {
 			if (pl.runs < group.length || !splitTwinRuns(pl.runs, group.length).even) continue;
 			const runsAfter = pl.runs / group.length;
 			const grams = pl.slicerGrams && pl.slicerGrams > 0 ? pl.slicerGrams : null;
-			db.update(buildPlates)
+			await db
+				.update(buildPlates)
 				.set({
 					parts: group,
 					perPartRuns: true,
@@ -61,8 +61,7 @@ export function repairTwinPlates(db: Db): TwinRepair[] {
 					slicerByPart: grams ? Object.fromEntries(group.map((s) => [s, grams])) : {},
 					filamentGrams: {}
 				})
-				.where(and(eq(buildPlates.buildId, b.id), eq(buildPlates.number, pl.number)))
-				.run();
+				.where(and(eq(buildPlates.buildId, b.id), eq(buildPlates.number, pl.number)));
 			const r: TwinRepair = {
 				buildId: b.id,
 				plate: pl.number,

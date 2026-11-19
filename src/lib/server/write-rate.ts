@@ -97,21 +97,22 @@ export function backPath(headers?: Headers, host?: string): string {
  * The 429 response when this request must be refused, else null. Call once the user is known.
  * `isAdmin` defaults to the database lookup; tests pass their own.
  */
-export function writeRateResponse(
+export async function writeRateResponse(
 	user: { id: string; email?: string | null; emailVerified?: boolean | null } | null,
 	method: string,
 	pathname: string,
-	isAdmin: (u: NonNullable<typeof user>) => boolean = (u) => isSiteAdmin(getDb(), u),
+	isAdmin: (u: NonNullable<typeof user>) => boolean | Promise<boolean> = (u) =>
+		isSiteAdmin(getDb(), u),
 	now = Date.now(),
 	headers?: Headers,
 	host?: string
-): Response | null {
+): Promise<Response | null> {
 	if (!user || READ.has(method.toUpperCase())) return null;
 	if (pathname.startsWith('/api/auth/')) return null;
 	const cfg = writeRateConfig();
 	if (!cfg) return null;
 	const wait = takeWriteToken(user.id, cfg, now);
-	if (wait === 0 || isAdmin(user)) return null;
+	if (wait === 0 || (await isAdmin(user))) return null;
 	const error = 'Too many changes too quickly. Wait a moment and try again.';
 	const retry = String(wait);
 	if (headers?.get('x-sveltekit-action') === 'true') {

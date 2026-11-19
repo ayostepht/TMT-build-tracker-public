@@ -13,9 +13,9 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async (event) => {
 	try {
 		const db = getDb();
-		const { row } = printerForMember(db, event.params.id, requireUserId(event));
+		const { row } = await printerForMember(db, event.params.id, requireUserId(event));
 		if (!(await sourceFor(db, row.id))) return json({ error: 'No camera' }, { status: 404 });
-		const f = await sessionFor(db, row.id).snapshot();
+		const f = await (await sessionFor(db, row.id)).snapshot();
 		return new Response(new Uint8Array(f.data), {
 			headers: { 'content-type': 'image/jpeg', 'cache-control': 'no-store' }
 		});

@@ -17,22 +17,21 @@ import { loadBuildView } from '../builds/view';
  * loaded like its own page and reduced to a summary with no personal data (`buildStatsSummary`);
  * only the aggregate leaves here. `months` is clamped to 1-24 (default 6). Not cached.
  */
-export function loadWorkspaceStats(
+export async function loadWorkspaceStats(
 	db: Db,
 	orgId: string,
 	userId: string,
 	opts: { months?: unknown; now?: Date } = {}
-): WorkspaceStats {
-	requireMember(db, orgId, userId);
-	const ids = db
+): Promise<WorkspaceStats> {
+	await requireMember(db, orgId, userId);
+	const ids = await db
 		.select({ id: builds.id })
 		.from(builds)
 		.where(and(eq(builds.organizationId, orgId), eq(builds.kind, 'build')))
-		.orderBy(asc(builds.createdAt))
-		.all();
+		.orderBy(asc(builds.createdAt));
 	const summaries = [];
 	for (const { id } of ids) {
-		const view = loadBuildView(db, id, userId);
+		const view = await loadBuildView(db, id, userId);
 		if (view) summaries.push(buildStatsSummary(view));
 	}
 	return workspaceStats(summaries, { months: clampMonths(opts.months), now: opts.now });

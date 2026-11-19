@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { ApiError } from '#lib/server/access.ts';
-import { getDb } from '#lib/server/db/index.ts';
+import { first, getDb } from '#lib/server/db/index.ts';
 import { editableTargets, getDesignDetail } from '#lib/server/designs/designs.ts';
 import { loadTemplateModel } from '#lib/server/designs/model.ts';
 import { isSiteAdmin } from '#lib/server/access.ts';
@@ -18,17 +18,20 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		// every alternative (standard and smaller rims, one- and two-piece footrest, ...) puts coplanar faces
 		// of different parts on top of each other, which z-fights in the wheel face.
 		const groups =
-			db
-				.select({ g: templates.variantGroups })
-				.from(templates)
-				.where(eq(templates.id, design.templateId))
-				.get()?.g ?? [];
+			(
+				await first(
+					db
+						.select({ g: templates.variantGroups })
+						.from(templates)
+						.where(eq(templates.id, design.templateId))
+				)
+			)?.g ?? [];
 		return {
 			design,
-			model: loadTemplateModel(db, design.templateId),
+			model: await loadTemplateModel(db, design.templateId),
 			hidden: [...inactiveSlugs(groups, null)],
-			targets: editableTargets(db, locals.user.id, design.templateId),
-			siteAdmin: isSiteAdmin(db, locals.user)
+			targets: await editableTargets(db, locals.user.id, design.templateId),
+			siteAdmin: await isSiteAdmin(db, locals.user)
 		};
 	} catch (e) {
 		if (e instanceof ApiError) error(e.status as 404, e.message);

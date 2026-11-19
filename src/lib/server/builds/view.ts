@@ -25,7 +25,7 @@ import { materialFamily } from '#lib/filament-catalog.ts';
 import type { PlateTimeEstimate } from '#lib/domain/time-estimate.ts';
 import { buildAccess } from '../access';
 import { hardwareModelUrl } from '../models/hardware';
-import type { Db } from '../db';
+import { first, type DbOrTx } from '../db';
 import { estimateArrangedPlates, loadTimeModel } from './time-model';
 import { loadProfileRows, resolveProfiles } from './part-profiles';
 import {
@@ -55,30 +55,32 @@ import {
 import { normalizeRole } from '../access';
 import { layoutBed } from '#lib/printers/layout-bed.ts';
 
-function defaultLayoutKey(db: Db, templateId: string): string | null {
+async function defaultLayoutKey(db: DbOrTx, templateId: string): Promise<string | null> {
 	return (
-		db
-			.select({ key: templatePlateLayouts.key })
-			.from(templatePlateLayouts)
-			.where(
-				and(
-					eq(templatePlateLayouts.templateId, templateId),
-					eq(templatePlateLayouts.isDefault, true)
-				)
+		(
+			await first(
+				db
+					.select({ key: templatePlateLayouts.key })
+					.from(templatePlateLayouts)
+					.where(
+						and(
+							eq(templatePlateLayouts.templateId, templateId),
+							eq(templatePlateLayouts.isDefault, true)
+						)
+					)
 			)
-			.get()?.key ?? null
+		)?.key ?? null
 	);
 }
 
 /** Printer jobs linked to the build that are running right now (printing or paused). */
-export function loadLiveJobs(db: Db, buildId: string): LiveJobs {
-	const rows = db
+export async function loadLiveJobs(db: DbOrTx, buildId: string): Promise<LiveJobs> {
+	const rows = await db
 		.select({ plateNumber: printerJobs.plateNumber, partSlugs: printerJobs.partSlugs })
 		.from(printerJobs)
 		.where(
 			and(eq(printerJobs.buildId, buildId), inArray(printerJobs.status, ['printing', 'paused']))
-		)
-		.all();
+		);
 	return {
 		count: rows.length,
 		slugs: rows.flatMap((r) => r.partSlugs ?? []),
@@ -92,65 +94,66 @@ export function loadLiveJobs(db: Db, buildId: string): LiveJobs {
  * "To print" (parts of inactive variants are ignored), or a live (printing / paused) linked job.
  * Drafts are never started.
  */
-export function startedBuildIds(db: Db, buildIds: string[]): Set<string> {
+export async function startedBuildIds(db: DbOrTx, buildIds: string[]): Promise<Set<string>> {
 	const started = new Set<string>();
 	if (!buildIds.length) return started;
-	const rows = db
-		.select({
-			id: builds.id,
-			kind: builds.kind,
-			templateId: builds.templateId,
-			choices: builds.variantChoices
-		})
-		.from(builds)
-		.where(inArray(builds.id, buildIds))
-		.all()
-		.filter((r) => r.kind !== 'draft');
+	const rows = (
+		await db
+			.select({
+				id: builds.id,
+				kind: builds.kind,
+				templateId: builds.templateId,
+				choices: builds.variantChoices
+			})
+			.from(builds)
+			.where(inArray(builds.id, buildIds))
+	).filter((r) => r.kind !== 'draft');
 	if (!rows.length) return started;
 	const ids = rows.map((r) => r.id);
-	for (const r of db
+	for (const r of await db
 		.selectDistinct({ id: printRuns.buildId })
 		.from(printRuns)
-		.where(inArray(printRuns.buildId, ids))
-		.all())
+		.where(inArray(printRuns.buildId, ids)))
 		started.add(r.id);
-	for (const r of db
+	for (const r of await db
 		.selectDistinct({ id: printerJobs.buildId })
 		.from(printerJobs)
 		.where(
 			and(inArray(printerJobs.buildId, ids), inArray(printerJobs.status, ['printing', 'paused']))
-		)
-		.all())
+		))
 		if (r.id) started.add(r.id);
 
 	const groupsByTemplate = new Map(
-		db
-			.select({ id: templates.id, groups: templates.variantGroups })
-			.from(templates)
-			.where(inArray(templates.id, [...new Set(rows.map((r) => r.templateId))]))
-			.all()
-			.map((t) => [t.id, t.groups ?? []])
+		(
+			await db
+				.select({ id: templates.id, groups: templates.variantGroups })
+				.from(templates)
+				.where(inArray(templates.id, [...new Set(rows.map((r) => r.templateId))]))
+		).map((t) => [t.id, t.groups ?? []])
 	);
 	const inactiveByBuild = new Map<string, Set<string>>();
 	for (const r of rows) {
 		const groups = groupsByTemplate.get(r.templateId) ?? [];
 		inactiveByBuild.set(r.id, inactiveSlugs(groups, resolveChoices(groups, r.choices)));
 	}
-	for (const r of db
+	for (const r of await db
 		.select({ id: buildParts.buildId, slug: buildParts.partSlug })
 		.from(buildParts)
-		.where(and(inArray(buildParts.buildId, ids), ne(buildParts.status, 'To print')))
-		.all())
+		.where(and(inArray(buildParts.buildId, ids), ne(buildParts.status, 'To print'))))
 		if (!inactiveByBuild.get(r.id)?.has(r.slug)) started.add(r.id);
 	return started;
 }
 
-export function loadBuildView(db: Db, buildId: string, userId: string): BuildView | null {
-	const access = buildAccess(db, buildId, userId);
+export async function loadBuildView(
+	db: DbOrTx,
+	buildId: string,
+	userId: string
+): Promise<BuildView | null> {
+	const access = await buildAccess(db, buildId, userId);
 	if (!access) return null;
-	const b = db.select().from(builds).where(eq(builds.id, buildId)).get();
+	const b = await first(db.select().from(builds).where(eq(builds.id, buildId)));
 	if (!b) return null;
-	const tpl = db.select().from(templates).where(eq(templates.id, b.templateId)).get();
+	const tpl = await first(db.select().from(templates).where(eq(templates.id, b.templateId)));
 	if (!tpl) return null;
 
 	const design = (b.design ?? null) as {
@@ -166,51 +169,53 @@ export function loadBuildView(db: Db, buildId: string, userId: string): BuildVie
 	);
 
 	const tRoles = new Map(
-		db
-			.select()
-			.from(templateFilamentRoles)
-			.where(eq(templateFilamentRoles.templateId, tpl.id))
-			.all()
-			.map((r) => [r.key, r])
+		(
+			await db
+				.select()
+				.from(templateFilamentRoles)
+				.where(eq(templateFilamentRoles.templateId, tpl.id))
+		).map((r) => [r.key, r])
 	);
-	const filaments = db
-		.select()
-		.from(buildFilaments)
-		.where(eq(buildFilaments.buildId, buildId))
-		.all()
-		.map((f) => {
-			const t = tRoles.get(f.roleKey);
-			return {
-				key: f.roleKey,
-				name: f.name,
-				material: f.material,
-				hex: f.hex,
-				tpu: t?.tpu ?? materialFamily(f.material) === 'tpu',
-				spools: f.spools,
-				spoolAdds: (f.spoolAdds ?? []).map((a) => ({
-					id: a.id,
-					kg: a.kg,
-					at: a.at,
-					userId: a.userId,
-					userName: null as string | null,
-					...(a.note ? { note: a.note } : {})
-				})),
-				recommendedSpools: t?.recommendedSpools ?? 1,
-				kit: !!t
-			};
-		});
+	const filaments = (
+		await db
+			.select()
+			.from(buildFilaments)
+			.where(eq(buildFilaments.buildId, buildId))
+			// no implicit row order in Postgres: a stable one for the colors a design added
+			.orderBy(asc(buildFilaments.roleKey))
+	).map((f) => {
+		const t = tRoles.get(f.roleKey);
+		return {
+			key: f.roleKey,
+			name: f.name,
+			material: f.material,
+			hex: f.hex,
+			tpu: t?.tpu ?? materialFamily(f.material) === 'tpu',
+			spools: f.spools,
+			spoolAdds: (f.spoolAdds ?? []).map((a) => ({
+				id: a.id,
+				kg: a.kg,
+				at: a.at,
+				userId: a.userId,
+				userName: null as string | null,
+				...(a.note ? { note: a.note } : {})
+			})),
+			recommendedSpools: t?.recommendedSpools ?? 1,
+			kit: !!t
+		};
+	});
 	// Who added each spool.
 	const adderIds = [
 		...new Set(filaments.flatMap((f) => f.spoolAdds.map((a) => a.userId)).filter((x) => !!x))
 	] as string[];
 	if (adderIds.length) {
 		const names = new Map(
-			db
-				.select({ id: user.id, name: user.name })
-				.from(user)
-				.where(inArray(user.id, adderIds))
-				.all()
-				.map((u) => [u.id, u.name])
+			(
+				await db
+					.select({ id: user.id, name: user.name })
+					.from(user)
+					.where(inArray(user.id, adderIds))
+			).map((u) => [u.id, u.name])
 		);
 		for (const f of filaments)
 			for (const a of f.spoolAdds) a.userName = (a.userId && names.get(a.userId)) || null;
@@ -226,39 +231,39 @@ export function loadBuildView(db: Db, buildId: string, userId: string): BuildVie
 	const inactive = inactiveSlugs(variantGroups, variantChoices);
 	const variantOf = variantOfPart(variantGroups);
 
-	const allParts: PartDef[] = db
-		.select()
-		.from(templateParts)
-		.where(eq(templateParts.templateId, tpl.id))
-		.orderBy(asc(templateParts.sort))
-		.all()
-		.map((p) => ({
-			slug: p.slug,
-			name: p.name,
-			section: p.section,
-			role: partRoles[p.slug] ?? p.defaultRole,
-			defaultRole: p.defaultRole,
-			locked: lockedSlugs.has(p.slug),
-			bomGrams: p.bomGrams,
-			qty: p.qty,
-			walls: p.walls,
-			infill: p.infill,
-			supports: p.supports,
-			brim: p.brim,
-			sourceFile: p.sourceFile,
-			notes: p.notes,
-			components: p.components,
-			allowedMaterials: p.allowedMaterials,
-			symmetryGroup: p.symmetryGroup,
-			variantGroup: variantOf.get(p.slug)?.group ?? null,
-			variantOption: variantOf.get(p.slug)?.option ?? null,
-			guideRefs: p.guideRefs,
-			sort: p.sort
-		}));
+	const allParts: PartDef[] = (
+		await db
+			.select()
+			.from(templateParts)
+			.where(eq(templateParts.templateId, tpl.id))
+			.orderBy(asc(templateParts.sort))
+	).map((p) => ({
+		slug: p.slug,
+		name: p.name,
+		section: p.section,
+		role: partRoles[p.slug] ?? p.defaultRole,
+		defaultRole: p.defaultRole,
+		locked: lockedSlugs.has(p.slug),
+		bomGrams: p.bomGrams,
+		qty: p.qty,
+		walls: p.walls,
+		infill: p.infill,
+		supports: p.supports,
+		brim: p.brim,
+		sourceFile: p.sourceFile,
+		notes: p.notes,
+		components: p.components,
+		allowedMaterials: p.allowedMaterials,
+		symmetryGroup: p.symmetryGroup,
+		variantGroup: variantOf.get(p.slug)?.group ?? null,
+		variantOption: variantOf.get(p.slug)?.option ?? null,
+		guideRefs: p.guideRefs,
+		sort: p.sort
+	}));
 	const parts = allParts.filter((p) => !inactive.has(p.slug));
 
 	const state: Record<string, PartState> = {};
-	for (const s of db.select().from(buildParts).where(eq(buildParts.buildId, buildId)).all()) {
+	for (const s of await db.select().from(buildParts).where(eq(buildParts.buildId, buildId))) {
 		if (inactive.has(s.partSlug)) continue;
 		state[s.partSlug] = {
 			slug: s.partSlug,
@@ -288,37 +293,35 @@ export function loadBuildView(db: Db, buildId: string, userId: string): BuildVie
 	}
 
 	const runNotes = new Map(
-		db
-			.select({ number: templatePlates.number, runNote: templatePlates.runNote })
-			.from(templatePlates)
-			.where(eq(templatePlates.templateId, tpl.id))
-			.all()
-			.map((p) => [p.number, p.runNote])
+		(
+			await db
+				.select({ number: templatePlates.number, runNote: templatePlates.runNote })
+				.from(templatePlates)
+				.where(eq(templatePlates.templateId, tpl.id))
+		).map((p) => [p.number, p.runNote])
 	);
 	// Plates copied from a built-in layout take their run note from that layout.
 	const layoutNotes = new Map<string, Map<number, string | null>>();
-	for (const l of db
+	for (const l of await db
 		.select()
 		.from(templatePlateLayouts)
-		.where(eq(templatePlateLayouts.templateId, tpl.id))
-		.all())
+		.where(eq(templatePlateLayouts.templateId, tpl.id)))
 		layoutNotes.set(l.key, new Map(l.plates.map((p) => [p.number, p.runNote ?? null])));
 	const noteFor = (source: string | null, number: number): string | null => {
 		if (source?.startsWith('layout:')) return layoutNotes.get(source.slice(7))?.get(number) ?? null;
 		if (source?.startsWith('upload:') || source === 'arranged') return null;
 		return runNotes.get(number) ?? null;
 	};
-	const rawPlates = db
+	const rawPlates = await db
 		.select()
 		.from(buildPlates)
 		.where(eq(buildPlates.buildId, buildId))
-		.orderBy(asc(buildPlates.number))
-		.all();
+		.orderBy(asc(buildPlates.number));
 	// Time precedence: a manual entry (build_plates.manual_est_seconds) > slicer (uploaded sliced 3MF) > MakeGood's profile time > our estimate.
 	// Arranged plates carry no time of their own; estimate it from MakeGood's X/P/A times.
 	// The build's print template (per-part data learned from a sliced file) comes before MakeGood's numbers.
 	const { profiles: partProfiles, template: printTemplate } = resolveProfiles(
-		loadProfileRows(db, buildId),
+		await loadProfileRows(db, buildId),
 		allParts,
 		filaments.map((f) => f.key)
 	);
@@ -339,7 +342,7 @@ export function loadBuildView(db: Db, buildId: string, userId: string): BuildVie
 	const arrangedEst =
 		arrangedRows.length || learnedRows.length
 			? estimateArrangedPlates(
-					loadTimeModel(db, tpl.id, learned),
+					await loadTimeModel(db, tpl.id, learned),
 					[...arrangedRows, ...learnedRows].map((p) => ({
 						number: p.number,
 						runs: p.runs,
@@ -412,76 +415,74 @@ export function loadBuildView(db: Db, buildId: string, userId: string): BuildVie
 		.map((p) => ({ ...p, parts: p.parts.filter((s) => !inactive.has(s)) }))
 		.filter((p) => p.parts.length > 0);
 
-	const runs: PrintRun[] = db
-		.select({ r: printRuns, userName: user.name })
-		.from(printRuns)
-		.leftJoin(user, eq(user.id, printRuns.userId))
-		.where(eq(printRuns.buildId, buildId))
-		.orderBy(asc(printRuns.date), asc(printRuns.id))
-		.all()
-		.map(({ r, userName }) => ({
-			id: r.id,
-			plateNumber: r.plateNumber,
-			partSlug: r.partSlug,
-			partSlugs: r.partSlugs ?? null,
-			date: r.date,
-			result: r.result as RunResult,
-			grams: r.grams,
-			hours: r.hours,
-			estSeconds: r.estSeconds,
-			printer: r.printer,
-			userId: r.userId,
-			userName,
-			note: r.note,
-			createdAt: r.createdAt ? r.createdAt.getTime() : null
-		}));
+	const runs: PrintRun[] = (
+		await db
+			.select({ r: printRuns, userName: user.name })
+			.from(printRuns)
+			.leftJoin(user, eq(user.id, printRuns.userId))
+			.where(eq(printRuns.buildId, buildId))
+			.orderBy(asc(printRuns.date), asc(printRuns.id))
+	).map(({ r, userName }) => ({
+		id: r.id,
+		plateNumber: r.plateNumber,
+		partSlug: r.partSlug,
+		partSlugs: r.partSlugs ?? null,
+		date: r.date,
+		result: r.result as RunResult,
+		grams: r.grams,
+		hours: r.hours,
+		estSeconds: r.estSeconds,
+		printer: r.printer,
+		userId: r.userId,
+		userName,
+		note: r.note,
+		createdAt: r.createdAt ? r.createdAt.getTime() : null
+	}));
 
-	const acts: ActivityItem[] = db
-		.select({ a: activity, userName: user.name })
-		.from(activity)
-		.leftJoin(user, eq(user.id, activity.userId))
-		.where(eq(activity.buildId, buildId))
-		.orderBy(desc(activity.at), desc(activity.id))
-		.limit(50)
-		.all()
-		.map(({ a, userName }) => ({
-			id: a.id,
-			userId: a.userId,
-			userName,
-			kind: a.kind,
-			payload: a.payload,
-			at: a.at.toISOString()
-		}));
+	const acts: ActivityItem[] = (
+		await db
+			.select({ a: activity, userName: user.name })
+			.from(activity)
+			.leftJoin(user, eq(user.id, activity.userId))
+			.where(eq(activity.buildId, buildId))
+			.orderBy(desc(activity.at), desc(activity.id))
+			.limit(50)
+	).map(({ a, userName }) => ({
+		id: a.id,
+		userId: a.userId,
+		userName,
+		kind: a.kind,
+		payload: a.payload,
+		at: a.at.toISOString()
+	}));
 
-	const members = db
-		.select({ userId: member.userId, name: user.name, role: member.role })
-		.from(member)
-		.innerJoin(user, eq(user.id, member.userId))
-		.where(eq(member.organizationId, b.organizationId))
-		.all()
-		.map((m) => ({ userId: m.userId, name: m.name, role: normalizeRole(m.role) }));
+	const members = (
+		await db
+			.select({ userId: member.userId, name: user.name, role: member.role })
+			.from(member)
+			.innerJoin(user, eq(user.id, member.userId))
+			.where(eq(member.organizationId, b.organizationId))
+	).map((m) => ({ userId: m.userId, name: m.name, role: normalizeRole(m.role) }));
 
-	const modelRow = db
-		.select()
-		.from(templateModels)
-		.where(eq(templateModels.templateId, tpl.id))
-		.get();
+	const modelRow = await first(
+		db.select().from(templateModels).where(eq(templateModels.templateId, tpl.id))
+	);
 	const model: TemplateModelInfo | null = modelRow
 		? {
 				url: `/api/templates/${encodeURIComponent(tpl.id)}/model.glb?v=${encodeURIComponent(modelRow.version)}`,
 				version: modelRow.version,
 				hardwareUrl: hardwareModelUrl(tpl.id),
-				placements: db
-					.select()
-					.from(templatePartPlacements)
-					.where(eq(templatePartPlacements.templateId, tpl.id))
-					.all()
-					.map((r): PartPlacement => ({
-						slug: r.slug,
-						matrix: r.matrix,
-						instances: r.instances,
-						placed: r.placed
-					})),
+				placements: (
+					await db
+						.select()
+						.from(templatePartPlacements)
+						.where(eq(templatePartPlacements.templateId, tpl.id))
+				).map((r): PartPlacement => ({
+					slug: r.slug,
+					matrix: r.matrix,
+					instances: r.instances,
+					placed: r.placed
+				})),
 				slugs: modelRow.slugs
 			}
 		: null;
@@ -519,30 +520,32 @@ export function loadBuildView(db: Db, buildId: string, userId: string): BuildVie
 		printTemplate,
 		plates,
 		runs,
-		guidePages: db
-			.select()
-			.from(templateGuidePages)
-			.where(eq(templateGuidePages.templateId, tpl.id))
-			.orderBy(asc(templateGuidePages.sort))
-			.all()
-			.map((g) => ({ page: g.page, title: g.title, sort: g.sort, hasImage: !!g.imagePath })),
-		hardware: db
-			.select()
-			.from(templateHardware)
-			.where(eq(templateHardware.templateId, tpl.id))
-			.all()
-			.map((h) => ({ name: h.name, qty: h.qty, note: h.note })),
+		guidePages: (
+			await db
+				.select()
+				.from(templateGuidePages)
+				.where(eq(templateGuidePages.templateId, tpl.id))
+				.orderBy(asc(templateGuidePages.sort))
+		).map((g) => ({ page: g.page, title: g.title, sort: g.sort, hasImage: !!g.imagePath })),
+		hardware: (
+			await db.select().from(templateHardware).where(eq(templateHardware.templateId, tpl.id))
+		).map((h) => ({ name: h.name, qty: h.qty, note: h.note })),
 		activity: acts,
 		members,
 		printer: (b.printer as BuildPrinter | null) ?? null,
-		layoutPrinter: b.printer ? null : layoutBed(b.plateLayout ?? defaultLayoutKey(db, tpl.id)),
-		assembly: loadAssembly(db, buildId, tpl.id, variantChoices, parts),
-		photos: loadPhotos(db, buildId),
-		handoff: loadHandoff(db, buildId, access.canEdit),
+		layoutPrinter: b.printer
+			? null
+			: layoutBed(b.plateLayout ?? (await defaultLayoutKey(db, tpl.id))),
+		assembly: await loadAssembly(db, buildId, tpl.id, variantChoices, parts),
+		photos: await loadPhotos(db, buildId),
+		handoff: await loadHandoff(db, buildId, access.canEdit),
 		started: undefined as never
 	};
 	// Drafts are never started (buildStarted ignores jobs and runs for them).
-	result.started = buildStarted(result, kind === 'draft' ? undefined : loadLiveJobs(db, buildId));
+	result.started = buildStarted(
+		result,
+		kind === 'draft' ? undefined : await loadLiveJobs(db, buildId)
+	);
 	return result;
 }
 
@@ -582,7 +585,12 @@ export function gramsSourceOf(
 }
 
 /** Persist domain patches onto build_parts. */
-export function applyPatches(db: Db, buildId: string, patches: PartPatch[], now: Date): void {
+export async function applyPatches(
+	db: DbOrTx,
+	buildId: string,
+	patches: PartPatch[],
+	now: Date
+): Promise<void> {
 	for (const { slug, ...p } of patches) {
 		const set: Partial<typeof buildParts.$inferInsert> = { updatedAt: now };
 		if (p.status !== undefined) set.status = p.status;
@@ -592,45 +600,43 @@ export function applyPatches(db: Db, buildId: string, patches: PartPatch[], now:
 		if (p.comps !== undefined) set.comps = p.comps;
 		if ('assigneeUserId' in p) set.assigneeUserId = p.assigneeUserId ?? null;
 		if ('manualGrams' in p) set.manualGrams = p.manualGrams ?? null;
-		db.update(buildParts)
+		await db
+			.update(buildParts)
 			.set(set)
-			.where(and(eq(buildParts.buildId, buildId), eq(buildParts.partSlug, slug)))
-			.run();
+			.where(and(eq(buildParts.buildId, buildId), eq(buildParts.partSlug, slug)));
 	}
 }
 
-function loadAssembly(
-	db: Db,
+async function loadAssembly(
+	db: DbOrTx,
 	buildId: string,
 	templateId: string,
 	choices: Record<string, string>,
 	activeParts: PartDef[]
-): BuildAssembly {
-	const rows = db
-		.select()
-		.from(templateAssemblySteps)
-		.where(eq(templateAssemblySteps.templateId, templateId))
-		.orderBy(asc(templateAssemblySteps.sort))
-		.all()
-		.map((r) => ({
-			key: r.key,
-			title: r.title,
-			description: r.description,
-			guidePage: r.guidePage,
-			parts: r.parts,
-			hardware: r.hardware,
-			checks: r.checks,
-			when: r.when ?? null
-		}));
+): Promise<BuildAssembly> {
+	const rows = (
+		await db
+			.select()
+			.from(templateAssemblySteps)
+			.where(eq(templateAssemblySteps.templateId, templateId))
+			.orderBy(asc(templateAssemblySteps.sort))
+	).map((r) => ({
+		key: r.key,
+		title: r.title,
+		description: r.description,
+		guidePage: r.guidePage,
+		parts: r.parts,
+		hardware: r.hardware,
+		checks: r.checks,
+		when: r.when ?? null
+	}));
 	const steps = filterSteps(rows, choices, new Set(activeParts.map((p) => p.slug)));
 	const items: BuildAssembly['items'] = {};
-	for (const { a, userName } of db
+	for (const { a, userName } of await db
 		.select({ a: buildAssembly, userName: user.name })
 		.from(buildAssembly)
 		.leftJoin(user, eq(user.id, buildAssembly.doneBy))
-		.where(eq(buildAssembly.buildId, buildId))
-		.all()
-		.map((x) => ({ a: x.a, userName: x.userName }))) {
+		.where(eq(buildAssembly.buildId, buildId))) {
 		items[a.itemKey] = {
 			done: a.done,
 			note: a.note,
@@ -642,29 +648,33 @@ function loadAssembly(
 	return { steps, items };
 }
 
-function loadPhotos(db: Db, buildId: string): BuildPhoto[] {
-	return db
-		.select({ p: buildPhotos, userName: user.name })
-		.from(buildPhotos)
-		.leftJoin(user, eq(user.id, buildPhotos.createdBy))
-		.where(eq(buildPhotos.buildId, buildId))
-		.orderBy(asc(buildPhotos.createdAt), asc(buildPhotos.id))
-		.all()
-		.map(({ p, userName }) => ({
-			id: p.id,
-			kind: p.kind as PhotoKind,
-			caption: p.caption,
-			width: p.width,
-			height: p.height,
-			createdBy: p.createdBy,
-			createdByName: userName,
-			createdAt: p.createdAt.toISOString()
-		}));
+async function loadPhotos(db: DbOrTx, buildId: string): Promise<BuildPhoto[]> {
+	return (
+		await db
+			.select({ p: buildPhotos, userName: user.name })
+			.from(buildPhotos)
+			.leftJoin(user, eq(user.id, buildPhotos.createdBy))
+			.where(eq(buildPhotos.buildId, buildId))
+			.orderBy(asc(buildPhotos.createdAt), asc(buildPhotos.id))
+	).map(({ p, userName }) => ({
+		id: p.id,
+		kind: p.kind as PhotoKind,
+		caption: p.caption,
+		width: p.width,
+		height: p.height,
+		createdBy: p.createdBy,
+		createdByName: userName,
+		createdAt: p.createdAt.toISOString()
+	}));
 }
 
 /** The recipient contact is team-internal: only owners and editors receive it. */
-function loadHandoff(db: Db, buildId: string, canSeeContact: boolean): HandoffRecord | null {
-	const h = db.select().from(buildHandoff).where(eq(buildHandoff.buildId, buildId)).get();
+async function loadHandoff(
+	db: DbOrTx,
+	buildId: string,
+	canSeeContact: boolean
+): Promise<HandoffRecord | null> {
+	const h = await first(db.select().from(buildHandoff).where(eq(buildHandoff.buildId, buildId)));
 	if (!h) return null;
 	return {
 		recipientName: h.recipientName,

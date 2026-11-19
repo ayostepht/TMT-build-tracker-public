@@ -5,7 +5,7 @@ import { recentBuilds } from '#lib/server/builds/list.ts';
 import { getAuth } from '#lib/server/auth-instance.ts';
 import { mayUseInvitations } from '#lib/server/auth-policy.ts';
 import { appMode, isPublicMode, signupMode } from '#lib/server/config.ts';
-import { getDb } from '#lib/server/db/index.ts';
+import { first, getDb } from '#lib/server/db/index.ts';
 import { printerCounts } from '#lib/server/printers/store.ts';
 import { builds } from '#lib/server/db/schema.ts';
 import {
@@ -23,9 +23,9 @@ export const load: LayoutServerLoad = async ({ locals, url, request }) => {
 	}
 	const db = getDb();
 	// Users from before personal workspaces existed get theirs on first visit.
-	if (!findPersonalWorkspace(db, locals.user.id))
-		ensurePersonalWorkspace(db, { id: locals.user.id, name: locals.user.name });
-	const raw = listTeams(db, locals.user.id);
+	if (!(await findPersonalWorkspace(db, locals.user.id)))
+		await ensurePersonalWorkspace(db, { id: locals.user.id, name: locals.user.name });
+	const raw = await listTeams(db, locals.user.id);
 	const activeId = (locals.session as { activeOrganizationId?: string | null } | null)
 		?.activeOrganizationId;
 	// Without a valid active workspace, prefer a real chapter (legacy users) over "My builds".
@@ -46,12 +46,10 @@ export const load: LayoutServerLoad = async ({ locals, url, request }) => {
 	// A page reached from a build (`?from=<buildId>`) offers a way back to it.
 	const fromId = url.searchParams.get('from');
 	let backBuild: { id: string; name: string } | null = null;
-	if (fromId && buildAccess(db, fromId, locals.user.id)) {
-		const row = db
-			.select({ id: builds.id, name: builds.name })
-			.from(builds)
-			.where(eq(builds.id, fromId))
-			.get();
+	if (fromId && (await buildAccess(db, fromId, locals.user.id))) {
+		const row = await first(
+			db.select({ id: builds.id, name: builds.name }).from(builds).where(eq(builds.id, fromId))
+		);
 		if (row) backBuild = row;
 	}
 	const nameOf = new Map(teams.map((t) => [t.id, t.name]));
@@ -59,25 +57,27 @@ export const load: LayoutServerLoad = async ({ locals, url, request }) => {
 		user: { id: locals.user.id, name: locals.user.name, email: locals.user.email },
 		teams,
 		/** Printers per workspace: the nav's Printers link goes where the printers are. */
-		printerCounts: printerCounts(
+		printerCounts: await printerCounts(
 			db,
 			teams.map((t) => t.id)
 		),
 		activeTeamId,
 		/** Install-wide admin (first user or ADMIN_EMAILS): shows the "Kit admin" link. */
-		siteAdmin: isSiteAdmin(db, locals.user),
+		siteAdmin: await isSiteAdmin(db, locals.user),
 		/** Hosted site: printers are limited to OctoEverywhere links and not-connected ones. */
 		publicMode: isPublicMode(),
 		invitationCount: mayUseInvitations(
 			{ publicMode: appMode() === 'public', signup: signupMode() },
 			locals.user
 		)
-			? pendingInvitationCount(db, locals.user.email)
+			? await pendingInvitationCount(db, locals.user.email)
 			: 0,
 		/** Builds touched most recently across all workspaces, for the Builds menu. */
-		recentBuilds: recentBuilds(
-			db,
-			teams.map((t) => t.id)
+		recentBuilds: (
+			await recentBuilds(
+				db,
+				teams.map((t) => t.id)
+			)
 		).map((b) => ({
 			id: b.id,
 			name: b.name,

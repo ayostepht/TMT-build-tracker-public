@@ -25,10 +25,10 @@ export async function uploadPrintGeometry(
 	request: Request,
 	name: string
 ) {
-	assertPrintGeometryImportAllowed(db, user);
-	const release = acquireUploadSlot(db, user);
+	await assertPrintGeometryImportAllowed(db, user);
+	const release = await acquireUploadSlot(db, user);
 	try {
-		const orgId = admitKitUpload(db, user.id, templateId);
+		const orgId = await admitKitUpload(db, user.id, templateId);
 		const dest = join(importsDir(), `geometry-${randomUUID()}.upload`);
 		await saveUpload(request, dest, {
 			maxBytes: maxThreeMfBytes(),
@@ -39,11 +39,11 @@ export async function uploadPrintGeometry(
 			const report = await importPrintGeometry(db, templateId, dest, name);
 			if (orgId) {
 				try {
-					assertUploadRoom(db, orgId, 0, { userId: user.id });
+					await assertUploadRoom(db, orgId, 0, { userId: user.id });
 				} catch (e) {
 					if (e instanceof QuotaError) {
-						clearImportedGeometry(db, templateId);
-						seedTemplates(db, templateSeeds);
+						await clearImportedGeometry(db, templateId);
+						await seedTemplates(db, templateSeeds);
 					}
 					throw e;
 				}

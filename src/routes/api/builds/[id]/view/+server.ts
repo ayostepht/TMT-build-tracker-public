@@ -12,7 +12,7 @@ export const GET: RequestHandler = async (event) => {
 	} catch (e) {
 		return json({ error: (e as ApiError).message }, { status: 401 });
 	}
-	const view = loadBuildView(getDb(), event.params.id, userId);
+	const view = await loadBuildView(getDb(), event.params.id, userId);
 	if (!view) return json({ error: 'Not found' }, { status: 404 });
 	return json(view);
 };

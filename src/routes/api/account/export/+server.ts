@@ -6,9 +6,9 @@ import { getDb } from '#lib/server/db/index.ts';
 import type { RequestHandler } from './$types';
 
 /** The signed-in user's own data as one JSON download (profile, memberships, personal builds). */
-export const GET: RequestHandler = (event) => {
+export const GET: RequestHandler = async (event) => {
 	try {
-		const body = exportAccountData(getDb(), requireUserId(event));
+		const body = await exportAccountData(getDb(), requireUserId(event));
 		return new Response(body, {
 			headers: {
 				'content-type': 'application/json; charset=utf-8',

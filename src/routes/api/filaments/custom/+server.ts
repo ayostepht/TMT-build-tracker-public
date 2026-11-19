@@ -11,10 +11,10 @@ import type { RequestHandler } from './$types';
 
 /** `?organizationId=`: the workspace's custom filaments (members). */
 export const GET: RequestHandler = (event) =>
-	respond(() => {
+	respond(async () => {
 		const org = event.url.searchParams.get('organizationId');
 		if (!org) throw new ApiError(400, 'organizationId is required');
-		return { filaments: listCustomFilaments(getDb(), org, requireUserId(event)) };
+		return { filaments: await listCustomFilaments(getDb(), org, requireUserId(event)) };
 	});
 
 /** `{ organizationId, brand, material, colorName, hex, finish?, hardness?, url?, notes? }` (editors). 409 + `existingId` on a duplicate. */
@@ -26,7 +26,7 @@ export const POST: RequestHandler = async (event) => {
 			throw new ApiError(400, 'organizationId is required');
 		return json({
 			ok: true,
-			filament: createCustomFilament(getDb(), body.organizationId, userId, body)
+			filament: await createCustomFilament(getDb(), body.organizationId, userId, body)
 		});
 	} catch (e) {
 		if (e instanceof DuplicateFilamentError)

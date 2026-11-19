@@ -5,6 +5,7 @@ import type { RequestHandler } from './$types';
 
 /** `{ group, option }`: choose a variant option for the build (editor or owner). */
 export const PATCH: RequestHandler = (event) =>
-	respond(async () =>
-		setVariant(getDb(), event.params.id, requireUserId(event), await readJson(event))
+	respond(
+		async () =>
+			await setVariant(getDb(), event.params.id, requireUserId(event), await readJson(event))
 	);

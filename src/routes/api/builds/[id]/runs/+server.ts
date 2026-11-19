@@ -9,7 +9,7 @@ import type { RequestHandler } from './$types';
  */
 export const POST: RequestHandler = (event) =>
 	respond(async () => {
-		const { runId, runIds } = addRun(
+		const { runId, runIds } = await addRun(
 			getDb(),
 			event.params.id,
 			requireUserId(event),

@@ -5,40 +5,38 @@
  * under `<db dir>/uploads/print/<templateId>/`).
  */
 import { asc, eq, or } from 'drizzle-orm';
-import { openDb, runMigrations, type Db } from '../db';
+import { closeDb, first, openDb, runMigrations, type Db } from '../db';
 import { templates } from '../db/schema';
 import { templateSeeds } from '../seed';
 import { seedTemplates } from '../seed/run';
 import { importPrintGeometry, listPrintGeometry, type ImportResult } from './import';
 
-export { openDb };
+export { openDb, closeDb };
 
 /** Migrate and seed the templates (what the server does at start); for fresh scratch databases. */
-export function initDb(db: Db): void {
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
+export async function initDb(db: Db): Promise<void> {
+	await runMigrations(db);
+	await seedTemplates(db, templateSeeds);
 }
 
-export function listTemplates(db: Db) {
+export async function listTemplates(db: Db) {
 	return db
 		.select({ id: templates.id, slug: templates.slug, name: templates.name })
 		.from(templates)
-		.orderBy(asc(templates.name))
-		.all();
+		.orderBy(asc(templates.name));
 }
 
-export function findTemplate(db: Db, slugOrId: string) {
-	const t = db
-		.select({ id: templates.id, slug: templates.slug, name: templates.name })
-		.from(templates)
-		.where(or(eq(templates.slug, slugOrId), eq(templates.id, slugOrId)))
-		.get();
+export async function findTemplate(db: Db, slugOrId: string) {
+	const t = await first(
+		db
+			.select({ id: templates.id, slug: templates.slug, name: templates.name })
+			.from(templates)
+			.where(or(eq(templates.slug, slugOrId), eq(templates.id, slugOrId)))
+	);
 	if (!t)
 		throw new Error(
 			`No template "${slugOrId}". Known: ${
-				listTemplates(db)
-					.map((x) => x.slug)
-					.join(', ') || 'none'
+				(await listTemplates(db)).map((x) => x.slug).join(', ') || 'none'
 			}`
 		);
 	return t;

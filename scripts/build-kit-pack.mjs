@@ -2,18 +2,23 @@
 // database + uploads directory that already holds the imported kit. Runs in the app image
 // (the code it uses is bundled into build/cli by `npm run build`), from the app root.
 //
+// Needs a scratch Postgres (never the production database): `scripts/dev-postgres.sh` starts a local
+// one, then `export DATABASE_URL=postgres://tmt:tmt@localhost:5432/tmt_kitpack` (create it first with
+// `createdb`). `--data-dir` is where the converted model and print meshes are written
+// (`<data dir>/uploads/...`, default ./data/kitpack-work).
+//
 //   # one go, scratch install (later --print files win):
-//   node scripts/build-kit-pack.mjs --db data/kitpack-work/tmt.db --init \
+//   node scripts/build-kit-pack.mjs --data-dir data/kitpack-work --init \
 //     --model "STEP FILES.zip" --hardware hardware.glb \
 //     --print h-profile.3mf --print bucket.3mf --print harness.zip --print xpa.3mf \
 //     --pack-version 1.0.0 --out data/kitpack
 //
 //   # or only pack what an install already has:
-//   node scripts/build-kit-pack.mjs --db /data/tmt.db --pack-version 1.0.0 --out /tmp
+//   node scripts/build-kit-pack.mjs --data-dir /data --pack-version 1.0.0 --out /tmp
 //
 //   # a part without a STEP file (community design from a slicer 3MF) is added to the model
 //   # as a node in its own frame (see src/lib/server/kitpack/model-node.ts), then packed:
-//   node scripts/build-kit-pack.mjs --db data/kitpack-work/tmt.db --pack-version 1.0.2 --out data/kitpack \
+//   node scripts/build-kit-pack.mjs --data-dir data/kitpack-work --pack-version 1.0.2 --out data/kitpack \
 //     --print SinglePieceHandleTMT.3mf --model-node push-handle-one-piece=SinglePieceHandleTMT.3mf \
 //     --project-settings push-handle-one-piece=SinglePieceHandleTMT.3mf \
 //     --origins-from kitpacks/makegood-tmt-revb-1.0.1.kitpack
@@ -29,7 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { strFromU8, unzipSync } from 'fflate';
 
-const usage = `Usage: build-kit-pack.mjs --db <path> --pack-version <x.y.z> --out <dir> [--template <slug>]
+const usage = `Usage: build-kit-pack.mjs [--database-url <url>] [--data-dir <dir>] --pack-version <x.y.z> --out <dir> [--template <slug>]
   [--init] [--model <step.zip>] [--hardware <hardware.glb>] [--print <3mf|zip>]... [--scale 1000]
   [--license-url <url>] [--import-only] [--model-node <slug>=<3mf>]... [--project-settings <slug>=<3mf>]... [--origins-from <older.kitpack>] [--licenses <json>]`;
 
@@ -37,7 +42,8 @@ let args;
 try {
 	args = parseArgs({
 		options: {
-			db: { type: 'string' },
+			'database-url': { type: 'string' },
+			'data-dir': { type: 'string' },
 			template: { type: 'string', default: 'makegood-tmt-revb' },
 			init: { type: 'boolean', default: false },
 			model: { type: 'string' },
@@ -59,14 +65,21 @@ try {
 	console.error(e.message + '\n' + usage);
 	process.exit(2);
 }
-if (args.help || !args.db || (!args['import-only'] && (!args['pack-version'] || !args.out))) {
+if (args.help || (!args['import-only'] && (!args['pack-version'] || !args.out))) {
 	console.log(usage);
 	process.exit(args.help ? 0 : 2);
 }
 
-const dbPath = resolve(args.db);
-// uploadsDir() is derived from DATABASE_URL, so set it before the bundle runs.
-process.env.DATABASE_URL = dbPath;
+// The bundle reads both at call time; set them before it runs.
+const databaseUrl = args['database-url'] || process.env.DATABASE_URL;
+if (!databaseUrl) {
+	console.error(
+		'Set DATABASE_URL (or pass --database-url) to a scratch Postgres database.\n' + usage
+	);
+	process.exit(2);
+}
+process.env.DATABASE_URL = databaseUrl;
+process.env.DATA_DIR = resolve(args['data-dir'] || process.env.DATA_DIR || 'data/kitpack-work');
 let cli;
 try {
 	cli = await import(new URL('../build/cli/kitpack-cli.js', import.meta.url));
@@ -77,12 +90,11 @@ try {
 	process.exit(1);
 }
 
+let db;
 try {
-	if (!args.init && !existsSync(dbPath))
-		throw new Error(`Database ${dbPath} does not exist (use --init)`);
-	const db = cli.openDb(dbPath);
-	if (args.init) cli.initDb(db);
-	const tpl = cli.findTemplate(db, args.template);
+	db = cli.openDb(databaseUrl);
+	if (args.init) await cli.initDb(db);
+	const tpl = await cli.findTemplate(db, args.template);
 	const t0 = Date.now();
 	const step = (m) => console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s] ${m}`);
 	if (args.model) {
@@ -121,10 +133,13 @@ try {
 		const eq = spec.indexOf('=');
 		if (eq < 1) throw new Error(`--project-settings expects <slug>=<file.3mf>, got "${spec}"`);
 		const slug = spec.slice(0, eq);
-		const kept = cli.applyProjectSettings(db, tpl.id, slug, resolve(spec.slice(eq + 1)));
+		const kept = await cli.applyProjectSettings(db, tpl.id, slug, resolve(spec.slice(eq + 1)));
 		step(`print settings of ${slug}: ${JSON.stringify(kept)}`);
 	}
-	if (args['import-only']) process.exit(0);
+	if (args['import-only']) {
+		await cli.closeDb(db);
+		process.exit(0);
+	}
 	const out = resolve(args.out);
 	mkdirSync(out, { recursive: true });
 	const version = args['pack-version'];
@@ -150,7 +165,7 @@ try {
 				).map((r) => [r.slug, r.origin])
 			)
 		: undefined;
-	const res = cli.buildKitPack(db, {
+	const res = await cli.buildKitPack(db, {
 		templateSlug: tpl.slug,
 		version,
 		outFile,
@@ -175,7 +190,9 @@ try {
 			2
 		)
 	);
+	await cli.closeDb(db);
 } catch (e) {
 	console.error('Error: ' + (e?.stack ?? e));
+	if (db) await cli.closeDb(db).catch(() => {});
 	process.exit(1);
 }

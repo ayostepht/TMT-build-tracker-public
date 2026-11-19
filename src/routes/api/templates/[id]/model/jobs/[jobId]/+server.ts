@@ -7,9 +7,9 @@ import type { RequestHandler } from './$types';
 
 /** Site admin: progress of a conversion job (poll every second or two). */
 export const GET: RequestHandler = (event) =>
-	respond(() => {
-		requireAdminForTemplate(event, event.params.id);
-		const job = getJob(getDb(), event.params.id, event.params.jobId);
+	respond(async () => {
+		await requireAdminForTemplate(event, event.params.id);
+		const job = await getJob(getDb(), event.params.id, event.params.jobId);
 		if (!job) throw new ApiError(404, 'Not found');
 		return {
 			job: {

@@ -510,29 +510,28 @@ export function quotas(): Quotas {
 
 /**
  * Printers one workspace may have that are reached through an OctoEverywhere shared link
- * (`QUOTA_LINK_PRINTERS_PER_WORKSPACE`, digits or `off`). Default 3 in public mode (each one is a
- * long-lived connection from this server to a third party), no limit self-hosted. Kept apart from
+ * (`QUOTA_LINK_PRINTERS_PER_WORKSPACE`, digits or `off`). Default 3 (each one is a
+ * long-lived connection from this server to a third party). Kept apart from
  * `quotas()` on purpose: it is a printer-store rule, enforced in `printers/store.ts`.
  */
 export function linkPrintersPerWorkspace(): number | null {
-	return quotaValue('QUOTA_LINK_PRINTERS_PER_WORKSPACE', isPublicMode() ? 3 : null);
+	return quotaValue('QUOTA_LINK_PRINTERS_PER_WORKSPACE', 3);
 }
 
 /**
  * Link printers on the whole instance (`QUOTA_LINK_PRINTERS_TOTAL`, digits or `off`): every one is
- * a long-lived connection from this server to a third party. Default 200 in public mode, no limit
- * self-hosted. Enforced in `printers/store.ts` with the per-workspace cap.
+ * a long-lived connection from this server to a third party. Default 200. Enforced in `printers/store.ts` with the per-workspace cap.
  */
 export function linkPrintersTotal(): number | null {
-	return quotaValue('QUOTA_LINK_PRINTERS_TOTAL', isPublicMode() ? 200 : null);
+	return quotaValue('QUOTA_LINK_PRINTERS_TOTAL', 200);
 }
 
 /**
  * Not-connected (manual) printers per workspace (`QUOTA_MANUAL_PRINTERS_PER_WORKSPACE`, digits or
- * `off`): they cost no connection, only rows. Default 10 in public mode, no limit self-hosted.
+ * `off`): they cost no connection, only rows. Default 10.
  */
 export function manualPrintersPerWorkspace(): number | null {
-	return quotaValue('QUOTA_MANUAL_PRINTERS_PER_WORKSPACE', isPublicMode() ? 10 : null);
+	return quotaValue('QUOTA_MANUAL_PRINTERS_PER_WORKSPACE', 10);
 }
 
 /** Validates `WRITE_RATE_PER_MIN` and `WRITE_RATE_BURST` (digits or `off`) at boot; `write-rate.ts` does the parsing for use. */

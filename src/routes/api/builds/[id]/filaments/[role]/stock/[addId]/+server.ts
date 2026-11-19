@@ -5,12 +5,13 @@ import type { RequestHandler } from './$types';
 
 /** Remove one earlier add from a color's stock. Editors and owners. */
 export const DELETE: RequestHandler = (event) =>
-	respond(async () =>
-		removeSpoolAdd(
-			getDb(),
-			event.params.id,
-			requireUserId(event),
-			event.params.role,
-			event.params.addId
-		)
+	respond(
+		async () =>
+			await removeSpoolAdd(
+				getDb(),
+				event.params.id,
+				requireUserId(event),
+				event.params.role,
+				event.params.addId
+			)
 	);

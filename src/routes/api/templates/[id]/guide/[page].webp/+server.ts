@@ -13,7 +13,7 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async (event) => {
 	try {
 		requireUserId(event);
-		assertTemplateViewable(getDb(), event.locals.user!, event.params.id);
+		await assertTemplateViewable(getDb(), event.locals.user!, event.params.id);
 		const page = Number(event.params.page);
 		if (!Number.isInteger(page)) return json({ error: 'Not found' }, { status: 404 });
 		const f = await readGuidePage(getDb(), event.params.id, page);

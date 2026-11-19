@@ -10,9 +10,9 @@ import type { RequestHandler } from './$types';
 
 /** Site admin: the template's print geometry rows (seed and imported). */
 export const GET: RequestHandler = (event) =>
-	respond(() => {
-		requireAdminForTemplate(event, event.params.id);
-		return { rows: listPrintGeometry(getDb(), event.params.id) };
+	respond(async () => {
+		await requireAdminForTemplate(event, event.params.id);
+		return { rows: await listPrintGeometry(getDb(), event.params.id) };
 	});
 
 /**
@@ -22,7 +22,7 @@ export const GET: RequestHandler = (event) =>
  */
 export const POST: RequestHandler = (event) =>
 	respond(async () => {
-		requireAdminForTemplate(event, event.params.id);
+		await requireAdminForTemplate(event, event.params.id);
 		const name = (event.url.searchParams.get('name') ?? 'upload.3mf').split(/[\\/]/).pop()!;
 		return await uploadPrintGeometry(
 			getDb(),
@@ -35,9 +35,9 @@ export const POST: RequestHandler = (event) =>
 
 /** Site admin: forget imported geometry (meshes and rows); the kit's seed footprints come back on the next start. */
 export const DELETE: RequestHandler = (event) =>
-	respond(() => {
-		requireAdminForTemplate(event, event.params.id);
-		const removed = clearImportedGeometry(getDb(), event.params.id);
-		seedTemplates(getDb(), templateSeeds); // brings the seed footprints back
+	respond(async () => {
+		await requireAdminForTemplate(event, event.params.id);
+		const removed = await clearImportedGeometry(getDb(), event.params.id);
+		await seedTemplates(getDb(), templateSeeds); // brings the seed footprints back
 		return { removed };
 	});

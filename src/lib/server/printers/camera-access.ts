@@ -19,7 +19,7 @@ export function cameraChanged(printerId: string) {
 
 /** Resolve (cached for a minute: Moonraker/OctoPrint are asked over HTTP) the printer's camera. */
 export async function sourceFor(db: Db, printerId: string): Promise<CameraSource | null> {
-	const row = getPrinter(db, printerId);
+	const row = await getPrinter(db, printerId);
 	assertCameraAllowed(row);
 	const hit = cache.get(printerId);
 	if (hit && Date.now() - hit.at < TTL_MS) return hit.src;
@@ -30,22 +30,22 @@ export async function sourceFor(db: Db, printerId: string): Promise<CameraSource
 }
 
 /** Members of the printer's workspace only; everyone else (and unknown ids) gets 404. */
-export function printerForMember(db: Db, printerId: string, userId: string) {
-	const row = getPrinter(db, printerId);
+export async function printerForMember(db: Db, printerId: string, userId: string) {
+	const row = await getPrinter(db, printerId);
 	if (!row) throw new ApiError(404, 'Not found');
-	const role = requireMember(db, row.organizationId, userId);
+	const role = await requireMember(db, row.organizationId, userId);
 	return { row, role };
 }
 
 /** Only a printer reached through an OctoEverywhere link has a camera. */
-function assertCameraAllowed(row: ReturnType<typeof getPrinter>): void {
+function assertCameraAllowed(row: Awaited<ReturnType<typeof getPrinter>>): void {
 	assertOutboundAllowed({
 		allowShareLink: !!row && !!shareLinkFor(row.kind, toConfig(row).secrets)
 	});
 }
 
-export function sessionFor(db: Db, printerId: string): CameraSession {
-	const row = getPrinter(db, printerId);
+export async function sessionFor(db: Db, printerId: string): Promise<CameraSession> {
+	const row = await getPrinter(db, printerId);
 	assertCameraAllowed(row);
 	return getCameraHub().session(printerId, async () => {
 		// A failed lookup is not cached forever: a missing source is retried by the session backoff.

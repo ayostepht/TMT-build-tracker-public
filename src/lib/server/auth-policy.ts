@@ -1,5 +1,5 @@
-import { and, eq, gt, sql } from 'drizzle-orm';
-import type { Db } from './db';
+import { and, count, eq, gt } from 'drizzle-orm';
+import { first, type DbOrTx } from './db';
 import { invitation, user } from './db/schema';
 import { isSiteAdmin } from './access';
 import { quotas, type SignupMode } from './config';
@@ -19,34 +19,33 @@ export interface PolicyConfig {
 
 export type NewUserDecision = { ok: true } | { ok: false; code: string; message: string };
 
-export function userCount(db: Db): number {
-	return (
-		db
-			.select({ n: sql<number>`count(*)` })
-			.from(user)
-			.get()?.n ?? 0
-	);
+export async function userCount(db: DbOrTx): Promise<number> {
+	return (await first(db.select({ n: count() }).from(user)))?.n ?? 0;
 }
 
 /** A pending, unexpired invitation addressed to this email (case-insensitive). */
-export function hasPendingInvitation(db: Db, email: string, now = new Date()): boolean {
+export async function hasPendingInvitation(
+	db: DbOrTx,
+	email: string,
+	now = new Date()
+): Promise<boolean> {
 	const wanted = email.trim().toLowerCase();
 	if (!wanted) return false;
-	return db
-		.select({ email: invitation.email })
-		.from(invitation)
-		.where(and(eq(invitation.status, 'pending'), gt(invitation.expiresAt, now)))
-		.all()
-		.some((i) => i.email.toLowerCase() === wanted);
+	return (
+		await db
+			.select({ email: invitation.email })
+			.from(invitation)
+			.where(and(eq(invitation.status, 'pending'), gt(invitation.expiresAt, now)))
+	).some((i) => i.email.toLowerCase() === wanted);
 }
 
 /**
  * Sign-up rule shown to visitors: `open`, `invite` (an invitation link is needed) or
  * `closed`. The very first account on an empty database is always allowed (bootstrap).
  */
-export function effectiveSignup(db: Db, cfg: PolicyConfig): SignupMode {
+export async function effectiveSignup(db: DbOrTx, cfg: PolicyConfig): Promise<SignupMode> {
 	if (cfg.publicMode) return 'open';
-	if (cfg.signup !== 'open' && userCount(db) === 0) return 'open';
+	if (cfg.signup !== 'open' && (await userCount(db)) === 0) return 'open';
 	return cfg.signup;
 }
 
@@ -54,13 +53,16 @@ export const ACCOUNTS_PAUSED_CODE = 'signups_paused';
 export const ACCOUNTS_PAUSED_MESSAGE = 'This server is not taking new accounts right now.';
 
 /** Accounts created in the last 24 hours. */
-export function recentSignupCount(db: Db, now = new Date()): number {
+export async function recentSignupCount(db: DbOrTx, now = new Date()): Promise<number> {
 	return (
-		db
-			.select({ n: sql<number>`count(*)` })
-			.from(user)
-			.where(gt(user.createdAt, new Date(now.getTime() - 24 * 3600 * 1000)))
-			.get()?.n ?? 0
+		(
+			await first(
+				db
+					.select({ n: count() })
+					.from(user)
+					.where(gt(user.createdAt, new Date(now.getTime() - 24 * 3600 * 1000)))
+			)
+		)?.n ?? 0
 	);
 }
 
@@ -68,34 +70,35 @@ export function recentSignupCount(db: Db, now = new Date()): number {
  * True when `QUOTA_ACCOUNTS_TOTAL` or `QUOTA_SIGNUPS_PER_DAY` is reached (both unlimited in
  * self-host unless set). Ignores who is asking: site admins are exempted in `decideNewUser`.
  */
-export function accountsPaused(db: Db, now = new Date()): boolean {
+export async function accountsPaused(db: DbOrTx, now = new Date()): Promise<boolean> {
 	const q = quotas();
-	if (q.accountsTotal !== null && userCount(db) >= q.accountsTotal) return true;
-	if (q.signupsPerDay !== null && recentSignupCount(db, now) >= q.signupsPerDay) return true;
+	if (q.accountsTotal !== null && (await userCount(db)) >= q.accountsTotal) return true;
+	if (q.signupsPerDay !== null && (await recentSignupCount(db, now)) >= q.signupsPerDay)
+		return true;
 	return false;
 }
 
 /** Decision for `databaseHooks.user.create.before`: covers email sign-up and SSO first login. */
-export function decideNewUser(
-	db: Db,
+export async function decideNewUser(
+	db: DbOrTx,
 	candidate: { email?: string | null; emailVerified?: boolean | null },
 	cfg: PolicyConfig,
 	now = new Date()
-): NewUserDecision {
-	const base = decideByPolicy(db, candidate, cfg, now);
+): Promise<NewUserDecision> {
+	const base = await decideByPolicy(db, candidate, cfg, now);
 	if (!base.ok) return base;
 	// Account caps apply to everyone but site admins (an ADMIN_EMAILS address; verified in public mode).
-	if (accountsPaused(db, now) && !isSiteAdmin(db, { id: '', ...candidate }))
+	if ((await accountsPaused(db, now)) && !(await isSiteAdmin(db, { id: '', ...candidate })))
 		return { ok: false, code: ACCOUNTS_PAUSED_CODE, message: ACCOUNTS_PAUSED_MESSAGE };
 	return base;
 }
 
-function decideByPolicy(
-	db: Db,
+async function decideByPolicy(
+	db: DbOrTx,
 	candidate: { email?: string | null; emailVerified?: boolean | null },
 	cfg: PolicyConfig,
 	now: Date
-): NewUserDecision {
+): Promise<NewUserDecision> {
 	if (cfg.publicMode) {
 		if (candidate.emailVerified !== true)
 			return {
@@ -105,14 +108,14 @@ function decideByPolicy(
 			};
 		return { ok: true };
 	}
-	if (cfg.signup === 'open' || userCount(db) === 0) return { ok: true };
+	if (cfg.signup === 'open' || (await userCount(db)) === 0) return { ok: true };
 	if (cfg.signup === 'closed')
 		return {
 			ok: false,
 			code: 'signup_closed',
 			message: 'Sign-up is closed on this server.'
 		};
-	if (hasPendingInvitation(db, candidate.email ?? '', now)) return { ok: true };
+	if (await hasPendingInvitation(db, candidate.email ?? '', now)) return { ok: true };
 	return {
 		ok: false,
 		code: 'invitation_required',

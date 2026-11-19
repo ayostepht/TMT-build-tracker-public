@@ -32,9 +32,9 @@ export const POST: RequestHandler = (event) =>
 		if (mode !== undefined && mode !== 'colors' && mode !== 'full')
 			throw new ApiError(400, 'mode must be colors or full');
 		const db = getDb();
-		const id = findDesign(db, event.params.id, userId).id;
-		if (body?.dryRun === true) return previewApplyDesign(db, id, buildId, userId);
-		const plan = applyDesignToBuild(db, id, buildId, userId, {
+		const id = (await findDesign(db, event.params.id, userId)).id;
+		if (body?.dryRun === true) return await previewApplyDesign(db, id, buildId, userId);
+		const plan = await applyDesignToBuild(db, id, buildId, userId, {
 			mode,
 			confirm: body?.confirm === true
 		});

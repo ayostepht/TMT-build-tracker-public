@@ -19,7 +19,7 @@ import {
 import { securityHeaders, withHeaders } from '#lib/server/security-headers.ts';
 import { writeRateResponse } from '#lib/server/write-rate.ts';
 
-export const init: ServerInit = () => {
+export const init: ServerInit = async () => {
 	if (building) return;
 	// Fail at boot, not with a 500 on every request: a container with a bad secret or an
 	// unsafe public-mode setup must not look healthy. Messages never contain the secret.
@@ -31,7 +31,7 @@ export const init: ServerInit = () => {
 	}
 	const warning = bodyLimitWarning();
 	if (warning) console.warn(`[tmt] ${warning}`);
-	startup();
+	await startup();
 };
 
 let lastClientIpWarning = 0;

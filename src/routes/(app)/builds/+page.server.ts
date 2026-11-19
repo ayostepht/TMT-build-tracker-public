@@ -5,7 +5,7 @@ import type { PageServerLoad } from './$types';
 /** Every build the user can see: all their chapters plus My builds, grouped by where it lives. */
 export const load: PageServerLoad = async ({ parent }) => {
 	const { teams } = await parent();
-	const rows = buildRows(
+	const rows = await buildRows(
 		getDb(),
 		teams.map((t) => t.id)
 	);

@@ -7,18 +7,18 @@ import { acquireSseSlot, QuotaError } from '#lib/server/quota.ts';
 import type { RequestHandler } from './$types';
 
 /** Team-level server-sent events: live printer status and job changes. */
-export const GET: RequestHandler = (event) => {
+export const GET: RequestHandler = async (event) => {
 	const user = event.locals.user;
 	if (!user) return json({ error: 'Sign in required' }, { status: 401 });
 	const db = getDb();
 	const sessionId = event.locals.session?.id;
 	const org = event.url.searchParams.get('org') ?? '';
-	if (!org || !getMemberRole(db, org, user.id))
+	if (!org || !(await getMemberRole(db, org, user.id)))
 		return json({ error: 'Not found' }, { status: 404 });
 
 	let release: () => void;
 	try {
-		release = acquireSseSlot(db, user);
+		release = await acquireSseSlot(db, user);
 	} catch (e) {
 		if (e instanceof QuotaError)
 			return json({ error: e.message, code: e.code }, { status: e.status });
@@ -27,7 +27,7 @@ export const GET: RequestHandler = (event) => {
 	return liveStream({
 		signal: event.request.signal,
 		subscribe: (fn) => subscribePrinterEvents(org, fn),
-		allowed: () => !!getMemberRole(db, org, user.id),
+		allowed: async () => !!(await getMemberRole(db, org, user.id)),
 		sessionValid: () => sessionStillValid(db, sessionId),
 		release
 	});

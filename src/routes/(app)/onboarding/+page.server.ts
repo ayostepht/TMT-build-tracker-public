@@ -3,32 +3,32 @@ import { and, eq, gt } from 'drizzle-orm';
 import { getAuth } from '#lib/server/auth-instance.ts';
 import { mayUseInvitations } from '#lib/server/auth-policy.ts';
 import { appMode, signupMode } from '#lib/server/config.ts';
-import { getDb } from '#lib/server/db/index.ts';
+import { first, getDb } from '#lib/server/db/index.ts';
 import { invitation, organization, user } from '#lib/server/db/schema.ts';
 import { slugify } from '#lib/server/teams.ts';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ locals }) => {
+export const load: PageServerLoad = async ({ locals }) => {
 	const email = locals.user!.email.toLowerCase();
 	// Public mode: only a provider-verified email may see or accept invitations.
 	if (
 		!mayUseInvitations({ publicMode: appMode() === 'public', signup: signupMode() }, locals.user!)
 	)
 		return { invitations: [] };
-	const invitations = getDb()
-		.select({
-			id: invitation.id,
-			role: invitation.role,
-			email: invitation.email,
-			team: organization.name,
-			inviter: user.name
-		})
-		.from(invitation)
-		.innerJoin(organization, eq(organization.id, invitation.organizationId))
-		.innerJoin(user, eq(user.id, invitation.inviterId))
-		.where(and(eq(invitation.status, 'pending'), gt(invitation.expiresAt, new Date())))
-		.all()
-		.filter((i) => i.email.toLowerCase() === email);
+	const invitations = (
+		await getDb()
+			.select({
+				id: invitation.id,
+				role: invitation.role,
+				email: invitation.email,
+				team: organization.name,
+				inviter: user.name
+			})
+			.from(invitation)
+			.innerJoin(organization, eq(organization.id, invitation.organizationId))
+			.innerJoin(user, eq(user.id, invitation.inviterId))
+			.where(and(eq(invitation.status, 'pending'), gt(invitation.expiresAt, new Date())))
+	).filter((i) => i.email.toLowerCase() === email);
 	return { invitations };
 };
 
@@ -40,7 +40,9 @@ export const actions: Actions = {
 		const db = getDb();
 		let slug = slugify(name);
 		if (
-			db.select({ id: organization.id }).from(organization).where(eq(organization.slug, slug)).get()
+			await first(
+				db.select({ id: organization.id }).from(organization).where(eq(organization.slug, slug))
+			)
 		)
 			slug = `${slug}-${crypto.randomUUID().slice(0, 4)}`;
 		try {

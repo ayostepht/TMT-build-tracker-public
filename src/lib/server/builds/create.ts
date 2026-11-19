@@ -4,7 +4,7 @@ import { resolveChoices, validateChoices } from '#lib/domain/variants.ts';
 import { ApiError, requireEditor } from '../access';
 import { canSeeDesign } from '../designs/access';
 import { arrangeForPrinter } from './plates';
-import type { Db } from '../db';
+import { first, one, type Db } from '../db';
 import { assertUnder, countBuilds, countDrafts } from '../quota';
 import {
 	activity,
@@ -41,22 +41,28 @@ export interface CreateBuildInput {
 }
 
 /** Create a build from a template (and optional color design) in one transaction. Returns the new id. */
-export function createBuild(db: Db, input: CreateBuildInput, userId: string): string {
-	requireEditor(db, input.organizationId, userId);
+export async function createBuild(
+	db: Db,
+	input: CreateBuildInput,
+	userId: string
+): Promise<string> {
+	await requireEditor(db, input.organizationId, userId);
 	const name = input.name.trim();
 	if (!name) throw new ApiError(400, 'Name is required');
 	if (input.deliveryDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.deliveryDate))
 		throw new ApiError(400, 'Delivery date must be YYYY-MM-DD');
 
-	const newId = db.transaction((tx) => {
-		// Count and insert in this one synchronous transaction: parallel requests cannot both pass.
+	// `db.transaction` exists on a Db; a caller already inside a transaction (a Tx) is nested as a savepoint.
+	const newId = await db.transaction(async (tx) => {
+		// Count and insert under an advisory lock (taken by assertUnder): parallel requests cannot both pass.
 		if (input.kind === 'draft')
-			assertUnder(tx, 'draftsPerUser', () => countDrafts(tx, userId), { userId });
+			await assertUnder(tx, 'draftsPerUser', () => countDrafts(tx, userId), { userId });
 		else
-			assertUnder(tx, 'buildsPerWorkspace', () => countBuilds(tx, input.organizationId), {
-				userId
+			await assertUnder(tx, 'buildsPerWorkspace', () => countBuilds(tx, input.organizationId), {
+				userId,
+				scope: input.organizationId
 			});
-		const tpl = tx.select().from(templates).where(eq(templates.id, input.templateId)).get();
+		const tpl = await first(tx.select().from(templates).where(eq(templates.id, input.templateId)));
 		// A workspace-owned kit copy is usable only in the workspace that owns it.
 		if (!tpl || (tpl.ownerOrgId && tpl.ownerOrgId !== input.organizationId))
 			throw new ApiError(400, 'Unknown template');
@@ -66,143 +72,135 @@ export function createBuild(db: Db, input: CreateBuildInput, userId: string): st
 		if (badChoice) throw new ApiError(400, badChoice);
 
 		const layout = input.plateLayout
-			? tx
-					.select()
-					.from(templatePlateLayouts)
-					.where(
-						and(
-							eq(templatePlateLayouts.templateId, tpl.id),
-							eq(templatePlateLayouts.key, input.plateLayout)
+			? await first(
+					tx
+						.select()
+						.from(templatePlateLayouts)
+						.where(
+							and(
+								eq(templatePlateLayouts.templateId, tpl.id),
+								eq(templatePlateLayouts.key, input.plateLayout)
+							)
 						)
-					)
-					.get()
+				)
 			: undefined;
 		if (input.plateLayout && !layout) throw new ApiError(400, 'Unknown plate layout');
 
 		let design: typeof colorDesigns.$inferSelect | undefined;
 		if (input.designId) {
-			design = tx.select().from(colorDesigns).where(eq(colorDesigns.id, input.designId)).get();
-			if (!design || design.templateId !== tpl.id || !canSeeDesign(tx, design, userId))
+			design = await first(
+				tx.select().from(colorDesigns).where(eq(colorDesigns.id, input.designId))
+			);
+			if (!design || design.templateId !== tpl.id || !(await canSeeDesign(tx, design, userId)))
 				throw new ApiError(400, 'Unknown design');
 		}
 
-		const { id } = tx
-			.insert(builds)
-			.values({
-				organizationId: input.organizationId,
-				templateId: tpl.id,
-				name,
-				recipient: input.recipient?.trim() || null,
-				hospital: input.hospital?.trim() || null,
-				deliveryDate: input.deliveryDate || null,
-				design: design
-					? {
-							id: design.id,
-							slug: design.slug,
-							name: design.name,
-							roles: design.roles,
-							partRoles: design.partRoles
-						}
-					: null,
-				variantChoices: resolveChoices(tpl.variantGroups, choices),
-				plateLayout: layout?.key ?? null,
-				printer: input.printer ?? null,
-				kind: input.kind === 'draft' ? 'draft' : 'build',
-				setupStep: input.setup && input.kind !== 'draft' ? 1 : null,
-				createdBy: userId
-			})
-			.returning({ id: builds.id })
-			.get();
+		const { id } = await one(
+			tx
+				.insert(builds)
+				.values({
+					organizationId: input.organizationId,
+					templateId: tpl.id,
+					name,
+					recipient: input.recipient?.trim() || null,
+					hospital: input.hospital?.trim() || null,
+					deliveryDate: input.deliveryDate || null,
+					design: design
+						? {
+								id: design.id,
+								slug: design.slug,
+								name: design.name,
+								roles: design.roles,
+								partRoles: design.partRoles
+							}
+						: null,
+					variantChoices: resolveChoices(tpl.variantGroups, choices),
+					plateLayout: layout?.key ?? null,
+					printer: input.printer ?? null,
+					kind: input.kind === 'draft' ? 'draft' : 'build',
+					setupStep: input.setup && input.kind !== 'draft' ? 1 : null,
+					createdBy: userId
+				})
+				.returning({ id: builds.id })
+		);
 
 		const overrides = new Map((design?.roles ?? []).map((r) => [r.key, r]));
-		for (const r of tx
+		for (const r of await tx
 			.select()
 			.from(templateFilamentRoles)
-			.where(eq(templateFilamentRoles.templateId, tpl.id))
-			.all()) {
+			.where(eq(templateFilamentRoles.templateId, tpl.id))) {
 			const o = overrides.get(r.key);
-			tx.insert(buildFilaments)
-				.values({
-					buildId: id,
-					roleKey: r.key,
-					name: o?.name ?? r.name,
-					material: o?.material ?? r.material,
-					hex: o?.hex ?? r.hex,
-					spools: r.recommendedSpools
-				})
-				.run();
+			await tx.insert(buildFilaments).values({
+				buildId: id,
+				roleKey: r.key,
+				name: o?.name ?? r.name,
+				material: o?.material ?? r.material,
+				hex: o?.hex ?? r.hex,
+				spools: r.recommendedSpools
+			});
 		}
 		// Colors a design added beyond the kit's own slots.
 		const own = new Set(
-			tx
-				.select({ key: templateFilamentRoles.key })
-				.from(templateFilamentRoles)
-				.where(eq(templateFilamentRoles.templateId, tpl.id))
-				.all()
-				.map((r) => r.key)
+			(
+				await tx
+					.select({ key: templateFilamentRoles.key })
+					.from(templateFilamentRoles)
+					.where(eq(templateFilamentRoles.templateId, tpl.id))
+			).map((r) => r.key)
 		);
 		for (const r of design?.roles ?? []) {
 			if (own.has(r.key)) continue;
-			tx.insert(buildFilaments)
-				.values({
-					buildId: id,
-					roleKey: r.key,
-					name: r.name,
-					material: r.material,
-					hex: r.hex,
-					spools: 0
-				})
-				.run();
+			await tx.insert(buildFilaments).values({
+				buildId: id,
+				roleKey: r.key,
+				name: r.name,
+				material: r.material,
+				hex: r.hex,
+				spools: 0
+			});
 		}
 		// Rows for every part, active or not, so switching variants keeps any progress.
-		for (const p of tx
+		for (const p of await tx
 			.select({ slug: templateParts.slug })
 			.from(templateParts)
-			.where(eq(templateParts.templateId, tpl.id))
-			.all()) {
-			tx.insert(buildParts).values({ buildId: id, partSlug: p.slug }).run();
+			.where(eq(templateParts.templateId, tpl.id))) {
+			await tx.insert(buildParts).values({ buildId: id, partSlug: p.slug });
 		}
 		if (layout) {
 			for (const p of layout.plates)
-				tx.insert(buildPlates)
-					.values({
-						buildId: id,
-						number: p.number,
-						name: p.name,
-						estSeconds: p.estSeconds,
-						runs: p.runs,
-						perPartRuns: p.perPartRuns ?? false,
-						parts: p.parts,
-						source: `layout:${layout.key}`
-					})
-					.run();
-		}
-		for (const p of layout
-			? []
-			: tx.select().from(templatePlates).where(eq(templatePlates.templateId, tpl.id)).all()) {
-			tx.insert(buildPlates)
-				.values({
+				await tx.insert(buildPlates).values({
 					buildId: id,
 					number: p.number,
 					name: p.name,
 					estSeconds: p.estSeconds,
 					runs: p.runs,
-					perPartRuns: p.perPartRuns,
-					parts: p.parts
-				})
-				.run();
+					perPartRuns: p.perPartRuns ?? false,
+					parts: p.parts,
+					source: `layout:${layout.key}`
+				});
 		}
-		tx.insert(activity)
-			.values({
+		for (const p of layout
+			? []
+			: await tx.select().from(templatePlates).where(eq(templatePlates.templateId, tpl.id))) {
+			await tx.insert(buildPlates).values({
 				buildId: id,
-				userId,
-				kind: 'build.create',
-				payload: input.kind === 'draft' ? { name, draft: true } : { name }
-			})
-			.run();
+				number: p.number,
+				name: p.name,
+				estSeconds: p.estSeconds,
+				runs: p.runs,
+				perPartRuns: p.perPartRuns,
+				parts: p.parts
+			});
+		}
+		await tx.insert(activity).values({
+			buildId: id,
+			userId,
+			kind: 'build.create',
+			payload: input.kind === 'draft' ? { name, draft: true } : { name }
+		});
 		return id;
 	});
 	// A printer without an explicit layout: plan the plates for it right away.
-	if (input.printer && !input.plateLayout) arrangeForPrinter(db, newId, userId);
+	if (input.printer && !input.plateLayout) await arrangeForPrinter(db, newId, userId);
 	return newId;
 }

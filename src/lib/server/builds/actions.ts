@@ -25,7 +25,7 @@ import {
 	type PrintRunInput
 } from '#lib/domain/types.ts';
 import { ApiError, buildAccess, requireEditor, requireOwner } from '../access';
-import type { Db } from '../db';
+import { advisoryLock, first, one, type Db, type DbOrTx, type Tx } from '../db';
 import {
 	activity,
 	buildFilaments,
@@ -115,44 +115,58 @@ export function draftAllows(kind: string): boolean {
  * let `fn` validate and compute, persist patches + an activity row in one
  * transaction, then emit the SSE event.
  */
-export function mutateBuild(
+export async function mutateBuild(
 	db: Db,
 	buildId: string,
 	userId: string,
-	fn: (tx: Db, view: BuildView, now: Date) => Outcome
-): void {
-	const access = buildAccess(db, buildId, userId);
+	fn: (tx: Tx, view: BuildView, now: Date) => Outcome | Promise<Outcome>
+): Promise<void> {
+	const access = await buildAccess(db, buildId, userId);
 	if (!access) throw new ApiError(404, 'Not found');
 	if (!access.canEdit) throw new ApiError(403, 'Your role cannot edit');
 	const now = new Date();
-	const out = db.transaction((txRaw) => {
-		const tx = txRaw as unknown as Db;
-		const view = loadBuildView(tx, buildId, userId);
+	const out = await db.transaction(async (tx) => {
+		// SQLite's single writer made every mutation (load the view, compute patches, write) serial.
+		// Postgres does not: a per-build lock keeps two requests from writing off the same stale view.
+		await advisoryLock(tx, `build:${buildId}`);
+		const view = await loadBuildView(tx, buildId, userId);
 		if (!view) throw new ApiError(404, 'Not found');
-		const o = fn(tx, view, now);
+		const o = await fn(tx, view, now);
 		if (o.skip) return o;
 		if (access.kind === 'draft' && !draftAllows(o.kind))
 			throw new ApiError(400, 'Drafts have no build tracking. Make it a build first.');
-		if (o.patches?.length) applyPatches(tx, buildId, o.patches, now);
-		if (REARRANGE_KINDS.has(o.kind)) autoRearrangeBuild(tx, buildId, userId);
-		tx.insert(activity)
-			.values({ buildId, userId, kind: o.kind, payload: o.payload ?? {}, at: now })
-			.run();
-		pruneActivity(tx, buildId);
+		if (o.patches?.length) await applyPatches(tx, buildId, o.patches, now);
+		if (REARRANGE_KINDS.has(o.kind)) await autoRearrangeBuild(tx, buildId, userId);
+		await tx
+			.insert(activity)
+			.values({ buildId, userId, kind: o.kind, payload: o.payload ?? {}, at: now });
+		await pruneActivity(tx, buildId);
 		return o;
 	});
 	if (out.skip) return;
-	publish(db, buildId, userId, out.kind, now);
+	// Emitted after the commit, never inside the transaction.
+	await publish(db, buildId, userId, out.kind, now);
 }
 
-function publish(db: Db, buildId: string, userId: string, kind: string, now: Date): void {
-	const u = db.select({ name: user.name }).from(user).where(eq(user.id, userId)).get();
+async function publish(
+	db: DbOrTx,
+	buildId: string,
+	userId: string,
+	kind: string,
+	now: Date
+): Promise<void> {
+	const u = await first(db.select({ name: user.name }).from(user).where(eq(user.id, userId)));
 	emitBuildEvent(buildId, { type: 'changed', kind, by: u?.name ?? null, at: now.toISOString() });
 }
 
-export function updateBuild(db: Db, buildId: string, userId: string, body: unknown): void {
+export async function updateBuild(
+	db: Db,
+	buildId: string,
+	userId: string,
+	body: unknown
+): Promise<void> {
 	if (!isObj(body)) bad('Invalid body');
-	mutateBuild(db, buildId, userId, (tx, view) => {
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
 		const set: Partial<typeof builds.$inferInsert> = {};
 		if (body.name !== undefined) {
 			if (typeof body.name !== 'string' || !body.name.trim()) bad('name is required');
@@ -178,19 +192,19 @@ export function updateBuild(db: Db, buildId: string, userId: string, body: unkno
 			if (((set[k] as string | null) ?? null) === (cur[k] || null)) delete set[k];
 		}
 		if (!Object.keys(set).length) return { kind: 'build.update', skip: true };
-		tx.update(builds).set(set).where(eq(builds.id, buildId)).run();
+		await tx.update(builds).set(set).where(eq(builds.id, buildId));
 		return { kind: 'build.update', payload: set };
 	});
 }
 
-export function deleteBuild(db: Db, buildId: string, userId: string): void {
-	const access = buildAccess(db, buildId, userId);
+export async function deleteBuild(db: Db, buildId: string, userId: string): Promise<void> {
+	const access = await buildAccess(db, buildId, userId);
 	if (!access) throw new ApiError(404, 'Not found');
 	// A draft is a sandbox: editors may delete it. A real build needs a chapter owner.
-	if (access.kind === 'draft') requireEditor(db, access.organizationId, userId);
-	else requireOwner(db, access.organizationId, userId);
-	db.delete(builds).where(eq(builds.id, buildId)).run();
-	publish(db, buildId, userId, 'build.delete', new Date());
+	if (access.kind === 'draft') await requireEditor(db, access.organizationId, userId);
+	else await requireOwner(db, access.organizationId, userId);
+	await db.delete(builds).where(eq(builds.id, buildId));
+	await publish(db, buildId, userId, 'build.delete', new Date());
 }
 
 /**
@@ -199,32 +213,35 @@ export function deleteBuild(db: Db, buildId: string, userId: string): void {
  * the wizard opens there with every earlier step one click away.
  * Editors and owners. Writes a `build.promote` activity row.
  */
-export function promoteDraft(db: Db, buildId: string, userId: string): void {
-	const access = buildAccess(db, buildId, userId);
+export async function promoteDraft(db: Db, buildId: string, userId: string): Promise<void> {
+	const access = await buildAccess(db, buildId, userId);
 	if (!access) throw new ApiError(404, 'Not found');
 	if (!access.canEdit) throw new ApiError(403, 'Your role cannot edit');
 	if (access.kind !== 'draft') throw new ApiError(400, 'This is already a build');
-	mutateBuild(db, buildId, userId, (tx) => {
-		assertUnder(tx, 'buildsPerWorkspace', () => countBuilds(tx, access.organizationId), { userId });
-		tx.update(builds).set({ kind: 'build', setupStep: 5 }).where(eq(builds.id, buildId)).run();
+	await mutateBuild(db, buildId, userId, async (tx) => {
+		await assertUnder(tx, 'buildsPerWorkspace', () => countBuilds(tx, access.organizationId), {
+			userId,
+			scope: access.organizationId
+		});
+		await tx.update(builds).set({ kind: 'build', setupStep: 5 }).where(eq(builds.id, buildId));
 		return { kind: 'build.promote', payload: {} };
 	});
 }
 
-export function setPartStatus(
+export async function setPartStatus(
 	db: Db,
 	buildId: string,
 	userId: string,
 	slug: string,
 	body: unknown
-): void {
+): Promise<void> {
 	if (!isObj(body) || !(PART_STATUSES as readonly unknown[]).includes(body.status))
 		bad('status must be one of ' + PART_STATUSES.join(', '));
 	const status = body.status as PartStatus;
 	const printedOn = body.printedOn;
 	if (printedOn !== undefined && status !== 'Printed')
 		bad('printedOn only applies when restoring a part to Printed');
-	mutateBuild(db, buildId, userId, (_tx, view, now) => {
+	await mutateBuild(db, buildId, userId, async (_tx, view, now) => {
 		if (!hasPart(view, slug)) throw new ApiError(404, 'Unknown part');
 		if (printedOn !== undefined && !validPrintedOn(printedOn, now))
 			bad('printedOn must be a date (YYYY-MM-DD) between 2020-01-01 and today');
@@ -250,15 +267,15 @@ export const MAX_RUN_GRAMS = 100000;
 export const runGramsMessage = (field: string): string =>
 	`${field} must be at most ${MAX_RUN_GRAMS} g`;
 
-export function updatePart(
+export async function updatePart(
 	db: Db,
 	buildId: string,
 	userId: string,
 	slug: string,
 	body: unknown
-): void {
+): Promise<void> {
 	if (!isObj(body)) bad('Invalid body');
-	mutateBuild(db, buildId, userId, (tx, view) => {
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
 		if (!hasPart(view, slug)) throw new ApiError(404, 'Unknown part');
 		const patch: PartPatch = { slug };
 		if (body.comps !== undefined) {
@@ -311,14 +328,14 @@ export function updatePart(
  * plates are left alone, and clearing a run time never clears the plate's. Returns the plate number
  * that was set, or null.
  */
-export function syncPlateTime(
-	tx: Db,
+export async function syncPlateTime(
+	tx: DbOrTx,
 	buildId: string,
 	view: BuildView,
 	slugs: string[],
 	seconds: number | null,
 	source: 'user' | 'printer'
-): number | null {
+): Promise<number | null> {
 	if (!seconds || seconds <= 0) return null;
 	const plate = view.plates.find(
 		(p) => slugs.length > 0 && slugs.every((s) => p.parts.includes(s))
@@ -326,17 +343,18 @@ export function syncPlateTime(
 	if (!plate || plate.perPartRuns || !plate.parts.every((s) => slugs.includes(s))) return null;
 	const where = and(eq(buildPlates.buildId, buildId), eq(buildPlates.number, plate.number));
 	if (source === 'printer') {
-		const cur = tx
-			.select({ s: buildPlates.manualEstSeconds, src: buildPlates.manualEstSource })
-			.from(buildPlates)
-			.where(where)
-			.get();
+		const cur = await first(
+			tx
+				.select({ s: buildPlates.manualEstSeconds, src: buildPlates.manualEstSource })
+				.from(buildPlates)
+				.where(where)
+		);
 		if (cur?.s && cur.src !== 'printer') return null;
 	}
-	tx.update(buildPlates)
+	await tx
+		.update(buildPlates)
 		.set({ manualEstSeconds: Math.round(seconds), manualEstSource: source })
-		.where(where)
-		.run();
+		.where(where);
 	return plate.number;
 }
 
@@ -346,15 +364,14 @@ export function syncPlateTime(
  * the printer that has been restarted. A job being confirmed has already ended, so it is
  * never in the set.
  */
-export function livePrintingSlugs(tx: Db, buildId: string): Set<string> {
+export async function livePrintingSlugs(tx: DbOrTx, buildId: string): Promise<Set<string>> {
 	const out = new Set<string>();
-	const rows = tx
+	const rows = await tx
 		.select({ partSlugs: printerJobs.partSlugs })
 		.from(printerJobs)
 		.where(
 			and(eq(printerJobs.buildId, buildId), inArray(printerJobs.status, ['printing', 'paused']))
-		)
-		.all();
+		);
 	for (const r of rows) for (const s of r.partSlugs ?? []) out.add(s);
 	return out;
 }
@@ -364,19 +381,24 @@ export function livePrintingSlugs(tx: Db, buildId: string): Set<string> {
  * covering most of them, then the latest started. Gives its printer-derived start and, when the
  * printer's last status has both elapsed and remaining seconds, the total run time.
  */
-function liveJobStart(tx: Db, buildId: string, slugs: string[]): LiveStart | null {
-	const rows = tx
-		.select({
-			startedAt: printerJobs.startedAt,
-			partSlugs: printerJobs.partSlugs,
-			lastStatus: printers.lastStatus
-		})
-		.from(printerJobs)
-		.innerJoin(printers, eq(printers.id, printerJobs.printerId))
-		.where(
-			and(eq(printerJobs.buildId, buildId), inArray(printerJobs.status, ['printing', 'paused']))
-		)
-		.all()
+async function liveJobStart(
+	tx: DbOrTx,
+	buildId: string,
+	slugs: string[]
+): Promise<LiveStart | null> {
+	const rows = (
+		await tx
+			.select({
+				startedAt: printerJobs.startedAt,
+				partSlugs: printerJobs.partSlugs,
+				lastStatus: printers.lastStatus
+			})
+			.from(printerJobs)
+			.innerJoin(printers, eq(printers.id, printerJobs.printerId))
+			.where(
+				and(eq(printerJobs.buildId, buildId), inArray(printerJobs.status, ['printing', 'paused']))
+			)
+	)
 		.map((j) => ({ ...j, n: (j.partSlugs ?? []).filter((s) => slugs.includes(s)).length }))
 		.filter((j) => j.n > 0 && j.startedAt)
 		.sort((a, b) => b.n - a.n || b.startedAt!.getTime() - a.startedAt!.getTime());
@@ -387,14 +409,19 @@ function liveJobStart(tx: Db, buildId: string, slugs: string[]): LiveStart | nul
 	return { startedAt: best.startedAt!, runEstSeconds: total };
 }
 
-export function printingAction(db: Db, buildId: string, userId: string, body: unknown): void {
+export async function printingAction(
+	db: Db,
+	buildId: string,
+	userId: string,
+	body: unknown
+): Promise<void> {
 	if (!isObj(body)) bad('Invalid body');
 	const action = body.action;
 	if (!['start', 'stop', 'setStart', 'setEstimate'].includes(action as string))
 		bad('Unknown action');
 	// Printers whose live job was unlinked by "Take off printer" (their Overview chooser reappears).
 	const freed: { org: string; printerId: string }[] = [];
-	mutateBuild(db, buildId, userId, (tx, view, now) => {
+	await mutateBuild(db, buildId, userId, async (tx, view, now) => {
 		const slugs = slugList(body.slugs, view);
 		switch (action) {
 			case 'start': {
@@ -404,28 +431,28 @@ export function printingAction(db: Db, buildId: string, userId: string, body: un
 				return {
 					kind: 'printing.start',
 					payload: { slugs, ...(printer ? { printer } : {}) },
-					patches: startPrinting(view, slugs, now, liveJobStart(tx, buildId, slugs))
+					patches: startPrinting(view, slugs, now, await liveJobStart(tx, buildId, slugs))
 				};
 			}
 			case 'stop': {
 				// The plate leaves the printer: a live job linked to these parts is no longer linked to
 				// the plate (the printer is still printing), so it can be linked again from the Overview.
-				const live = tx
-					.select()
-					.from(printerJobs)
-					.where(
-						and(
-							eq(printerJobs.buildId, buildId),
-							inArray(printerJobs.status, ['printing', 'paused'])
+				const live = (
+					await tx
+						.select()
+						.from(printerJobs)
+						.where(
+							and(
+								eq(printerJobs.buildId, buildId),
+								inArray(printerJobs.status, ['printing', 'paused'])
+							)
 						)
-					)
-					.all()
-					.filter((j) => (j.partSlugs ?? []).some((s) => slugs.includes(s)));
+				).filter((j) => (j.partSlugs ?? []).some((s) => slugs.includes(s)));
 				for (const j of live) {
-					tx.update(printerJobs)
+					await tx
+						.update(printerJobs)
 						.set({ buildId: null, plateNumber: null, partSlugs: null })
-						.where(eq(printerJobs.id, j.id))
-						.run();
+						.where(eq(printerJobs.id, j.id));
 					freed.push({ org: view.build.organizationId, printerId: j.printerId });
 				}
 				return {
@@ -447,7 +474,7 @@ export function printingAction(db: Db, buildId: string, userId: string, body: un
 				const seconds = optNum(body.seconds, 'seconds') ?? null;
 				// A time a person types for a whole-plate run is the plate's real time: keep it as the
 				// plate's manual time too (clearing the field leaves the plate's time alone).
-				const synced = syncPlateTime(tx, buildId, view, slugs, seconds, 'user');
+				const synced = await syncPlateTime(tx, buildId, view, slugs, seconds, 'user');
 				return {
 					kind: 'printing.setEstimate',
 					payload: { slugs, seconds, ...(synced ? { plateNumber: synced } : {}) },
@@ -459,16 +486,16 @@ export function printingAction(db: Db, buildId: string, userId: string, body: un
 	for (const f of freed) emitPrinterEvent(f.org, { type: 'job', printerId: f.printerId });
 }
 
-export function addRun(
+export async function addRun(
 	db: Db,
 	buildId: string,
 	userId: string,
 	body: unknown
-): { runId: string; runIds: string[] } {
+): Promise<{ runId: string; runIds: string[] }> {
 	if (!isObj(body)) bad('Invalid body');
 	let ids = { runId: '', runIds: [] as string[] };
-	mutateBuild(db, buildId, userId, (tx, view, now) => {
-		const o = runOutcome(tx, view, now, buildId, userId, body);
+	await mutateBuild(db, buildId, userId, async (tx, view, now) => {
+		const o = await runOutcome(tx, view, now, buildId, userId, body);
 		ids = { runId: o.runId, runIds: o.runIds };
 		return o.outcome;
 	});
@@ -495,14 +522,14 @@ function splitRequest(
 	};
 }
 
-function runOutcome(
-	tx: Db,
+async function runOutcome(
+	tx: DbOrTx,
 	view: BuildView,
 	now: Date,
 	buildId: string,
 	userId: string | null,
 	body: Obj
-): { runId: string; runIds: string[]; outcome: Outcome } {
+): Promise<{ runId: string; runIds: string[]; outcome: Outcome }> {
 	{
 		const plateNumber = optNum(body.plateNumber, 'plateNumber') ?? null;
 		if (plateNumber !== null && !view.plates.some((p) => p.number === plateNumber))
@@ -530,27 +557,29 @@ function runOutcome(
 		const targets = runTargets(view, input);
 		const plannedSeconds =
 			targets.map((s) => view.state[s]?.runEstSeconds).find((v): v is number => !!v) ?? null;
-		const live = livePrintingSlugs(tx, buildId);
-		const insert = (r: PrintRunInput, estSeconds: number | null): string => {
-			assertRunRoom(tx, buildId);
-			return tx
-				.insert(printRuns)
-				.values({
-					buildId,
-					plateNumber: r.plateNumber,
-					partSlug: r.partSlug,
-					partSlugs: r.partSlugs,
-					date: r.date,
-					result: r.result,
-					grams: r.grams,
-					hours: r.hours,
-					estSeconds,
-					printer: r.printer,
-					userId,
-					note: r.note
-				})
-				.returning({ id: printRuns.id })
-				.get().id;
+		const live = await livePrintingSlugs(tx, buildId);
+		const insert = async (r: PrintRunInput, estSeconds: number | null): Promise<string> => {
+			await assertRunRoom(tx, buildId);
+			const row = await one(
+				tx
+					.insert(printRuns)
+					.values({
+						buildId,
+						plateNumber: r.plateNumber,
+						partSlug: r.partSlug,
+						partSlugs: r.partSlugs,
+						date: r.date,
+						result: r.result,
+						grams: r.grams,
+						hours: r.hours,
+						estSeconds,
+						printer: r.printer,
+						userId,
+						note: r.note
+					})
+					.returning({ id: printRuns.id })
+			);
+			return row.id;
 		};
 		const auto = userId === null ? { auto: true } : {};
 
@@ -559,8 +588,8 @@ function runOutcome(
 				bad('A ticked part is not part of this print');
 			const runs = splitPartial(view, input, split, plannedSeconds);
 			if (!runs) bad('Tick at least one part that printed OK and leave at least one that did not');
-			const keptId = insert(runs.kept, runs.kept.estSeconds);
-			const lostId = insert(runs.lost, runs.lost.estSeconds);
+			const keptId = await insert(runs.kept, runs.kept.estSeconds);
+			const lostId = await insert(runs.lost, runs.lost.estSeconds);
 			const grams =
 				split.keptGrams === null && split.lostGrams === null
 					? null
@@ -594,7 +623,7 @@ function runOutcome(
 			};
 		}
 
-		const runId = insert(input, plannedSeconds);
+		const runId = await insert(input, plannedSeconds);
 		return {
 			runId,
 			runIds: [runId],
@@ -615,29 +644,31 @@ function runOutcome(
 	}
 }
 
-export function deleteRun(
+export async function deleteRun(
 	db: Db,
 	buildId: string,
 	userId: string,
 	runId: string,
 	opts: { recompute?: boolean } = {}
-): void {
-	mutateBuild(db, buildId, userId, (tx, view) => {
-		const r = tx
-			.select()
-			.from(printRuns)
-			.where(and(eq(printRuns.id, runId), eq(printRuns.buildId, buildId)))
-			.get();
+): Promise<void> {
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
+		const r = await first(
+			tx
+				.select()
+				.from(printRuns)
+				.where(and(eq(printRuns.id, runId), eq(printRuns.buildId, buildId)))
+		);
 		if (!r) throw new ApiError(404, 'Run not found');
-		tx.delete(printRuns).where(eq(printRuns.id, runId)).run();
+		await tx.delete(printRuns).where(eq(printRuns.id, runId));
+		const livePrinting = opts.recompute === false ? null : await livePrintingSlugs(tx, buildId);
 		const patches =
-			opts.recompute === false
+			opts.recompute === false || !livePrinting
 				? []
 				: recomputeParts(
 						view,
 						view.runs.filter((x) => x.id !== runId),
 						runTargets(view, runFromRow(r)),
-						{ livePrinting: livePrintingSlugs(tx, buildId) }
+						{ livePrinting }
 					);
 		return {
 			kind: 'run.delete',
@@ -653,15 +684,15 @@ export function deleteRun(
 	});
 }
 
-export function updatePlate(
+export async function updatePlate(
 	db: Db,
 	buildId: string,
 	userId: string,
 	number: number,
 	body: unknown
-): void {
+): Promise<void> {
 	if (!isObj(body)) bad('Invalid body');
-	mutateBuild(db, buildId, userId, (tx, view) => {
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
 		const plate = view.plates.find((p) => p.number === number);
 		if (!plate) throw new ApiError(404, 'Unknown plate');
 		const set: Partial<typeof buildPlates.$inferInsert> = {};
@@ -695,25 +726,25 @@ export function updatePlate(
 				(set.slicerGrams ?? 0) > 0 || Object.values(set.slicerByPart ?? {}).some((v) => v > 0);
 			set.slicerGramsSource = typed ? 'user' : null;
 		}
-		tx.update(buildPlates)
+		await tx
+			.update(buildPlates)
 			.set(set)
-			.where(and(eq(buildPlates.buildId, buildId), eq(buildPlates.number, number)))
-			.run();
+			.where(and(eq(buildPlates.buildId, buildId), eq(buildPlates.number, number)));
 		const shown: Record<string, unknown> = { ...set };
 		delete shown.slicerGramsSource;
 		return { kind: 'plate.slicer', payload: { number, ...shown } };
 	});
 }
 
-export function updateFilament(
+export async function updateFilament(
 	db: Db,
 	buildId: string,
 	userId: string,
 	role: string,
 	body: unknown
-): void {
+): Promise<void> {
 	if (!isObj(body)) bad('Invalid body');
-	mutateBuild(db, buildId, userId, (tx, view) => {
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
 		if (!view.filaments.some((f) => f.key === role)) throw new ApiError(404, 'Unknown filament');
 		const set: Partial<typeof buildFilaments.$inferInsert> = {};
 		if (body.spools !== undefined) {
@@ -742,10 +773,10 @@ export function updateFilament(
 			set.hex = body.hex.toLowerCase();
 		}
 		if (!Object.keys(set).length) bad('Nothing to update');
-		tx.update(buildFilaments)
+		await tx
+			.update(buildFilaments)
 			.set(set)
-			.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, role)))
-			.run();
+			.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, role)));
 		const onlySpools = Object.keys(set).length === 1 && 'spools' in set;
 		return { kind: onlySpools ? 'filament.spools' : 'filament.update', payload: { role, ...set } };
 	});
@@ -760,13 +791,13 @@ const MAX_UNDO_RUNS = 10;
  * results made two runs: `body.runIds` names all of them and one undo removes both (one
  * `run.undo` row). Ids that are no longer in this build are skipped; none left is a 404.
  */
-export function undoRun(
+export async function undoRun(
 	db: Db,
 	buildId: string,
 	userId: string,
 	runId: string,
 	body: unknown
-): string[] {
+): Promise<string[]> {
 	if (!isObj(body) || !Array.isArray(body.parts)) bad('parts must be an array');
 	const rawParts = body.parts as unknown[];
 	if (rawParts.length > 100) bad('Too many parts');
@@ -781,13 +812,13 @@ export function undoRun(
 	const wanted = [...new Set([runId, ...extra])];
 	if (wanted.length > MAX_UNDO_RUNS) bad(`At most ${MAX_UNDO_RUNS} runs can be undone at once`);
 	let removed: string[] = [];
-	mutateBuild(db, buildId, userId, (tx, view) => {
-		const rows = tx
-			.select()
-			.from(printRuns)
-			.where(and(inArray(printRuns.id, wanted), eq(printRuns.buildId, buildId)))
-			.all()
-			.sort((a, b) => wanted.indexOf(a.id) - wanted.indexOf(b.id));
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
+		const rows = (
+			await tx
+				.select()
+				.from(printRuns)
+				.where(and(inArray(printRuns.id, wanted), eq(printRuns.buildId, buildId)))
+		).sort((a, b) => wanted.indexOf(a.id) - wanted.indexOf(b.id));
 		if (!rows.length) throw new ApiError(404, 'Run not found');
 		const r = rows[0];
 		const allowed = [
@@ -808,7 +839,7 @@ export function undoRun(
 			)
 		];
 		const patches: PartPatch[] = [];
-		const live = livePrintingSlugs(tx, buildId);
+		const live = await livePrintingSlugs(tx, buildId);
 		for (const raw of rawParts) {
 			if (!isObj(raw) || typeof raw.slug !== 'string') bad('Invalid part snapshot');
 			const slug = raw.slug;
@@ -844,7 +875,7 @@ export function undoRun(
 			});
 		}
 		removed = rows.map((x) => x.id);
-		tx.delete(printRuns).where(inArray(printRuns.id, removed)).run();
+		await tx.delete(printRuns).where(inArray(printRuns.id, removed));
 		const split = rows.length > 1;
 		return {
 			kind: 'run.undo',
@@ -875,47 +906,49 @@ export function undoRun(
  * Move a build from the owner's personal workspace into a chapter. Owner of the
  * source (the personal workspace) and editor or owner of the target chapter.
  */
-export function moveBuild(db: Db, buildId: string, userId: string, body: unknown): void {
+export async function moveBuild(
+	db: Db,
+	buildId: string,
+	userId: string,
+	body: unknown
+): Promise<void> {
 	if (!isObj(body) || typeof body.organizationId !== 'string' || !body.organizationId)
 		bad('organizationId is required');
 	const targetId = body.organizationId as string;
-	const access = buildAccess(db, buildId, userId);
+	const access = await buildAccess(db, buildId, userId);
 	if (!access) throw new ApiError(404, 'Not found');
-	requireOwner(db, access.organizationId, userId);
-	requireEditor(db, targetId, userId);
+	await requireOwner(db, access.organizationId, userId);
+	await requireEditor(db, targetId, userId);
 	if (targetId === access.organizationId) bad('The build is already there');
-	if (!isPersonalOrg(db, access.organizationId))
+	if (!(await isPersonalOrg(db, access.organizationId)))
 		bad('Only builds in My builds can be moved to a chapter');
-	if (isPersonalOrg(db, targetId)) bad('Pick a chapter to move the build to');
+	if (await isPersonalOrg(db, targetId)) bad('Pick a chapter to move the build to');
 	const now = new Date();
-	const target = db
-		.select({ name: organization.name })
-		.from(organization)
-		.where(eq(organization.id, targetId))
-		.get();
-	db.transaction((tx) => {
+	const target = await first(
+		db.select({ name: organization.name }).from(organization).where(eq(organization.id, targetId))
+	);
+	await db.transaction(async (tx) => {
 		// A draft does not count toward a workspace's builds; a tracked build does.
 		if (access.kind !== 'draft')
-			assertUnder(tx, 'buildsPerWorkspace', () => countBuilds(tx, targetId), { userId });
-		tx.update(builds).set({ organizationId: targetId }).where(eq(builds.id, buildId)).run();
-		// A kit copy owned by the personal workspace stays behind: the build goes back to the base kit.
-		const tpl = tx
-			.select({ id: builds.templateId })
-			.from(builds)
-			.where(eq(builds.id, buildId))
-			.get();
-		if (tpl) repointBuildsOffTemplates(tx, [tpl.id]);
-		tx.insert(activity)
-			.values({
-				buildId,
+			await assertUnder(tx, 'buildsPerWorkspace', () => countBuilds(tx, targetId), {
 				userId,
-				kind: 'build.move',
-				payload: { from: access.organizationId, to: targetId, toName: target?.name ?? null },
-				at: now
-			})
-			.run();
+				scope: targetId
+			});
+		await tx.update(builds).set({ organizationId: targetId }).where(eq(builds.id, buildId));
+		// A kit copy owned by the personal workspace stays behind: the build goes back to the base kit.
+		const tpl = await first(
+			tx.select({ id: builds.templateId }).from(builds).where(eq(builds.id, buildId))
+		);
+		if (tpl) await repointBuildsOffTemplates(tx, [tpl.id]);
+		await tx.insert(activity).values({
+			buildId,
+			userId,
+			kind: 'build.move',
+			payload: { from: access.organizationId, to: targetId, toName: target?.name ?? null },
+			at: now
+		});
 	});
-	publish(db, buildId, userId, 'build.move', now);
+	await publish(db, buildId, userId, 'build.move', now);
 }
 
 type RunRow = typeof printRuns.$inferSelect;
@@ -948,20 +981,21 @@ function recomputedList(view: BuildView, patches: PartPatch[]) {
  * Correct a past print log. Changing result, part or date re-derives the status of the
  * parts the run (before and after the edit) targets; grams, hours and note never do.
  */
-export function updateRun(
+export async function updateRun(
 	db: Db,
 	buildId: string,
 	userId: string,
 	runId: string,
 	body: unknown
-): void {
+): Promise<void> {
 	if (!isObj(body)) bad('Invalid body');
-	mutateBuild(db, buildId, userId, (tx, view) => {
-		const row = tx
-			.select()
-			.from(printRuns)
-			.where(and(eq(printRuns.id, runId), eq(printRuns.buildId, buildId)))
-			.get();
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
+		const row = await first(
+			tx
+				.select()
+				.from(printRuns)
+				.where(and(eq(printRuns.id, runId), eq(printRuns.buildId, buildId)))
+		);
 		if (!row) throw new ApiError(404, 'Run not found');
 		const old = runFromRow(row);
 		const set: Partial<typeof printRuns.$inferInsert> = {};
@@ -1003,7 +1037,7 @@ export function updateRun(
 			changed.newPartSlug = s;
 		}
 		if (!Object.keys(set).length) bad('Nothing to update');
-		tx.update(printRuns).set(set).where(eq(printRuns.id, runId)).run();
+		await tx.update(printRuns).set(set).where(eq(printRuns.id, runId));
 
 		const next: PrintRun = { ...old, ...(set as Partial<PrintRun>) };
 		let patches: PartPatch[] = [];
@@ -1013,7 +1047,7 @@ export function updateRun(
 				.sort((a, b) => (a.date === b.date ? (a.id < b.id ? -1 : 1) : a.date < b.date ? -1 : 1));
 			const slugs = [...new Set([...runTargets(view, old), ...runTargets(view, next)])];
 			patches = recomputeParts(view, runs, slugs, {
-				livePrinting: livePrintingSlugs(tx, buildId)
+				livePrinting: await livePrintingSlugs(tx, buildId)
 			});
 		}
 		return {
@@ -1035,11 +1069,16 @@ export function updateRun(
  * Switch a build's choice for one variant group. Progress rows of the options not
  * chosen stay in the database, so switching back restores them.
  */
-export function setVariant(db: Db, buildId: string, userId: string, body: unknown): void {
+export async function setVariant(
+	db: Db,
+	buildId: string,
+	userId: string,
+	body: unknown
+): Promise<void> {
 	if (!isObj(body) || typeof body.group !== 'string' || typeof body.option !== 'string')
 		bad('group and option are required');
 	const { group, option } = body as { group: string; option: string };
-	mutateBuild(db, buildId, userId, (tx, view) => {
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
 		const g = view.variantGroups.find((x) => x.key === group);
 		if (!g) bad('Unknown variant group');
 		const o = g.options.find((x) => x.key === option);
@@ -1047,7 +1086,7 @@ export function setVariant(db: Db, buildId: string, userId: string, body: unknow
 		const from = view.variantChoices[group];
 		if (from === option) bad('Already selected');
 		const choices = { ...view.variantChoices, [group]: option };
-		tx.update(builds).set({ variantChoices: choices }).where(eq(builds.id, buildId)).run();
+		await tx.update(builds).set({ variantChoices: choices }).where(eq(builds.id, buildId));
 		return {
 			kind: 'build.variant',
 			payload: { group, groupName: g.name, from, to: option, toName: o.name }
@@ -1060,7 +1099,12 @@ export function setVariant(db: Db, buildId: string, userId: string, body: unknow
  * Editors and owners. Arranged plates are re-arranged for the new bed by `mutateBuild`
  * unless print logs hang on plates.
  */
-export function setPrinter(db: Db, buildId: string, userId: string, body: unknown): void {
+export async function setPrinter(
+	db: Db,
+	buildId: string,
+	userId: string,
+	body: unknown
+): Promise<void> {
 	if (!isObj(body) || !('printer' in body))
 		bad('printer is required (an object, or null to clear)');
 	let printer: BuildPrinter | null = null;
@@ -1071,8 +1115,8 @@ export function setPrinter(db: Db, buildId: string, userId: string, body: unknow
 			bad((e as Error).message);
 		}
 	}
-	mutateBuild(db, buildId, userId, (tx) => {
-		tx.update(builds).set({ printer }).where(eq(builds.id, buildId)).run();
+	await mutateBuild(db, buildId, userId, async (tx) => {
+		await tx.update(builds).set({ printer }).where(eq(builds.id, buildId));
 		return {
 			kind: 'build.printer',
 			payload: printer
@@ -1089,33 +1133,31 @@ export function setPrinter(db: Db, buildId: string, userId: string, body: unknow
  * no permission check, the activity row has no user. `viewAs` is any member of the team and
  * is only used to load the view. `payload.by` names the source for the activity sentence.
  */
-export function mutateBuildSystem(
+export async function mutateBuildSystem(
 	db: Db,
 	buildId: string,
 	viewAs: string,
 	by: string,
-	fn: (tx: Db, view: BuildView, now: Date) => Outcome
-): Outcome {
+	fn: (tx: Tx, view: BuildView, now: Date) => Outcome | Promise<Outcome>
+): Promise<Outcome> {
 	const now = new Date();
-	const out = db.transaction((txRaw) => {
-		const tx = txRaw as unknown as Db;
-		const view = loadBuildView(tx, buildId, viewAs);
+	const out = await db.transaction(async (tx) => {
+		await advisoryLock(tx, `build:${buildId}`);
+		const view = await loadBuildView(tx, buildId, viewAs);
 		if (!view) throw new ApiError(404, 'Not found');
-		const o = fn(tx, view, now);
+		const o = await fn(tx, view, now);
 		if (view.build.kind === 'draft' && !draftAllows(o.kind))
 			throw new ApiError(400, 'Drafts have no build tracking. Make it a build first.');
-		if (o.patches?.length) applyPatches(tx, buildId, o.patches, now);
-		if (REARRANGE_KINDS.has(o.kind)) autoRearrangeBuild(tx, buildId, viewAs);
-		tx.insert(activity)
-			.values({
-				buildId,
-				userId: null,
-				kind: o.kind,
-				payload: { ...(o.payload ?? {}), by },
-				at: now
-			})
-			.run();
-		pruneActivity(tx, buildId);
+		if (o.patches?.length) await applyPatches(tx, buildId, o.patches, now);
+		if (REARRANGE_KINDS.has(o.kind)) await autoRearrangeBuild(tx, buildId, viewAs);
+		await tx.insert(activity).values({
+			buildId,
+			userId: null,
+			kind: o.kind,
+			payload: { ...(o.payload ?? {}), by },
+			at: now
+		});
+		await pruneActivity(tx, buildId);
 		return o;
 	});
 	emitBuildEvent(buildId, { type: 'changed', kind: out.kind, by, at: now.toISOString() });
@@ -1126,16 +1168,16 @@ export function mutateBuildSystem(
  * Log a run on behalf of a printer (auto-log of a finished job). `body` may carry `split` like the
  * user route does. Returns the run id (the printed half of a split) and every id created.
  */
-export function addRunsSystem(
+export async function addRunsSystem(
 	db: Db,
 	buildId: string,
 	viewAs: string,
 	by: string,
 	body: Obj
-): { runId: string; runIds: string[] } {
+): Promise<{ runId: string; runIds: string[] }> {
 	let ids = { runId: '', runIds: [] as string[] };
-	mutateBuildSystem(db, buildId, viewAs, by, (tx, view, now) => {
-		const o = runOutcome(tx, view, now, buildId, null, body);
+	await mutateBuildSystem(db, buildId, viewAs, by, async (tx, view, now) => {
+		const o = await runOutcome(tx, view, now, buildId, null, body);
 		ids = { runId: o.runId, runIds: o.runIds };
 		return o.outcome;
 	});
@@ -1143,14 +1185,14 @@ export function addRunsSystem(
 }
 
 /** `addRunsSystem` for callers that only need the (first) run id. */
-export function addRunSystem(
+export async function addRunSystem(
 	db: Db,
 	buildId: string,
 	viewAs: string,
 	by: string,
 	body: Obj
-): string {
-	return addRunsSystem(db, buildId, viewAs, by, body).runId;
+): Promise<string> {
+	return (await addRunsSystem(db, buildId, viewAs, by, body)).runId;
 }
 
 /** Most "added a spool" entries one color keeps. */
@@ -1161,13 +1203,13 @@ export const MAX_SPOOL_ADDS = 100;
  * decimals), note up to 200 characters, at most `MAX_SPOOL_ADDS` per slot. The add keeps its
  * date and who made it. Returns the new add's id.
  */
-export function addSpool(
+export async function addSpool(
 	db: Db,
 	buildId: string,
 	userId: string,
 	role: string,
 	body: unknown
-): string {
+): Promise<string> {
 	if (!isObj(body)) bad('Invalid body');
 	const kg = body.kg;
 	if (typeof kg !== 'number' || !Number.isFinite(kg) || kg < 0.005 || kg > 99)
@@ -1185,26 +1227,27 @@ export function addSpool(
 				.trim() || null;
 	}
 	let id = '';
-	mutateBuild(db, buildId, userId, (tx, view, now) => {
+	await mutateBuild(db, buildId, userId, async (tx, view, now) => {
 		if (!view.filaments.some((f) => f.key === role)) throw new ApiError(404, 'Unknown filament');
-		const row = tx
-			.select({ adds: buildFilaments.spoolAdds })
-			.from(buildFilaments)
-			.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, role)))
-			.get();
+		const row = await first(
+			tx
+				.select({ adds: buildFilaments.spoolAdds })
+				.from(buildFilaments)
+				.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, role)))
+		);
 		const adds = row?.adds ?? [];
 		if (adds.length >= MAX_SPOOL_ADDS)
 			bad(`A color can hold at most ${MAX_SPOOL_ADDS} added spools`);
 		id = randomUUID();
-		tx.update(buildFilaments)
+		await tx
+			.update(buildFilaments)
 			.set({
 				spoolAdds: [
 					...adds,
 					{ id, kg: rounded, at: now.getTime(), userId, ...(note ? { note } : {}) }
 				]
 			})
-			.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, role)))
-			.run();
+			.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, role)));
 		return {
 			kind: 'filament.stock.add',
 			payload: { role, addId: id, kg: rounded, ...(note ? { note } : {}) }
@@ -1214,27 +1257,28 @@ export function addSpool(
 }
 
 /** Remove one earlier add from a color slot's stock (404 for an unknown add). */
-export function removeSpoolAdd(
+export async function removeSpoolAdd(
 	db: Db,
 	buildId: string,
 	userId: string,
 	role: string,
 	addId: string
-): void {
-	mutateBuild(db, buildId, userId, (tx, view) => {
+): Promise<void> {
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
 		if (!view.filaments.some((f) => f.key === role)) throw new ApiError(404, 'Unknown filament');
-		const row = tx
-			.select({ adds: buildFilaments.spoolAdds })
-			.from(buildFilaments)
-			.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, role)))
-			.get();
+		const row = await first(
+			tx
+				.select({ adds: buildFilaments.spoolAdds })
+				.from(buildFilaments)
+				.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, role)))
+		);
 		const adds = row?.adds ?? [];
 		const gone = adds.find((a) => a.id === addId);
 		if (!gone) throw new ApiError(404, 'Unknown spool add');
-		tx.update(buildFilaments)
+		await tx
+			.update(buildFilaments)
 			.set({ spoolAdds: adds.filter((a) => a.id !== addId) })
-			.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, role)))
-			.run();
+			.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, role)));
 		return {
 			kind: 'filament.stock.remove',
 			payload: { role, addId, kg: gone.kg, at: gone.at }
@@ -1243,19 +1287,24 @@ export function removeSpoolAdd(
 }
 
 /** Setup wizard progress: the step (1 to 5) the build is on, or null once setup is finished. No activity row. */
-export function setSetupStep(db: Db, buildId: string, userId: string, body: unknown): void {
+export async function setSetupStep(
+	db: Db,
+	buildId: string,
+	userId: string,
+	body: unknown
+): Promise<void> {
 	if (!isObj(body)) bad('Invalid body');
 	const step = body.step;
 	if (step !== null && !(Number.isInteger(step) && (step as number) >= 1 && (step as number) <= 5))
 		bad('step must be 1 to 5, or null');
-	const access = buildAccess(db, buildId, userId);
+	const access = await buildAccess(db, buildId, userId);
 	if (!access) throw new ApiError(404, 'Not found');
 	if (!access.canEdit) throw new ApiError(403, 'Your role cannot edit');
 	if (access.kind === 'draft') throw new ApiError(400, 'Drafts have no setup steps.');
-	db.update(builds)
+	await db
+		.update(builds)
 		.set({ setupStep: step as number | null })
-		.where(eq(builds.id, buildId))
-		.run();
+		.where(eq(builds.id, buildId));
 	emitBuildEvent(buildId, {
 		type: 'changed',
 		kind: 'build.setup',

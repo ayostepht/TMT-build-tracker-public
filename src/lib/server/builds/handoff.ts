@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { ApiError } from '../access';
-import type { Db } from '../db';
+import { first, type Db, type DbOrTx } from '../db';
 import { buildHandoff, builds } from '../db/schema';
 import { mutateBuild } from './actions';
 
@@ -44,32 +44,32 @@ function parse(body: unknown) {
 	return set;
 }
 
-function upsert(
-	tx: Db,
+async function upsert(
+	tx: DbOrTx,
 	buildId: string,
 	userId: string,
 	now: Date,
 	set: Partial<typeof buildHandoff.$inferInsert>
 ) {
 	const values = { ...set, updatedBy: userId, updatedAt: now };
-	const cur = tx
-		.select({ id: buildHandoff.buildId })
-		.from(buildHandoff)
-		.where(eq(buildHandoff.buildId, buildId))
-		.get();
-	if (cur) tx.update(buildHandoff).set(values).where(eq(buildHandoff.buildId, buildId)).run();
-	else
-		tx.insert(buildHandoff)
-			.values({ buildId, ...values })
-			.run();
+	// One row per build (primary key): the upsert is atomic, no check-then-insert race.
+	await tx
+		.insert(buildHandoff)
+		.values({ buildId, ...values })
+		.onConflictDoUpdate({ target: buildHandoff.buildId, set: values });
 }
 
 /** Save the handoff form (any subset of fields). Editors and owners only. */
-export function updateHandoff(db: Db, buildId: string, userId: string, body: unknown): void {
+export async function updateHandoff(
+	db: Db,
+	buildId: string,
+	userId: string,
+	body: unknown
+): Promise<void> {
 	const set = parse(body);
 	if (!Object.keys(set).length) throw new ApiError(400, 'Nothing to update');
-	mutateBuild(db, buildId, userId, (tx, _view, now) => {
-		upsert(tx, buildId, userId, now, set);
+	await mutateBuild(db, buildId, userId, async (tx, _view, now) => {
+		await upsert(tx, buildId, userId, now, set);
 		return { kind: 'handoff.update', payload: { fields: Object.keys(set) } };
 	});
 }
@@ -78,13 +78,20 @@ export function updateHandoff(db: Db, buildId: string, userId: string, body: unk
  * Mark the chair as handed off: saves any form fields sent along, fills the date with today when
  * none is set, and moves the build to the `done` phase.
  */
-export function markHandedOff(db: Db, buildId: string, userId: string, body: unknown = {}): void {
+export async function markHandedOff(
+	db: Db,
+	buildId: string,
+	userId: string,
+	body: unknown = {}
+): Promise<void> {
 	const set = parse(body ?? {});
-	mutateBuild(db, buildId, userId, (tx, _view, now) => {
-		const cur = tx.select().from(buildHandoff).where(eq(buildHandoff.buildId, buildId)).get();
+	await mutateBuild(db, buildId, userId, async (tx, _view, now) => {
+		const cur = await first(
+			tx.select().from(buildHandoff).where(eq(buildHandoff.buildId, buildId))
+		);
 		const date = set.handedOffOn ?? cur?.handedOffOn ?? now.toISOString().slice(0, 10);
-		upsert(tx, buildId, userId, now, { ...set, handedOffOn: date });
-		tx.update(builds).set({ phase: 'done' }).where(eq(builds.id, buildId)).run();
+		await upsert(tx, buildId, userId, now, { ...set, handedOffOn: date });
+		await tx.update(builds).set({ phase: 'done' }).where(eq(builds.id, buildId));
 		return {
 			kind: 'build.handoff',
 			payload: {

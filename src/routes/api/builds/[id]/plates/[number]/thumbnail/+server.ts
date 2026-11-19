@@ -8,7 +8,9 @@ export const GET: RequestHandler = async (event) => {
 	try {
 		const n = Number(event.params.number);
 		if (!Number.isInteger(n)) return pngResponse(null);
-		return await pngResponse(plateThumbnailFile(getDb(), event.params.id, requireUserId(event), n));
+		return await pngResponse(
+			await plateThumbnailFile(getDb(), event.params.id, requireUserId(event), n)
+		);
 	} catch (e) {
 		const r = apiErrorResponse(e);
 		if (r) return r;

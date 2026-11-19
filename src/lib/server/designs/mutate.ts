@@ -23,7 +23,7 @@ import { mutateBuild } from '../builds/actions';
 import { remapRoleKey } from '../builds/role-keys';
 import { BuildStartedError } from '../builds/started-guard';
 import { loadBuildView } from '../builds/view';
-import type { Db } from '../db';
+import { first, type Db, type DbOrTx } from '../db';
 import { buildFilaments, builds, colorDesigns } from '../db/schema';
 import { canSeeDesign } from './access';
 import { isObj, type Obj } from '#lib/domain/guards.ts';
@@ -70,13 +70,18 @@ function hexOf(v: unknown): string {
  *   (also those of unchosen options) move there, and grams keyed to it follow. Its spools go.
  * - `removeRoles: [key]`: remove slots that are unused by now (Undo of an auto-added lock slot).
  */
-export function updateBuildDesign(db: Db, buildId: string, userId: string, body: unknown): void {
+export async function updateBuildDesign(
+	db: Db,
+	buildId: string,
+	userId: string,
+	body: unknown
+): Promise<void> {
 	if (!isObj(body)) bad('Invalid body');
 	const keys = ['partRoles', 'addRole', 'removeRole', 'removeRoles', 'palette', 'lock'] as const;
 	if (keys.every((k) => body[k] === undefined)) bad('Nothing to update');
 	if (body.replaceWith !== undefined && body.removeRole === undefined)
 		bad('replaceWith needs removeRole');
-	mutateBuild(db, buildId, userId, (tx, view) => {
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
 		const filaments: FilamentRole[] = [...view.filaments];
 		const payload: Obj = {};
 		const roles = effectivePartRoles(view);
@@ -92,10 +97,10 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 			else if (record) moves.push({ slug, name: part.name, role, roleName: f.name });
 		};
 
-		const insertSlot = (key: string, name: string, material: string, hex: string) => {
-			tx.insert(buildFilaments)
-				.values({ buildId, roleKey: key, name, material, hex, spools: 0 })
-				.run();
+		const insertSlot = async (key: string, name: string, material: string, hex: string) => {
+			await tx
+				.insert(buildFilaments)
+				.values({ buildId, roleKey: key, name, material, hex, spools: 0 });
 			filaments.push({
 				key,
 				name,
@@ -126,11 +131,11 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 					throw new ApiError(409, 'That color key exists');
 				key = a.key;
 			}
-			insertSlot(key, name, material, hex);
+			await insertSlot(key, name, material, hex);
 			payload.added = { key, name, material, hex };
 		}
 
-		const applyPalette = (raw: unknown) => {
+		const applyPalette = async (raw: unknown) => {
 			if (!isObj(raw)) bad('palette must be an object');
 			if (!isObj(raw.slots)) bad('palette.slots must be an object');
 			const entries = Object.entries(raw.slots);
@@ -155,10 +160,10 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 				const material = str(v.material, 'material');
 				const hex = hexOf(v.hex);
 				if (!sameFilament(f, { name, material, hex })) changed.add(key);
-				tx.update(buildFilaments)
+				await tx
+					.update(buildFilaments)
 					.set({ name, material, hex })
-					.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, key)))
-					.run();
+					.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, key)));
 				Object.assign(f, { name, material, hex });
 			}
 			const pal: Obj = { label };
@@ -179,7 +184,7 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 						filaments.map((f) => f.key),
 						old.name
 					);
-					insertSlot(key, old.name, old.material, old.hex);
+					await insertSlot(key, old.name, old.material, old.hex);
 					target = filaments[filaments.length - 1];
 					lockedAdded.push({
 						key,
@@ -204,7 +209,7 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 			pal.reset = resetCount;
 			pal.kept = locked.size;
 		};
-		if (body.palette !== undefined) applyPalette(body.palette);
+		if (body.palette !== undefined) await applyPalette(body.palette);
 
 		if (body.partRoles !== undefined) {
 			if (!isObj(body.partRoles)) bad('partRoles must be an object');
@@ -241,7 +246,7 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 			if (changedNames.length) payload[on ? 'locked' : 'unlocked'] = changedNames;
 		}
 
-		const removeSlot = (key: string, replaceWith?: string): Obj => {
+		const removeSlot = async (key: string, replaceWith?: string): Promise<Obj> => {
 			const f = filaments.find((x) => x.key === key);
 			if (!f) throw new ApiError(404, 'Unknown color');
 			if (f.kit) bad("The kit's own colors cannot be removed");
@@ -261,10 +266,10 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 				for (const p of affected) move(p.slug, to.key, false);
 			} else if (replaceWith !== undefined && !filaments.some((x) => x.key === replaceWith))
 				bad(`Unknown color "${replaceWith}"`);
-			if (replaceWith) remapRoleKey(tx, buildId, key, replaceWith);
-			tx.delete(buildFilaments)
-				.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, key)))
-				.run();
+			if (replaceWith) await remapRoleKey(tx, buildId, key, replaceWith);
+			await tx
+				.delete(buildFilaments)
+				.where(and(eq(buildFilaments.buildId, buildId), eq(buildFilaments.roleKey, key)));
 			filaments.splice(filaments.indexOf(f), 1);
 			return {
 				key,
@@ -279,7 +284,7 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 		if (body.removeRole !== undefined) {
 			const key = str(body.removeRole, 'removeRole');
 			const rep = body.replaceWith === undefined ? undefined : str(body.replaceWith, 'replaceWith');
-			const removed = removeSlot(key, rep);
+			const removed = await removeSlot(key, rep);
 			payload.removed = removed;
 			const to = rep ? filaments.find((f) => f.key === rep) : undefined;
 			if (to && removed.parts)
@@ -292,7 +297,7 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 				const key = str(k, 'removeRoles');
 				if (view.allParts.some((p) => roles[p.slug] === key))
 					throw new ApiError(409, 'Move its parts to another color first');
-				removeSlot(key);
+				await removeSlot(key);
 			}
 		}
 
@@ -301,16 +306,15 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 			if (body.lock !== undefined) return { kind: 'design.update', skip: true };
 			bad('Nothing to update');
 		}
-		const row = tx
-			.select({ design: builds.design })
-			.from(builds)
-			.where(eq(builds.id, buildId))
-			.get();
+		const row = await first(
+			tx.select({ design: builds.design }).from(builds).where(eq(builds.id, buildId))
+		);
 		const { lockedParts: _drop, ...rest } = (row?.design ?? {}) as Obj;
 		void _drop;
 		// Slugs that no longer exist in the template are dropped; the rest keep their template order.
 		const lockedParts = view.allParts.map((p) => p.slug).filter((s) => locked.has(s));
-		tx.update(builds)
+		await tx
+			.update(builds)
 			.set({
 				design: {
 					...rest,
@@ -319,8 +323,7 @@ export function updateBuildDesign(db: Db, buildId: string, userId: string, body:
 					...(lockedParts.length ? { lockedParts } : {})
 				}
 			})
-			.where(eq(builds.id, buildId))
-			.run();
+			.where(eq(builds.id, buildId));
 		return { kind: 'design.update', payload };
 	});
 }
@@ -332,9 +335,9 @@ export interface ApplyDesignOptions {
 	confirm?: boolean;
 }
 
-function visibleDesign(db: Db, designId: string, userId: string) {
-	const d = db.select().from(colorDesigns).where(eq(colorDesigns.id, designId)).get();
-	if (!d || !canSeeDesign(db, d, userId)) throw new ApiError(404, 'Not found');
+async function visibleDesign(db: DbOrTx, designId: string, userId: string) {
+	const d = await first(db.select().from(colorDesigns).where(eq(colorDesigns.id, designId)));
+	if (!d || !(await canSeeDesign(db, d, userId))) throw new ApiError(404, 'Not found');
 	return d;
 }
 
@@ -348,16 +351,16 @@ function visibleDesign(db: Db, designId: string, userId: string) {
  *   filaments only (`recolorOnly`; returns what it did). `full` also moves parts; it is refused (409) while a
  *   plate is printing or a printer job is live, and needs `confirm: true` otherwise.
  */
-export function applyDesignToBuild(
+export async function applyDesignToBuild(
 	db: Db,
 	designId: string,
 	buildId: string,
 	userId: string,
 	opts: ApplyDesignOptions = {}
-): RecolorPlan | null {
-	const d = visibleDesign(db, designId, userId);
+): Promise<RecolorPlan | null> {
+	const d = await visibleDesign(db, designId, userId);
 	let result: RecolorPlan | null = null;
-	mutateBuild(db, buildId, userId, (tx, view) => {
+	await mutateBuild(db, buildId, userId, async (tx, view) => {
 		if (view.build.templateId !== d.templateId)
 			bad('That design is for a different kit than this build');
 		if (opts.mode !== undefined && opts.mode !== 'colors' && opts.mode !== 'full')
@@ -384,7 +387,7 @@ export function applyDesignToBuild(
 			}
 		}
 		if (mode === 'colors') {
-			result = recolorOnly(tx, view, d);
+			result = await recolorOnly(tx, view, d);
 			if (!result.changes.length) return { kind: 'design.recolor', skip: true };
 			return {
 				kind: 'design.recolor',
@@ -397,7 +400,7 @@ export function applyDesignToBuild(
 				}
 			};
 		}
-		const lockedAdded = replaceColors(tx, view, d);
+		const lockedAdded = await replaceColors(tx, view, d);
 		return {
 			kind: 'design.apply',
 			payload: {
@@ -413,17 +416,17 @@ export function applyDesignToBuild(
 }
 
 /** Dry run of `applyDesignToBuild`: what "Colors only" would do and whether "full" is allowed. Writes nothing. */
-export function previewApplyDesign(
-	db: Db,
+export async function previewApplyDesign(
+	db: DbOrTx,
 	designId: string,
 	buildId: string,
 	userId: string
-): ApplyPreview {
-	const d = visibleDesign(db, designId, userId);
-	const access = buildAccess(db, buildId, userId);
+): Promise<ApplyPreview> {
+	const d = await visibleDesign(db, designId, userId);
+	const access = await buildAccess(db, buildId, userId);
 	if (!access) throw new ApiError(404, 'Not found');
 	if (!access.canEdit) throw new ApiError(403, 'Your role cannot edit');
-	const view = loadBuildView(db, buildId, userId);
+	const view = await loadBuildView(db, buildId, userId);
 	if (!view) throw new ApiError(404, 'Not found');
 	if (view.build.templateId !== d.templateId)
 		bad('That design is for a different kit than this build');
@@ -440,14 +443,18 @@ export function previewApplyDesign(
  * Part slots, locks, plates, files, runs, spools and `spool_adds` are not touched, and
  * the kind (`design.recolor`) is outside `REARRANGE_KINDS`, so no plate is rebuilt.
  */
-function recolorOnly(tx: Db, view: BuildView, d: typeof colorDesigns.$inferSelect): RecolorPlan {
+async function recolorOnly(
+	tx: DbOrTx,
+	view: BuildView,
+	d: typeof colorDesigns.$inferSelect
+): Promise<RecolorPlan> {
 	const plan = planRecolor(view, d);
 	if (!plan.changes.length) return plan;
 	for (const c of plan.changes)
-		tx.update(buildFilaments)
+		await tx
+			.update(buildFilaments)
 			.set({ name: c.name, material: c.material, hex: c.hex })
-			.where(and(eq(buildFilaments.buildId, view.build.id), eq(buildFilaments.roleKey, c.key)))
-			.run();
+			.where(and(eq(buildFilaments.buildId, view.build.id), eq(buildFilaments.roleKey, c.key)));
 	const byKey = new Map(plan.changes.map((c) => [c.key, c]));
 	const roles = view.filaments.map((f) => {
 		const c = byKey.get(f.key);
@@ -458,17 +465,15 @@ function recolorOnly(tx: Db, view: BuildView, d: typeof colorDesigns.$inferSelec
 			hex: c?.hex ?? f.hex
 		};
 	});
-	const row = tx
-		.select({ design: builds.design })
-		.from(builds)
-		.where(eq(builds.id, view.build.id))
-		.get();
-	tx.update(builds)
+	const row = await first(
+		tx.select({ design: builds.design }).from(builds).where(eq(builds.id, view.build.id))
+	);
+	await tx
+		.update(builds)
 		.set({
 			design: { ...((row?.design ?? {}) as Obj), roles, partRoles: effectivePartRoles(view) }
 		})
-		.where(eq(builds.id, view.build.id))
-		.run();
+		.where(eq(builds.id, view.build.id));
 	return plan;
 }
 
@@ -477,32 +482,30 @@ function recolorOnly(tx: Db, view: BuildView, d: typeof colorDesigns.$inferSelec
  * part's slot. Locked parts keep their exact color: they stay on their slot, or, when that slot's filament
  * changes, move to a slot that holds the old filament (an existing non-kit one, else a new one; returned).
  */
-function replaceColors(
-	tx: Db,
+async function replaceColors(
+	tx: DbOrTx,
 	view: BuildView,
 	d: typeof colorDesigns.$inferSelect
-): { key: string; name: string; material: string; parts: string[] }[] {
+): Promise<{ key: string; name: string; material: string; parts: string[] }[]> {
 	const have = new Map(view.filaments.map((f) => [f.key, f]));
 	const changed = new Set<string>();
 	for (const r of d.roles) {
 		const cur = have.get(r.key);
 		if (cur) {
 			if (!sameFilament(cur, r)) changed.add(r.key);
-			tx.update(buildFilaments)
+			await tx
+				.update(buildFilaments)
 				.set({ name: r.name, material: r.material, hex: r.hex.toLowerCase() })
-				.where(and(eq(buildFilaments.buildId, view.build.id), eq(buildFilaments.roleKey, r.key)))
-				.run();
+				.where(and(eq(buildFilaments.buildId, view.build.id), eq(buildFilaments.roleKey, r.key)));
 		} else {
-			tx.insert(buildFilaments)
-				.values({
-					buildId: view.build.id,
-					roleKey: r.key,
-					name: r.name,
-					material: r.material,
-					hex: r.hex.toLowerCase(),
-					spools: 0
-				})
-				.run();
+			await tx.insert(buildFilaments).values({
+				buildId: view.build.id,
+				roleKey: r.key,
+				name: r.name,
+				material: r.material,
+				hex: r.hex.toLowerCase(),
+				spools: 0
+			});
 		}
 	}
 	const keys = new Set([...have.keys(), ...d.roles.map((r) => r.key)]);
@@ -544,16 +547,14 @@ function replaceColors(
 				roles.map((r) => r.key),
 				old.name
 			);
-			tx.insert(buildFilaments)
-				.values({
-					buildId: view.build.id,
-					roleKey: key,
-					name: old.name,
-					material: old.material,
-					hex: old.hex,
-					spools: 0
-				})
-				.run();
+			await tx.insert(buildFilaments).values({
+				buildId: view.build.id,
+				roleKey: key,
+				name: old.name,
+				material: old.material,
+				hex: old.hex,
+				spools: 0
+			});
 			target = { key, name: old.name, material: old.material, hex: old.hex };
 			roles.push(target);
 			lockedAdded.push({
@@ -566,7 +567,8 @@ function replaceColors(
 		for (const s of slugs) partRoles[s] = target.key;
 	}
 	const lockedParts = view.allParts.filter((p) => p.locked).map((p) => p.slug);
-	tx.update(builds)
+	await tx
+		.update(builds)
 		.set({
 			design: {
 				id: d.id,
@@ -577,7 +579,6 @@ function replaceColors(
 				...(lockedParts.length ? { lockedParts } : {})
 			}
 		})
-		.where(eq(builds.id, view.build.id))
-		.run();
+		.where(eq(builds.id, view.build.id));
 	return lockedAdded;
 }

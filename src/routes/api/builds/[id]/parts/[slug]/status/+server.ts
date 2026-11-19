@@ -4,12 +4,13 @@ import { readJson, requireUserId, respond } from '#lib/server/api.ts';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = (event) =>
-	respond(async () =>
-		setPartStatus(
-			getDb(),
-			event.params.id,
-			requireUserId(event),
-			event.params.slug,
-			await readJson(event)
-		)
+	respond(
+		async () =>
+			await setPartStatus(
+				getDb(),
+				event.params.id,
+				requireUserId(event),
+				event.params.slug,
+				await readJson(event)
+			)
 	);

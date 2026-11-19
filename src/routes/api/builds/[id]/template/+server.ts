@@ -16,7 +16,12 @@ export const POST: RequestHandler = (event) =>
 		const b = await readJson(event);
 		if (typeof b !== 'object' || b === null || typeof (b as { own?: unknown }).own !== 'boolean')
 			throw new ApiError(400, 'own (boolean) is required');
-		const out = chooseBuildTemplate(getDb(), event.params.id, userId, (b as { own: boolean }).own);
+		const out = await chooseBuildTemplate(
+			getDb(),
+			event.params.id,
+			userId,
+			(b as { own: boolean }).own
+		);
 		emitBuildEvent(event.params.id, {
 			type: 'changed',
 			kind: 'build.template',

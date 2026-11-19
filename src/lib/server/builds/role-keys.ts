@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import type { Db } from '../db';
+import type { DbOrTx } from '../db';
 import { buildPartProfiles, buildPlates, buildUploads } from '../db/schema';
 
 /** Moves grams keyed `from` onto `to`, adding to what `to` already has. Returns null when nothing changes. */
@@ -18,31 +18,35 @@ function moveGrams(g: Record<string, number> | null | undefined, from: string, t
  * `filamentMap` values of `build_uploads.summary` (3MF filament index → role key). Runs on the caller's
  * transaction handle; touches only rows of this build and only rows that mention `from`.
  */
-export function remapRoleKey(tx: Db, buildId: string, from: string, to: string): void {
+export async function remapRoleKey(
+	tx: DbOrTx,
+	buildId: string,
+	from: string,
+	to: string
+): Promise<void> {
 	if (from === to) return;
-	for (const r of tx.select().from(buildPlates).where(eq(buildPlates.buildId, buildId)).all()) {
+	for (const r of await tx.select().from(buildPlates).where(eq(buildPlates.buildId, buildId))) {
 		const next = moveGrams(r.filamentGrams, from, to);
 		if (next)
-			tx.update(buildPlates)
+			await tx
+				.update(buildPlates)
 				.set({ filamentGrams: next })
-				.where(and(eq(buildPlates.buildId, buildId), eq(buildPlates.number, r.number)))
-				.run();
+				.where(and(eq(buildPlates.buildId, buildId), eq(buildPlates.number, r.number)));
 	}
-	for (const r of tx
+	for (const r of await tx
 		.select()
 		.from(buildPartProfiles)
-		.where(eq(buildPartProfiles.buildId, buildId))
-		.all()) {
+		.where(eq(buildPartProfiles.buildId, buildId))) {
 		const next = moveGrams(r.gramsByRole, from, to);
 		if (next)
-			tx.update(buildPartProfiles)
+			await tx
+				.update(buildPartProfiles)
 				.set({ gramsByRole: next })
 				.where(
 					and(eq(buildPartProfiles.buildId, buildId), eq(buildPartProfiles.partSlug, r.partSlug))
-				)
-				.run();
+				);
 	}
-	for (const u of tx.select().from(buildUploads).where(eq(buildUploads.buildId, buildId)).all()) {
+	for (const u of await tx.select().from(buildUploads).where(eq(buildUploads.buildId, buildId))) {
 		const fm = (u.summary as Record<string, unknown> | null)?.filamentMap;
 		if (!fm || typeof fm !== 'object' || Array.isArray(fm)) continue;
 		let changed = false;
@@ -54,9 +58,9 @@ export function remapRoleKey(tx: Db, buildId: string, from: string, to: string):
 			} else next[idx] = role;
 		}
 		if (changed)
-			tx.update(buildUploads)
+			await tx
+				.update(buildUploads)
 				.set({ summary: { ...u.summary, filamentMap: next } })
-				.where(eq(buildUploads.id, u.id))
-				.run();
+				.where(eq(buildUploads.id, u.id));
 	}
 }

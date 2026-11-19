@@ -3,7 +3,7 @@ import { rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { templateHardwarePath, templateModelPath, uploadsDir } from '../config';
-import type { Db } from '../db';
+import type { DbOrTx } from '../db';
 import { templateModelJobs, templates } from '../db/schema';
 
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
@@ -39,15 +39,14 @@ function dirBytes(dir: string): number {
 
 /**
  * Bytes on disk of the kit files (model, hardware GLB, print meshes, guide images) of the copies a
- * workspace owns, measured from the files, never from stored sizes. Synchronous (call it inside
- * the transaction that inserts, like the other quota counters).
+ * workspace owns, measured from the files, never from stored sizes. Call it inside
+ * the transaction that inserts (under the quota's advisory lock), like the other quota counters.
  */
-export function kitCopyBytes(db: Db, orgId: string): number {
-	const ids = db
+export async function kitCopyBytes(db: DbOrTx, orgId: string): Promise<number> {
+	const ids = await db
 		.select({ id: templates.id })
 		.from(templates)
-		.where(eq(templates.ownerOrgId, orgId))
-		.all();
+		.where(eq(templates.ownerOrgId, orgId));
 	let total = 0;
 	for (const { id } of ids) {
 		if (!SAFE_ID.test(id)) continue;
@@ -69,28 +68,25 @@ export function kitCopyBytes(db: Db, orgId: string): number {
  * call it BEFORE deleting the workspace or template (rows cascade), never for a built-in kit.
  * Never throws for missing files.
  */
-export async function removeTemplateFiles(templateId: string, db?: Db): Promise<void> {
+export async function removeTemplateFiles(templateId: string, db?: DbOrTx): Promise<void> {
 	if (!SAFE_ID.test(templateId)) return;
 	const { files, dirs } = templateFileRoots(templateId);
-	if (db)
-		for (const j of db
+	if (db) {
+		const jobs = await db
 			.select({ p: templateModelJobs.inputPath })
 			.from(templateModelJobs)
-			.where(eq(templateModelJobs.templateId, templateId))
-			.all())
-			await unlink(j.p).catch(() => {});
+			.where(eq(templateModelJobs.templateId, templateId));
+		for (const j of jobs) await unlink(j.p).catch(() => {});
+	}
 	for (const f of files) await rm(f, { force: true }).catch(() => {});
 	for (const d of dirs) await rm(d, { recursive: true, force: true }).catch(() => {});
 }
 
 /** Removes the files of every kit copy a workspace owns (chapter or account deletion). Returns the template ids. */
-export async function removeWorkspaceTemplateFiles(db: Db, orgId: string): Promise<string[]> {
-	const ids = db
-		.select({ id: templates.id })
-		.from(templates)
-		.where(eq(templates.ownerOrgId, orgId))
-		.all()
-		.map((r) => r.id);
+export async function removeWorkspaceTemplateFiles(db: DbOrTx, orgId: string): Promise<string[]> {
+	const ids = (
+		await db.select({ id: templates.id }).from(templates).where(eq(templates.ownerOrgId, orgId))
+	).map((r) => r.id);
 	for (const id of ids) await removeTemplateFiles(id, db);
 	return ids;
 }

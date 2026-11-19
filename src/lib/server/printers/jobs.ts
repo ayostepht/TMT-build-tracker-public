@@ -24,7 +24,7 @@ import {
 } from '../builds/actions';
 import { MAX_RUN_GRAMS, runGramsMessage } from '../builds/actions';
 import { loadBuildView } from '../builds/view';
-import type { Db } from '../db';
+import { first, one, type Db, type DbOrTx, type Tx } from '../db';
 import { builds, printerJobs, printers } from '../db/schema';
 import { emitBuildEvent } from '../events';
 import { getExpected, getOrgSettings, setExpected } from '../org-settings';
@@ -44,16 +44,20 @@ function maxProgress(a: number | null | undefined, b: number | null | undefined)
 	return Math.max(a, b);
 }
 
-export function activeJob(db: Db, printerId: string): JobRow | undefined {
-	return db
-		.select()
-		.from(printerJobs)
-		.where(
-			and(eq(printerJobs.printerId, printerId), inArray(printerJobs.status, ['printing', 'paused']))
-		)
-		.orderBy(desc(printerJobs.startedAt))
-		.limit(1)
-		.get();
+export async function activeJob(db: DbOrTx, printerId: string): Promise<JobRow | undefined> {
+	return first(
+		db
+			.select()
+			.from(printerJobs)
+			.where(
+				and(
+					eq(printerJobs.printerId, printerId),
+					inArray(printerJobs.status, ['printing', 'paused'])
+				)
+			)
+			.orderBy(desc(printerJobs.startedAt))
+			.limit(1)
+	);
 }
 
 function samePrinterBuild(view: BuildView, printer: PrinterRow): boolean {
@@ -99,10 +103,14 @@ export function checkPartSlugs(
  * decides: a job is never linked by guessing (a "Start on <printer>" click is a suggestion the user
  * confirms, see `pendingExpected`).
  */
-export function findPlateForFile(db: Db, printer: PrinterRow, fileName: string): Candidate | null {
-	const actor = getMemberActor(db, printer.organizationId);
+export async function findPlateForFile(
+	db: DbOrTx,
+	printer: PrinterRow,
+	fileName: string
+): Promise<Candidate | null> {
+	const actor = await getMemberActor(db, printer.organizationId);
 	if (!actor) return null;
-	const rows = db
+	const rows = await db
 		.select({ id: builds.id, phase: builds.phase })
 		.from(builds)
 		.where(
@@ -111,9 +119,12 @@ export function findPlateForFile(db: Db, printer: PrinterRow, fileName: string):
 				ne(builds.phase, 'done'),
 				eq(builds.kind, 'build')
 			)
-		)
-		.all();
-	const views = rows.map((r) => loadBuildView(db, r.id, actor)).filter((v): v is BuildView => !!v);
+		);
+	const views: BuildView[] = [];
+	for (const r of rows) {
+		const v = await loadBuildView(db, r.id, actor);
+		if (v) views.push(v);
+	}
 
 	let hits: Candidate[] = [];
 	for (const v of views) {
@@ -175,8 +186,8 @@ function linkPatches(
 }
 
 /** Parts of a build that another running job (not `jobId`) is linked to. */
-function heldByOtherJobs(tx: Db, buildId: string, jobId: string): Set<string> {
-	const rows = tx
+async function heldByOtherJobs(tx: DbOrTx, buildId: string, jobId: string): Promise<Set<string>> {
+	const rows = await tx
 		.select({ partSlugs: printerJobs.partSlugs })
 		.from(printerJobs)
 		.where(
@@ -185,13 +196,12 @@ function heldByOtherJobs(tx: Db, buildId: string, jobId: string): Set<string> {
 				ne(printerJobs.id, jobId),
 				inArray(printerJobs.status, ['printing', 'paused'])
 			)
-		)
-		.all();
+		);
 	return new Set(rows.flatMap((r) => r.partSlugs ?? []));
 }
 
 /** Attach a job to a plate: parts go to Printing with the job's start time. */
-function attach(
+async function attach(
 	db: Db,
 	printer: PrinterRow,
 	job: JobRow,
@@ -199,8 +209,8 @@ function attach(
 	status: PrinterStatus,
 	auto: boolean,
 	userId?: string
-) {
-	setExpected(db, printer.organizationId, printer.id, null);
+): Promise<void> {
+	await setExpected(db, printer.organizationId, printer.id, null);
 	const plate = c.view.plates.find((p) => p.number === c.plate)!;
 	const printingNow = plate.parts.filter((s) => c.view.state[s]?.status === 'Printing');
 	const slugs = c.partSlugs?.length
@@ -222,18 +232,18 @@ function attach(
 		fileName: job.fileName,
 		auto
 	};
-	const body = (tx: Db, view: BuildView) => {
-		tx.update(printerJobs)
+	const body = async (tx: Tx, view: BuildView) => {
+		await tx
+			.update(printerJobs)
 			.set({ buildId: c.view.build.id, plateNumber: c.plate, partSlugs: slugs })
-			.where(eq(printerJobs.id, job.id))
-			.run();
+			.where(eq(printerJobs.id, job.id));
 		const live = job.status === 'printing' || job.status === 'paused';
 		const patches = live
-			? linkPatches(view, slugs, started, est, heldByOtherJobs(tx, c.view.build.id, job.id))
+			? linkPatches(view, slugs, started, est, await heldByOtherJobs(tx, c.view.build.id, job.id))
 			: [];
 		// the run time the printer reported is the plate's time too (never over a typed one)
 		if (live && est && patches.some((p) => p.runEstSeconds === est))
-			syncPlateTime(tx, c.view.build.id, view, slugs, est, 'printer');
+			await syncPlateTime(tx, c.view.build.id, view, slugs, est, 'printer');
 		return {
 			kind: auto ? 'printer.job.start' : 'printer.job.link',
 			payload,
@@ -243,38 +253,40 @@ function attach(
 					: []
 		};
 	};
-	if (userId) mutateBuild(db, c.view.build.id, userId, (tx, view) => body(tx, view));
+	if (userId) await mutateBuild(db, c.view.build.id, userId, (tx, view) => body(tx, view));
 	else {
-		const actor = getMemberActor(db, printer.organizationId);
+		const actor = await getMemberActor(db, printer.organizationId);
 		if (actor)
-			mutateBuildSystem(db, c.view.build.id, actor, printer.name, (tx, view) => body(tx, view));
+			await mutateBuildSystem(db, c.view.build.id, actor, printer.name, (tx, view) =>
+				body(tx, view)
+			);
 	}
 }
 
 const EXPECTED_MAX_AGE_MS = 12 * 3600_000;
 
 /** A new unlinked job: a fresh suggestion sent before it started becomes about this job; stale ones go. */
-function bindExpected(db: Db, printer: PrinterRow, job: JobRow) {
-	const exp = getExpected(db, printer.organizationId, printer.id);
+async function bindExpected(db: Db, printer: PrinterRow, job: JobRow): Promise<void> {
+	const exp = await getExpected(db, printer.organizationId, printer.id);
 	if (!exp) return;
 	if (exp.jobId || Date.now() - exp.at >= EXPECTED_MAX_AGE_MS)
-		setExpected(db, printer.organizationId, printer.id, null);
-	else setExpected(db, printer.organizationId, printer.id, { ...exp, jobId: job.id });
+		await setExpected(db, printer.organizationId, printer.id, null);
+	else await setExpected(db, printer.organizationId, printer.id, { ...exp, jobId: job.id });
 }
 
 /**
  * "Start on <printer>": remember which plate the user says is printing there. With an unlinked
  * job already running it is about that job; otherwise about the next one that starts.
  */
-export function expectOnPrinterJob(
+export async function expectOnPrinterJob(
 	db: Db,
 	printerId: string,
 	e: { buildId: string; plate: number; partSlugs?: string[] }
-): void {
-	const printer = db.select().from(printers).where(eq(printers.id, printerId)).get();
+): Promise<void> {
+	const printer = await first(db.select().from(printers).where(eq(printers.id, printerId)));
 	if (!printer) throw new ApiError(404, 'Not found');
-	const j = activeJob(db, printerId);
-	setExpected(db, printer.organizationId, printerId, {
+	const j = await activeJob(db, printerId);
+	await setExpected(db, printer.organizationId, printerId, {
 		buildId: e.buildId,
 		plate: e.plate,
 		...(e.partSlugs ? { partSlugs: e.partSlugs } : {}),
@@ -285,13 +297,17 @@ export function expectOnPrinterJob(
 }
 
 /** Suggestions for a build (or, without `buildId`, for every build of the team): its plate was sent to a printer that now runs an unlinked job. */
-export function pendingExpected(db: Db, orgId: string, buildId?: string): PrinterExpectedView[] {
+export async function pendingExpected(
+	db: Db,
+	orgId: string,
+	buildId?: string
+): Promise<PrinterExpectedView[]> {
 	const out: PrinterExpectedView[] = [];
-	for (const p of db.select().from(printers).where(eq(printers.organizationId, orgId)).all()) {
-		const exp = getExpected(db, orgId, p.id);
+	for (const p of await db.select().from(printers).where(eq(printers.organizationId, orgId))) {
+		const exp = await getExpected(db, orgId, p.id);
 		if (!exp || (buildId && exp.buildId !== buildId) || !exp.jobId) continue;
 		if (Date.now() - exp.at >= EXPECTED_MAX_AGE_MS) continue;
-		const j = activeJob(db, p.id);
+		const j = await activeJob(db, p.id);
 		if (!j || j.id !== exp.jobId || j.buildId) continue;
 		out.push({
 			printerId: p.id,
@@ -306,9 +322,14 @@ export function pendingExpected(db: Db, orgId: string, buildId?: string): Printe
 	return out;
 }
 
-function createJob(db: Db, printer: PrinterRow, s: PrinterStatus, now: Date): JobRow {
+async function createJob(
+	db: Db,
+	printer: PrinterRow,
+	s: PrinterStatus,
+	now: Date
+): Promise<JobRow> {
 	const startedAt = s.elapsedSec != null ? new Date(now.getTime() - s.elapsedSec * 1000) : now;
-	const job = db
+	const [job] = await db
 		.insert(printerJobs)
 		.values({
 			printerId: printer.id,
@@ -317,52 +338,51 @@ function createJob(db: Db, printer: PrinterRow, s: PrinterStatus, now: Date): Jo
 			progress: s.progress,
 			startedAt
 		})
-		.returning()
-		.get();
-	const c = findPlateForFile(db, printer, job.fileName);
-	if (c) attach(db, printer, job, c, s, true);
-	else bindExpected(db, printer, job);
-	return db.select().from(printerJobs).where(eq(printerJobs.id, job.id)).get()!;
+		.returning();
+	const c = await findPlateForFile(db, printer, job.fileName);
+	if (c) await attach(db, printer, job, c, s, true);
+	else await bindExpected(db, printer, job);
+	return one(db.select().from(printerJobs).where(eq(printerJobs.id, job.id)));
 }
 
-function finishJob(
+async function finishJob(
 	db: Db,
 	printer: PrinterRow,
 	job: JobRow,
 	result: 'done' | 'failed' | 'cancelled',
 	s: PrinterStatus,
 	now: Date
-) {
+): Promise<void> {
 	const elapsed =
 		s.elapsedSec ??
 		(job.startedAt ? Math.max(0, (now.getTime() - job.startedAt.getTime()) / 1000) : null);
-	db.update(printerJobs)
+	await db
+		.update(printerJobs)
 		.set({
 			status: result,
 			finishedAt: now,
 			progress: result === 'done' ? 100 : maxProgress(s.progress, job.progress)
 		})
-		.where(eq(printerJobs.id, job.id))
-		.run();
+		.where(eq(printerJobs.id, job.id));
 	// A suggestion is about one job: it ends with it.
-	if (getExpected(db, printer.organizationId, printer.id)?.jobId === job.id)
-		setExpected(db, printer.organizationId, printer.id, null);
+	if ((await getExpected(db, printer.organizationId, printer.id))?.jobId === job.id)
+		await setExpected(db, printer.organizationId, printer.id, null);
 	if (!job.buildId || job.plateNumber == null) return;
-	const actor = getMemberActor(db, printer.organizationId);
+	const actor = await getMemberActor(db, printer.organizationId);
 	if (!actor) return;
-	const view = loadBuildView(db, job.buildId, actor);
+	const view = await loadBuildView(db, job.buildId, actor);
 	if (!view) return;
 	// Cancelled or failed before anything printed: nothing to log, whatever the auto-log setting.
 	if (result !== 'done') {
 		const progress = maxProgress(s.progress, job.progress);
 		if (jobNeverStarted({ progress, layer: s.layer, elapsedSec: elapsed })) {
-			db.update(printerJobs).set({ runId: DISMISSED }).where(eq(printerJobs.id, job.id)).run();
-			releaseParts(db, printer, job, undefined, 'printer.job.unstarted', result);
+			await db.update(printerJobs).set({ runId: DISMISSED }).where(eq(printerJobs.id, job.id));
+			await releaseParts(db, printer, job, undefined, 'printer.job.unstarted', result);
 			return;
 		}
 	}
 	const grams = plateRunGrams(view, job.plateNumber, job.partSlugs ?? undefined);
-	const settings = getOrgSettings(db, printer.organizationId);
+	const settings = await getOrgSettings(db, printer.organizationId);
 	const auto = settings.autoLogPrints && result === 'done';
 	const payload = {
 		printer: printer.name,
@@ -376,16 +396,16 @@ function finishJob(
 	};
 
 	if (auto) {
-		const runId = addRunSystem(
+		const runId = await addRunSystem(
 			db,
 			job.buildId,
 			actor,
 			printer.name,
 			runBody(view, job, 'Success', grams, elapsed, printer.name, now)
 		);
-		db.update(printerJobs).set({ runId }).where(eq(printerJobs.id, job.id)).run();
+		await db.update(printerJobs).set({ runId }).where(eq(printerJobs.id, job.id));
 	}
-	mutateBuildSystem(db, job.buildId, actor, printer.name, () => ({
+	await mutateBuildSystem(db, job.buildId, actor, printer.name, () => ({
 		kind: 'printer.job.done',
 		payload
 	}));
@@ -426,15 +446,15 @@ export interface ProcessResult {
 }
 
 /** Feed one status of a printer into the job lifecycle. Idempotent for repeated identical statuses. */
-export function processStatus(
+export async function processStatus(
 	db: Db,
 	printerId: string,
 	s: PrinterStatus,
 	now = new Date()
-): ProcessResult {
-	const printer = db.select().from(printers).where(eq(printers.id, printerId)).get();
+): Promise<ProcessResult> {
+	const printer = await first(db.select().from(printers).where(eq(printers.id, printerId)));
 	if (!printer) return { changed: false };
-	let active = activeJob(db, printerId);
+	let active = await activeJob(db, printerId);
 	let changed = false;
 	const running = (s.state === 'printing' || s.state === 'paused') && !!s.fileName;
 
@@ -446,13 +466,13 @@ export function processStatus(
 				s.elapsedSec != null && s.elapsedSec < RESTART_ELAPSED_SEC && (active.progress ?? 0) >= 10;
 			const same = active.fileName === s.fileName && !restarted;
 			if (!same) {
-				finishJob(db, printer, active, 'cancelled', { ...s, progress: active.progress }, now);
+				await finishJob(db, printer, active, 'cancelled', { ...s, progress: active.progress }, now);
 				active = undefined;
 				changed = true;
 			}
 		}
 		if (!active) {
-			createJob(db, printer, s, now);
+			await createJob(db, printer, s, now);
 			changed = true;
 		} else {
 			const status = s.state === 'paused' ? 'paused' : 'printing';
@@ -460,10 +480,10 @@ export function processStatus(
 			const best = maxProgress(s.progress, active.progress);
 			const moved = best != null && Math.abs(best - (active.progress ?? -10)) >= 1;
 			if (status !== active.status || moved) {
-				db.update(printerJobs)
+				await db
+					.update(printerJobs)
 					.set({ status, progress: best })
-					.where(eq(printerJobs.id, active.id))
-					.run();
+					.where(eq(printerJobs.id, active.id));
 				changed = true;
 			}
 			// Retry the plate link every ~10% while unlinked (plates may have been marked Printing since).
@@ -472,9 +492,9 @@ export function processStatus(
 				s.progress != null &&
 				Math.floor(s.progress / 10) !== Math.floor((active.progress ?? 0) / 10)
 			) {
-				const c = findPlateForFile(db, printer, active.fileName);
+				const c = await findPlateForFile(db, printer, active.fileName);
 				if (c) {
-					attach(db, printer, active, c, s, true);
+					await attach(db, printer, active, c, s, true);
 					changed = true;
 				}
 			}
@@ -493,7 +513,7 @@ export function processStatus(
 					: s.cancelled
 						? 'cancelled'
 						: 'failed';
-		finishJob(
+		await finishJob(
 			db,
 			printer,
 			active,
@@ -505,7 +525,7 @@ export function processStatus(
 	}
 	if (changed) {
 		emitPrinterEvent(printer.organizationId, { type: 'job', printerId });
-		const j = activeJob(db, printerId);
+		const j = await activeJob(db, printerId);
 		if (j?.buildId)
 			emitBuildEvent(j.buildId, {
 				type: 'changed',
@@ -545,9 +565,13 @@ export function toJobView(j: JobRow, printerName: string): PrinterJobView {
  * Jobs for a build's page: its own active jobs, finished ones still waiting for a print log,
  * and the team's active jobs nobody has linked to a plate yet (so they can be linked here).
  */
-export function buildJobs(db: Db, buildId: string, orgId: string): PrinterJobView[] {
+export async function buildJobs(
+	db: DbOrTx,
+	buildId: string,
+	orgId: string
+): Promise<PrinterJobView[]> {
 	const active = inArray(printerJobs.status, ['printing', 'paused']);
-	const rows = db
+	const rows = await db
 		.select({ job: printerJobs, name: printers.name })
 		.from(printerJobs)
 		.innerJoin(printers, eq(printers.id, printerJobs.printerId))
@@ -558,8 +582,7 @@ export function buildJobs(db: Db, buildId: string, orgId: string): PrinterJobVie
 			)
 		)
 		.orderBy(desc(printerJobs.startedAt))
-		.limit(30)
-		.all();
+		.limit(30);
 	return rows
 		.map((r) => toJobView(r.job, r.name))
 		.filter((j) => j.status === 'printing' || j.status === 'paused' || j.pendingConfirm);
@@ -570,44 +593,50 @@ export function buildJobs(db: Db, buildId: string, orgId: string): PrinterJobVie
  * unlinked ones (a running one is offered for linking; the rest sit behind "Other prints on
  * this printer"). The client splits them with `splitTeamJobs`; nothing is deleted.
  */
-export function teamJobs(db: Db, orgId: string, limit = 15, otherLimit = 30): PrinterJobView[] {
-	const rows = (linked: boolean, n: number) =>
-		db
-			.select({ job: printerJobs, name: printers.name })
-			.from(printerJobs)
-			.innerJoin(printers, eq(printers.id, printerJobs.printerId))
-			.where(
-				and(
-					eq(printers.organizationId, orgId),
-					linked ? isNotNull(printerJobs.buildId) : isNull(printerJobs.buildId)
+export async function teamJobs(
+	db: DbOrTx,
+	orgId: string,
+	limit = 15,
+	otherLimit = 30
+): Promise<PrinterJobView[]> {
+	const rows = async (linked: boolean, n: number) =>
+		(
+			await db
+				.select({ job: printerJobs, name: printers.name })
+				.from(printerJobs)
+				.innerJoin(printers, eq(printers.id, printerJobs.printerId))
+				.where(
+					and(
+						eq(printers.organizationId, orgId),
+						linked ? isNotNull(printerJobs.buildId) : isNull(printerJobs.buildId)
+					)
 				)
-			)
-			.orderBy(desc(printerJobs.startedAt))
-			.limit(n)
-			.all()
-			.map((r) => toJobView(r.job, r.name));
-	return [...rows(true, limit), ...rows(false, otherLimit)].sort((a, b) =>
+				.orderBy(desc(printerJobs.startedAt))
+				.limit(n)
+		).map((r) => toJobView(r.job, r.name));
+	return [...(await rows(true, limit)), ...(await rows(false, otherLimit))].sort((a, b) =>
 		(b.startedAt ?? '').localeCompare(a.startedAt ?? '')
 	);
 }
 
-export function getJobForOrg(
-	db: Db,
+export async function getJobForOrg(
+	db: DbOrTx,
 	jobId: string,
 	orgId: string
-): { job: JobRow; printer: PrinterRow } {
-	const r = db
-		.select({ job: printerJobs, printer: printers })
-		.from(printerJobs)
-		.innerJoin(printers, eq(printers.id, printerJobs.printerId))
-		.where(and(eq(printerJobs.id, jobId), eq(printers.organizationId, orgId)))
-		.get();
+): Promise<{ job: JobRow; printer: PrinterRow }> {
+	const r = await first(
+		db
+			.select({ job: printerJobs, printer: printers })
+			.from(printerJobs)
+			.innerJoin(printers, eq(printers.id, printerJobs.printerId))
+			.where(and(eq(printerJobs.id, jobId), eq(printers.organizationId, orgId)))
+	);
 	if (!r) throw new ApiError(404, 'Not found');
 	return r;
 }
 
 /** Manually link a job to a plate of a build in the same team (editor+). */
-export function linkJob(
+export async function linkJob(
 	db: Db,
 	jobId: string,
 	orgId: string,
@@ -615,15 +644,13 @@ export function linkJob(
 	buildId: string,
 	plateNumber: number,
 	partSlugs?: unknown
-): void {
-	const { job, printer } = getJobForOrg(db, jobId, orgId);
-	const b = db
-		.select({ org: builds.organizationId })
-		.from(builds)
-		.where(eq(builds.id, buildId))
-		.get();
+): Promise<void> {
+	const { job, printer } = await getJobForOrg(db, jobId, orgId);
+	const b = await first(
+		db.select({ org: builds.organizationId }).from(builds).where(eq(builds.id, buildId))
+	);
 	if (!b || b.org !== orgId) throw new ApiError(404, 'Build not found');
-	const view = loadBuildView(db, buildId, userId);
+	const view = await loadBuildView(db, buildId, userId);
 	if (!view) throw new ApiError(404, 'Build not found');
 	if (view.build.kind === 'draft')
 		throw new ApiError(400, 'Drafts cannot be linked to print jobs.');
@@ -633,16 +660,24 @@ export function linkJob(
 		state: 'printing',
 		progress: job.progress
 	}) as unknown as PrinterStatus;
-	attach(db, printer, job, { view, plate: plateNumber, partSlugs: chosen }, status, false, userId);
+	await attach(
+		db,
+		printer,
+		job,
+		{ view, plate: plateNumber, partSlugs: chosen },
+		status,
+		false,
+		userId
+	);
 	emitPrinterEvent(orgId, { type: 'job', printerId: printer.id });
 }
 
-export function unlinkJob(db: Db, jobId: string, orgId: string): void {
-	const { job, printer } = getJobForOrg(db, jobId, orgId);
-	db.update(printerJobs)
+export async function unlinkJob(db: Db, jobId: string, orgId: string): Promise<void> {
+	const { job, printer } = await getJobForOrg(db, jobId, orgId);
+	await db
+		.update(printerJobs)
 		.set({ buildId: null, plateNumber: null, partSlugs: null })
-		.where(eq(printerJobs.id, jobId))
-		.run();
+		.where(eq(printerJobs.id, jobId));
 	if (job.buildId)
 		emitBuildEvent(job.buildId, {
 			type: 'changed',
@@ -657,17 +692,17 @@ export function unlinkJob(db: Db, jobId: string, orgId: string): void {
  * A job ended and nothing was logged for it: its parts that are still Printing (and that no other
  * active job covers) go back to their status from before the print.
  */
-function releaseParts(
+async function releaseParts(
 	db: Db,
 	printer: PrinterRow,
 	job: JobRow,
 	userId?: string,
 	kind = 'printer.job.release',
 	result?: string
-) {
+): Promise<void> {
 	if (!job.buildId || !job.partSlugs?.length) return;
 	const buildId = job.buildId;
-	const others = db
+	const others = await db
 		.select()
 		.from(printerJobs)
 		.where(
@@ -676,11 +711,10 @@ function releaseParts(
 				ne(printerJobs.id, job.id),
 				inArray(printerJobs.status, ['printing', 'paused'])
 			)
-		)
-		.all();
+		);
 	const held = new Set(others.flatMap((o) => o.partSlugs ?? []));
 	const slugs = job.partSlugs.filter((s) => !held.has(s));
-	const body = (_tx: Db, view: BuildView) => ({
+	const body = (_tx: Tx, view: BuildView) => ({
 		kind,
 		payload: {
 			printer: printer.name,
@@ -692,36 +726,36 @@ function releaseParts(
 		},
 		patches: releaseUnstarted(view, slugs)
 	});
-	if (userId) mutateBuild(db, buildId, userId, body);
+	if (userId) await mutateBuild(db, buildId, userId, body);
 	else {
-		const actor = getMemberActor(db, printer.organizationId);
-		if (actor) mutateBuildSystem(db, buildId, actor, printer.name, body);
+		const actor = await getMemberActor(db, printer.organizationId);
+		if (actor) await mutateBuildSystem(db, buildId, actor, printer.name, body);
 	}
 }
 
 /** "Confirm print log": the user accepts or adjusts what a finished job should be logged as. */
-export function confirmJob(
+export async function confirmJob(
 	db: Db,
 	jobId: string,
 	orgId: string,
 	userId: string,
 	body: unknown
-): string {
-	return confirmJobRuns(db, jobId, orgId, userId, body).runId;
+): Promise<string> {
+	return (await confirmJobRuns(db, jobId, orgId, userId, body)).runId;
 }
 
 /**
  * Like `confirmJob`, but also returns every run created: a Partial with `split` (which parts
  * printed OK, and the grams of each half) makes two, and `printer_jobs.run_id` points at the kept one.
  */
-export function confirmJobRuns(
+export async function confirmJobRuns(
 	db: Db,
 	jobId: string,
 	orgId: string,
 	userId: string,
 	body: unknown
-): { runId: string; runIds: string[] } {
-	const { job, printer } = getJobForOrg(db, jobId, orgId);
+): Promise<{ runId: string; runIds: string[] }> {
+	const { job, printer } = await getJobForOrg(db, jobId, orgId);
 	if (!job.buildId || job.plateNumber == null)
 		throw new ApiError(400, 'Link the job to a plate first');
 	if (job.status === 'printing' || job.status === 'paused')
@@ -735,7 +769,7 @@ export function confirmJobRuns(
 			: finished
 				? 'Success'
 				: 'Failed';
-	const view = loadBuildView(db, job.buildId, userId);
+	const view = await loadBuildView(db, job.buildId, userId);
 	if (!view) throw new ApiError(404, 'Not found');
 	let split: { keptSlugs: string[]; keptGrams: number | null; lostGrams: number | null } | null =
 		null;
@@ -791,19 +825,24 @@ export function confirmJobRuns(
 		...(typeof o.date === 'string' ? { date: o.date } : {}),
 		...(split ? { split } : {})
 	};
-	const { runId, runIds } = addRun(db, job.buildId, userId, merged);
-	db.update(printerJobs).set({ runId }).where(eq(printerJobs.id, jobId)).run();
+	const { runId, runIds } = await addRun(db, job.buildId, userId, merged);
+	await db.update(printerJobs).set({ runId }).where(eq(printerJobs.id, jobId));
 	emitPrinterEvent(orgId, { type: 'job', printerId: printer.id });
 	return { runId, runIds };
 }
 
-export function dismissJob(db: Db, jobId: string, orgId: string, userId?: string): void {
-	const { job, printer } = getJobForOrg(db, jobId, orgId);
+export async function dismissJob(
+	db: Db,
+	jobId: string,
+	orgId: string,
+	userId?: string
+): Promise<void> {
+	const { job, printer } = await getJobForOrg(db, jobId, orgId);
 	if (job.status === 'printing' || job.status === 'paused')
 		throw new ApiError(409, 'The print is still running');
 	const unlogged = !job.runId;
-	db.update(printerJobs).set({ runId: DISMISSED }).where(eq(printerJobs.id, jobId)).run();
-	if (unlogged) releaseParts(db, printer, job, userId);
+	await db.update(printerJobs).set({ runId: DISMISSED }).where(eq(printerJobs.id, jobId));
+	if (unlogged) await releaseParts(db, printer, job, userId);
 	if (job.buildId)
 		emitBuildEvent(job.buildId, {
 			type: 'changed',

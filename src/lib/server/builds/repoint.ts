@@ -1,5 +1,5 @@
 import { and, eq, inArray, ne } from 'drizzle-orm';
-import type { Db } from '../db';
+import { first, type DbOrTx } from '../db';
 import { builds, templates } from '../db/schema';
 
 /**
@@ -16,27 +16,32 @@ import { builds, templates } from '../db/schema';
  * Call inside the caller's transaction. Ids that are not copies (no owner or no base) are
  * skipped. Returns the number of builds re-pointed.
  */
-export function repointBuildsOffTemplates(tx: Db, templateIds: string[]): number {
+export async function repointBuildsOffTemplates(
+	tx: DbOrTx,
+	templateIds: string[]
+): Promise<number> {
 	if (!templateIds.length) return 0;
-	const copies = tx
+	const copies = await tx
 		.select({ id: templates.id, owner: templates.ownerOrgId, base: templates.baseTemplateId })
 		.from(templates)
-		.where(inArray(templates.id, templateIds))
-		.all();
+		.where(inArray(templates.id, templateIds));
 	let moved = 0;
 	for (const c of copies) {
 		if (!c.owner || !c.base) continue;
-		const base = tx
-			.select({ id: templates.id, owner: templates.ownerOrgId })
-			.from(templates)
-			.where(eq(templates.id, c.base))
-			.get();
+		const base = await first(
+			tx
+				.select({ id: templates.id, owner: templates.ownerOrgId })
+				.from(templates)
+				.where(eq(templates.id, c.base))
+		);
 		if (!base) continue;
-		moved += tx
-			.update(builds)
-			.set({ templateId: base.id })
-			.where(and(eq(builds.templateId, c.id), ne(builds.organizationId, c.owner)))
-			.run().changes;
+		moved += (
+			await tx
+				.update(builds)
+				.set({ templateId: base.id })
+				.where(and(eq(builds.templateId, c.id), ne(builds.organizationId, c.owner)))
+				.returning({ id: builds.id })
+		).length;
 	}
 	return moved;
 }

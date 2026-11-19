@@ -8,8 +8,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { openDb, runMigrations, type Db } from './db';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { first, type Db } from './db';
+import { createTestDb, dropTestDb } from './db/testing';
 import { templateModelJobs, templates } from './db/schema';
 import { templateSeeds } from './seed';
 import { seedTemplates } from './seed/run';
@@ -32,20 +33,20 @@ function file(name: string, hours: number) {
 	return p;
 }
 
-beforeEach(() => {
-	db = openDb(':memory:');
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
+beforeEach(async () => {
+	db = await createTestDb();
+	await seedTemplates(db, templateSeeds);
 	dir = mkdtempSync(join(tmpdir(), 'tmt-sweep-'));
 });
+afterEach(() => dropTestDb(db));
 
 describe('sweepImportsDir', () => {
 	it('removes old matching leftovers and keeps fresh, unknown and queued ones', async () => {
-		const tid = db.select({ id: templates.id }).from(templates).get()!.id;
+		const tid = (await first(db.select({ id: templates.id }).from(templates)))!.id;
 		const queued = file(`${U1}.zip`, 5);
-		db.insert(templateModelJobs)
-			.values({ templateId: tid, status: 'queued', inputPath: queued })
-			.run();
+		await db
+			.insert(templateModelJobs)
+			.values({ templateId: tid, status: 'queued', inputPath: queued });
 		const oldZip = file(`${U2}.zip`, 5);
 		const oldUpload = file(`geometry-${U3}.upload`, 2);
 		const oldPart = file(`${U2}.zip.part`, 2);

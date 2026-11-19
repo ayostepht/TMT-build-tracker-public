@@ -1,15 +1,18 @@
 import { eq } from 'drizzle-orm';
 import { ApiError, isSiteAdmin, type SiteAdminCandidate } from '../access.ts';
 import { diskHasRoom, isPublicMode } from '../config.ts';
-import type { Db } from '../db/index.ts';
+import { first, type DbOrTx } from '../db/index.ts';
 import { templates } from '../db/schema.ts';
 import { assertUploadRoom } from '../quota.ts';
 
 /** The workspace that owns a template copy (null for a built-in kit). */
-export function templateOwnerOrg(db: Db, templateId: string): string | null {
+export async function templateOwnerOrg(db: DbOrTx, templateId: string): Promise<string | null> {
 	return (
-		db.select({ o: templates.ownerOrgId }).from(templates).where(eq(templates.id, templateId)).get()
-			?.o ?? null
+		(
+			await first(
+				db.select({ o: templates.ownerOrgId }).from(templates).where(eq(templates.id, templateId))
+			)
+		)?.o ?? null
 	);
 }
 
@@ -23,16 +26,23 @@ export function assertDiskRoom(): void {
  * not already over its upload space (409; built-in kits have no workspace), then the disk floor
  * (507). Same order as the STEP zip route.
  */
-export function admitKitUpload(db: Db, userId: string, templateId: string): string | null {
-	const orgId = templateOwnerOrg(db, templateId);
-	if (orgId) assertUploadRoom(db, orgId, 0, { userId });
+export async function admitKitUpload(
+	db: DbOrTx,
+	userId: string,
+	templateId: string
+): Promise<string | null> {
+	const orgId = await templateOwnerOrg(db, templateId);
+	if (orgId) await assertUploadRoom(db, orgId, 0, { userId });
 	assertDiskRoom();
 	return orgId;
 }
 
 /** Public mode: print-geometry import (a 3MF parse of up to the upload cap) is for site admins only. */
-export function assertPrintGeometryImportAllowed(db: Db, user: SiteAdminCandidate): void {
-	if (isPublicMode() && !isSiteAdmin(db, user))
+export async function assertPrintGeometryImportAllowed(
+	db: DbOrTx,
+	user: SiteAdminCandidate
+): Promise<void> {
+	if (isPublicMode() && !(await isSiteAdmin(db, user)))
 		throw new ApiError(
 			403,
 			'On this server only site admins can import print geometry. Ask the site admin to import it for you.'

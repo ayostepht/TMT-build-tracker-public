@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import type { Db } from './db';
+import { first, type Db } from './db';
 import { session } from './db/auth.schema';
 /**
  * Server-sent-events response shared by the live endpoints.
@@ -19,9 +19,9 @@ export interface LiveStreamOptions<E> {
 	/** Subscribe to events; returns the unsubscribe function. */
 	subscribe: (fn: (e: E) => void) => () => void;
 	/** Still allowed to listen? Called before each event and on each heartbeat. */
-	allowed: () => boolean;
+	allowed: () => boolean | Promise<boolean>;
 	/** Optional: is the session behind this stream still valid? Checked on each heartbeat only. */
-	sessionValid?: () => boolean;
+	sessionValid?: () => boolean | Promise<boolean>;
 	release: () => void;
 	heartbeatMs?: number;
 }
@@ -33,10 +33,20 @@ export function liveStream<E>(o: LiveStreamOptions<E>): Response {
 		start(controller) {
 			let done = false;
 			let unsub = () => {};
-			const beat = setInterval(() => {
-				if (!o.allowed() || (o.sessionValid && !o.sessionValid())) cleanup();
-				else send(': keepalive\n\n');
-			}, o.heartbeatMs ?? HEARTBEAT_MS);
+			// Checks are async (database); events and ticks run one after another so order is kept.
+			let chain: Promise<void> = Promise.resolve();
+			const enqueue = (fn: () => Promise<void>) => {
+				chain = chain.then(fn).catch(() => cleanup());
+			};
+			const beat = setInterval(
+				() =>
+					enqueue(async () => {
+						if (done) return;
+						if (!(await o.allowed()) || (o.sessionValid && !(await o.sessionValid()))) cleanup();
+						else send(': keepalive\n\n');
+					}),
+				o.heartbeatMs ?? HEARTBEAT_MS
+			);
 			cleanup = () => {
 				if (done) return;
 				done = true;
@@ -56,10 +66,13 @@ export function liveStream<E>(o: LiveStreamOptions<E>): Response {
 					cleanup();
 				}
 			}
-			unsub = o.subscribe((e) => {
-				if (!o.allowed()) return cleanup();
-				send(`data: ${JSON.stringify(e)}\n\n`);
-			});
+			unsub = o.subscribe((e) =>
+				enqueue(async () => {
+					if (done) return;
+					if (!(await o.allowed())) return cleanup();
+					send(`data: ${JSON.stringify(e)}\n\n`);
+				})
+			);
 			if (o.signal.aborted) return cleanup();
 			o.signal.addEventListener('abort', cleanup);
 			send('retry: 3000\n: connected\n\n');
@@ -82,12 +95,13 @@ export function liveStream<E>(o: LiveStreamOptions<E>): Response {
  * True while the session row still exists and has not expired (sign-out, "revoke other sessions"
  * and account deletion remove it). One lookup by primary key.
  */
-export function sessionStillValid(db: Db, sessionId: string | null | undefined): boolean {
+export async function sessionStillValid(
+	db: Db,
+	sessionId: string | null | undefined
+): Promise<boolean> {
 	if (!sessionId) return false;
-	const s = db
-		.select({ expiresAt: session.expiresAt })
-		.from(session)
-		.where(eq(session.id, sessionId))
-		.get();
+	const s = await first(
+		db.select({ expiresAt: session.expiresAt }).from(session).where(eq(session.id, sessionId))
+	);
 	return !!s && s.expiresAt.getTime() > Date.now();
 }

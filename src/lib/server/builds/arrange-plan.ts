@@ -19,7 +19,7 @@ import type { PrintFootprint } from '#lib/domain/print-footprint.ts';
 import type { LearnedTime } from '#lib/domain/time-estimate.ts';
 import type { BuildView } from '#lib/domain/types.ts';
 import { effectiveKeepOut } from '#lib/printers/printer.ts';
-import type { Db } from '../db';
+import { first, type DbOrTx } from '../db';
 import { buildPlates, builds, templatePlateLayouts, templatePrintGeometry } from '../db/schema';
 import { gramsSourceOf, loadBuildView } from './view';
 import { estimateArrangedPlates, loadTimeModel } from './time-model';
@@ -37,14 +37,16 @@ const TEMPLATE_ROLE_NAMES = /^[a-z]+$/;
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Print footprints stored for a template, by slug (seed rows and imported rows alike). */
-export function loadFootprints(db: Db, templateId: string): Map<string, PrintFootprint> {
-	ensureSilhouettes(db, templateId);
+export async function loadFootprints(
+	db: DbOrTx,
+	templateId: string
+): Promise<Map<string, PrintFootprint>> {
+	await ensureSilhouettes(db, templateId);
 	const out = new Map<string, PrintFootprint>();
-	for (const r of db
+	for (const r of await db
 		.select()
 		.from(templatePrintGeometry)
-		.where(eq(templatePrintGeometry.templateId, templateId))
-		.all()) {
+		.where(eq(templatePrintGeometry.templateId, templateId))) {
 		const fp = r.footprint as unknown as PrintFootprint;
 		if (fp?.pieces?.length) out.set(r.slug, { ...fp, slug: r.slug });
 	}
@@ -177,11 +179,11 @@ export interface PlateManuals {
  * number and the same set of parts. Grams that came from a file or a printer job are not carried:
  * the new plates have their own source.
  */
-export function manualTimes(
-	tx: Db,
+export async function manualTimes(
+	tx: DbOrTx,
 	buildId: string
-): (number: number, parts: string[]) => PlateManuals {
-	const old = tx.select().from(buildPlates).where(eq(buildPlates.buildId, buildId)).all();
+): Promise<(number: number, parts: string[]) => PlateManuals> {
+	const old = await tx.select().from(buildPlates).where(eq(buildPlates.buildId, buildId));
 	const key = (n: number, parts: string[]) => `${n}:${[...parts].sort().join(',')}`;
 	const m = new Map<string, PlateManuals>();
 	for (const o of old) {
@@ -212,16 +214,14 @@ export function carryManuals(h: PlateManuals) {
 }
 
 /** Replace the build's plates with a plan. Callers must have dealt with plate-attached runs. */
-export function writePlan(tx: Db, buildId: string, plan: Plan): number {
-	const tplId = tx
-		.select({ t: builds.templateId })
-		.from(builds)
-		.where(eq(builds.id, buildId))
-		.get()?.t;
+export async function writePlan(tx: DbOrTx, buildId: string, plan: Plan): Promise<number> {
+	const tplId = (
+		await first(tx.select({ t: builds.templateId }).from(builds).where(eq(builds.id, buildId)))
+	)?.t;
 	// MakeGood's X/P/A times, spread over the plate's items (an estimate; the view recomputes it too)
 	const est = tplId
 		? estimateArrangedPlates(
-				loadTimeModel(tx, tplId, plan.learned),
+				await loadTimeModel(tx, tplId, plan.learned),
 				plan.result.plates.map((pl) => ({
 					number: pl.number,
 					runs: pl.runs,
@@ -230,24 +230,22 @@ export function writePlan(tx: Db, buildId: string, plan: Plan): number {
 				}))
 			)
 		: null;
-	const manualFor = manualTimes(tx, buildId);
-	tx.delete(buildPlates).where(eq(buildPlates.buildId, buildId)).run();
+	const manualFor = await manualTimes(tx, buildId);
+	await tx.delete(buildPlates).where(eq(buildPlates.buildId, buildId));
 	for (const pl of plan.result.plates)
-		tx.insert(buildPlates)
-			.values({
-				buildId,
-				number: pl.number,
-				name: pl.name,
-				estSeconds: est?.get(pl.number)?.estSeconds ?? null,
-				runs: pl.runs,
-				perPartRuns: false,
-				parts: pl.parts,
-				...carryManuals(manualFor(pl.number, pl.parts)),
-				source: ARRANGED_SOURCE,
-				arrangement: pl
-			})
-			.run();
-	tx.update(builds).set({ plateLayout: ARRANGED_LAYOUT }).where(eq(builds.id, buildId)).run();
+		await tx.insert(buildPlates).values({
+			buildId,
+			number: pl.number,
+			name: pl.name,
+			estSeconds: est?.get(pl.number)?.estSeconds ?? null,
+			runs: pl.runs,
+			perPartRuns: false,
+			parts: pl.parts,
+			...carryManuals(manualFor(pl.number, pl.parts)),
+			source: ARRANGED_SOURCE,
+			arrangement: pl
+		});
+	await tx.update(builds).set({ plateLayout: ARRANGED_LAYOUT }).where(eq(builds.id, buildId));
 	return plan.result.plates.length;
 }
 
@@ -258,18 +256,19 @@ export function writePlan(tx: Db, buildId: string, plan: Plan): number {
  * (`view.started`: any run, part not To print, Printing part or live printer job) it does nothing
  * (the UI offers "re-arrange" and asks first).
  */
-export function autoRearrange(
-	tx: Db,
+export async function autoRearrange(
+	tx: DbOrTx,
 	buildId: string,
 	view: BuildView,
 	footprints: Map<string, PrintFootprint>,
 	layoutHint: string | null
-): boolean {
-	const b = tx
-		.select({ layout: builds.plateLayout })
-		.from(builds)
-		.where(and(eq(builds.id, buildId)))
-		.get();
+): Promise<boolean> {
+	const b = await first(
+		tx
+			.select({ layout: builds.plateLayout })
+			.from(builds)
+			.where(and(eq(builds.id, buildId)))
+	);
 	if (b?.layout !== ARRANGED_LAYOUT || hasPlateRuns(view)) return false;
 	// A build that has started printing keeps its plates: rewriting them renumbers plates under a
 	// live printer job and under Printing parts. The plates go stale instead (banner offers a
@@ -277,7 +276,7 @@ export function autoRearrange(
 	if (view.started.started) return false;
 	const plan = planArrangement(view, footprints, layoutHint);
 	if (!plan) return false;
-	writePlan(tx, buildId, plan);
+	await writePlan(tx, buildId, plan);
 	return true;
 }
 
@@ -290,25 +289,28 @@ export const REARRANGE_KINDS = new Set([
 ]);
 
 /** Advice appended to oversize warnings when the kit has other (printer-specific) layouts. */
-export function layoutHintFor(db: Db, templateId: string): string | null {
-	const layouts = db
+export async function layoutHintFor(db: DbOrTx, templateId: string): Promise<string | null> {
+	const layouts = await db
 		.select({ name: templatePlateLayouts.name, isDefault: templatePlateLayouts.isDefault })
 		.from(templatePlateLayouts)
-		.where(eq(templatePlateLayouts.templateId, templateId))
-		.all();
+		.where(eq(templatePlateLayouts.templateId, templateId));
 	if (layouts.length < 2) return null;
 	return 'The MakeGood layouts in the picker may print it in another orientation.';
 }
 
 /** `autoRearrange` with its inputs loaded; used by `mutateBuild` right after a mutation. */
-export function autoRearrangeBuild(tx: Db, buildId: string, userId: string): boolean {
-	const view = loadBuildView(tx, buildId, userId);
+export async function autoRearrangeBuild(
+	tx: DbOrTx,
+	buildId: string,
+	userId: string
+): Promise<boolean> {
+	const view = await loadBuildView(tx, buildId, userId);
 	if (!view) return false;
 	return autoRearrange(
 		tx,
 		buildId,
 		view,
-		loadFootprints(tx, view.build.templateId),
-		layoutHintFor(tx, view.build.templateId)
+		await loadFootprints(tx, view.build.templateId),
+		await layoutHintFor(tx, view.build.templateId)
 	);
 }

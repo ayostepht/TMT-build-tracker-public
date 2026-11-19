@@ -2,36 +2,40 @@
  * Quota enforcement: the one place that turns the limits of `quotas()` (config.ts) into refusals.
  *
  * Contract (shared by every creation path; keep it small):
- * - `assertUnder(tx, key, count, ctx)`: call INSIDE the same synchronous `db.transaction` that
- *   inserts the row, with no await between the count and the insert, so two parallel requests
- *   cannot both pass. A `null` limit returns at once without running `count`. Site admins are
- *   exempt (only looked up once the count has reached the limit). Refusal throws `QuotaError`
- *   (an `ApiError`, status 409, `code: 'quota'`), which `respond()` renders as
- *   `{ error: <sentence>, code: 'quota' }` and page actions as `fail(409, { error })`.
- * - `count` is `() => number` (or a number): use the `count*` helpers below, or your own query.
- * - Bytes: `assertUploadRoom(tx, orgId, addBytes, ctx)` and `workspaceUploadBytes(db, orgId)`.
+ * - `await assertUnder(tx, key, count, ctx)`: call INSIDE the `db.transaction` that inserts the
+ *   row, before the insert. Postgres transactions do not serialise a count-then-insert, so it takes
+ *   a transaction-scoped advisory lock (`quota:<key>:<ctx.scope ?? ctx.userId>`) before counting:
+ *   two parallel requests for the same scope cannot both pass. Pass `scope` (the workspace, build
+ *   or user id the limit counts over) wherever it is not the user. A `null` limit returns at once
+ *   without locking or counting. Site admins are exempt (only looked up once the count has reached
+ *   the limit). Refusal throws `QuotaError` (an `ApiError`, status 409, `code: 'quota'`), which
+ *   `respond()` renders as `{ error: <sentence>, code: 'quota' }` and page actions as
+ *   `fail(409, { error })`.
+ * - `count` is `() => number | Promise<number>` (or a number): use the `count*` helpers below, or
+ *   your own query.
+ * - Bytes: `await assertUploadRoom(tx, orgId, addBytes, ctx)` and `await workspaceUploadBytes(db, orgId)`.
  *   Sizes come from the files on disk (stat of the paths the database rows point at), never from
  *   anything the client declared. For a file already streamed to disk but not yet in the
  *   database, `enforceStreamedUpload(db, orgId, filePath, ctx)` checks it and deletes the file
  *   when it pushes the workspace over. Call it BEFORE inserting the row that references it.
- * - Live streams: `acquireSseSlot(db, user)` returns an idempotent `release()`; it throws a
+ * - Live streams: `await acquireSseSlot(db, user)` returns an idempotent `release()`; it throws a
  *   `QuotaError` with status 429 at the per-user cap.
  *
  * No route imports. Self-hosted installs have every limit `null`, so nothing here costs a query.
  *
  * Usage:
- *   db.transaction((tx) => {
- *     assertUnder(tx, 'buildsPerWorkspace', () => countBuilds(tx, orgId), { userId });
- *     tx.insert(builds).values({ ... }).run();
+ *   await db.transaction(async (tx) => {
+ *     await assertUnder(tx, 'buildsPerWorkspace', () => countBuilds(tx, orgId), { userId, scope: orgId });
+ *     await tx.insert(builds).values({ ... });
  *   });
  */
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
-import { and, eq, ne, sql } from 'drizzle-orm';
+import { and, count, eq, ne, sql } from 'drizzle-orm';
 import { ApiError, isSiteAdmin } from './access';
 import { quotas, uploadsDir, type Quotas } from './config';
-import type { Db } from './db';
+import { advisoryLock, first, type DbOrTx } from './db';
 import { member, organization } from './db/auth.schema';
 import {
 	activity,
@@ -59,6 +63,8 @@ export class QuotaError extends ApiError {
 export interface QuotaContext {
 	/** Who is asking (admins are exempt). */
 	userId: string;
+	/** What the limit counts over (workspace, build or user id): the advisory-lock scope. Default: the user. */
+	scope?: string;
 }
 
 /** The configured limit for a key (`null` = unlimited). Read per call so the environment is honoured. */
@@ -141,13 +147,14 @@ function formatBytes(b: number): string {
 	return `${Math.max(1, Math.round(b / 1024 ** 2))} MB`;
 }
 
-function isExempt(db: Db, userId: string): boolean {
-	const u = db
-		.select({ id: user.id, email: user.email, emailVerified: user.emailVerified })
-		.from(user)
-		.where(eq(user.id, userId))
-		.get();
-	return !!u && isSiteAdmin(db, u);
+async function isExempt(db: DbOrTx, userId: string): Promise<boolean> {
+	const u = await first(
+		db
+			.select({ id: user.id, email: user.email, emailVerified: user.emailVerified })
+			.from(user)
+			.where(eq(user.id, userId))
+	);
+	return !!u && (await isSiteAdmin(db, u));
 }
 
 /**
@@ -155,17 +162,18 @@ function isExempt(db: Db, userId: string): boolean {
  * pass it. `null` limit: returns without calling `count`. Admins pass.
  * Run it inside the transaction that inserts the row.
  */
-export function assertUnder(
-	tx: Db,
+export async function assertUnder(
+	tx: DbOrTx,
 	key: Exclude<QuotaKey, 'uploadBytesPerWorkspace' | 'uploadBytesPerUser'>,
-	count: number | (() => number),
+	count: number | (() => number | Promise<number>),
 	ctx: QuotaContext
-): void {
+): Promise<void> {
 	const limit = quotaLimit(key);
 	if (limit === null) return;
-	const current = typeof count === 'function' ? count() : count;
+	await advisoryLock(tx, `quota:${key}:${ctx.scope ?? ctx.userId}`);
+	const current = typeof count === 'function' ? await count() : count;
 	if (current < limit) return;
-	if (isExempt(tx, ctx.userId)) return;
+	if (await isExempt(tx, ctx.userId)) return;
 	throw new QuotaError(sentence(key, limit, current));
 }
 
@@ -186,13 +194,10 @@ export function assertRunTotal(total: number): void {
 }
 
 /** One more run in this build: counts its runs (inside the inserting transaction) and refuses at the cap. */
-export function assertRunRoom(tx: Db, buildId: string): void {
+export async function assertRunRoom(tx: DbOrTx, buildId: string): Promise<void> {
 	const n =
-		tx
-			.select({ n: sql<number>`count(*)` })
-			.from(printRuns)
-			.where(eq(printRuns.buildId, buildId))
-			.get()?.n ?? 0;
+		(await first(tx.select({ n: count() }).from(printRuns).where(eq(printRuns.buildId, buildId))))
+			?.n ?? 0;
 	assertRunTotal(n + 1);
 }
 
@@ -201,72 +206,78 @@ export function assertRunRoom(tx: Db, buildId: string): void {
  * that inserts a row. The count is an indexed range read; the delete runs only once the build is
  * `ACTIVITY_SLACK` rows over, so it is rare and removes a batch.
  */
-export function pruneActivity(tx: Db, buildId: string): void {
+export async function pruneActivity(tx: DbOrTx, buildId: string): Promise<void> {
 	const n =
-		tx
-			.select({ n: sql<number>`count(*)` })
-			.from(activity)
-			.where(eq(activity.buildId, buildId))
-			.get()?.n ?? 0;
+		(await first(tx.select({ n: count() }).from(activity).where(eq(activity.buildId, buildId))))
+			?.n ?? 0;
 	if (n <= MAX_ACTIVITY_PER_BUILD + ACTIVITY_SLACK) return;
-	tx.run(
-		sql`delete from activity where build_id = ${buildId} and rowid in (
-			select rowid from activity where build_id = ${buildId}
-			order by at desc, rowid desc limit -1 offset ${MAX_ACTIVITY_PER_BUILD})`
+	await tx.execute(
+		sql`delete from activity where id in (
+			select id from activity where build_id = ${buildId}
+			order by at desc, id desc offset ${MAX_ACTIVITY_PER_BUILD})`
 	);
 }
 
 // ---- counting
 
 /** Tracked builds (drafts excluded) in a workspace. */
-export function countBuilds(db: Db, orgId: string): number {
+export async function countBuilds(db: DbOrTx, orgId: string): Promise<number> {
 	return (
-		db
-			.select({ n: sql<number>`count(*)` })
-			.from(builds)
-			.where(and(eq(builds.organizationId, orgId), ne(builds.kind, 'draft')))
-			.get()?.n ?? 0
+		(
+			await first(
+				db
+					.select({ n: count() })
+					.from(builds)
+					.where(and(eq(builds.organizationId, orgId), ne(builds.kind, 'draft')))
+			)
+		)?.n ?? 0
 	);
 }
 
 /** Studio drafts a user created (in any workspace). */
-export function countDrafts(db: Db, userId: string): number {
+export async function countDrafts(db: DbOrTx, userId: string): Promise<number> {
 	return (
-		db
-			.select({ n: sql<number>`count(*)` })
-			.from(builds)
-			.where(and(eq(builds.createdBy, userId), eq(builds.kind, 'draft')))
-			.get()?.n ?? 0
+		(
+			await first(
+				db
+					.select({ n: count() })
+					.from(builds)
+					.where(and(eq(builds.createdBy, userId), eq(builds.kind, 'draft')))
+			)
+		)?.n ?? 0
 	);
 }
 
-export function countPhotos(db: Db, buildId: string): number {
+export async function countPhotos(db: DbOrTx, buildId: string): Promise<number> {
 	return (
-		db
-			.select({ n: sql<number>`count(*)` })
-			.from(buildPhotos)
-			.where(eq(buildPhotos.buildId, buildId))
-			.get()?.n ?? 0
+		(
+			await first(
+				db.select({ n: count() }).from(buildPhotos).where(eq(buildPhotos.buildId, buildId))
+			)
+		)?.n ?? 0
 	);
 }
 
-export function countCustomFilaments(db: Db, orgId: string): number {
+export async function countCustomFilaments(db: DbOrTx, orgId: string): Promise<number> {
 	return (
-		db
-			.select({ n: sql<number>`count(*)` })
-			.from(customFilaments)
-			.where(eq(customFilaments.organizationId, orgId))
-			.get()?.n ?? 0
+		(
+			await first(
+				db
+					.select({ n: count() })
+					.from(customFilaments)
+					.where(eq(customFilaments.organizationId, orgId))
+			)
+		)?.n ?? 0
 	);
 }
 
-export function countSavedDesigns(db: Db, userId: string): number {
+export async function countSavedDesigns(db: DbOrTx, userId: string): Promise<number> {
 	return (
-		db
-			.select({ n: sql<number>`count(*)` })
-			.from(colorDesigns)
-			.where(eq(colorDesigns.authorUserId, userId))
-			.get()?.n ?? 0
+		(
+			await first(
+				db.select({ n: count() }).from(colorDesigns).where(eq(colorDesigns.authorUserId, userId))
+			)
+		)?.n ?? 0
 	);
 }
 
@@ -282,13 +293,12 @@ function sizeOf(rel: string): number {
 }
 
 /** The personal workspace of a user (organization flagged `personal` for them), if any. */
-function personalOrgId(db: Db, userId: string): string | null {
-	const rows = db
+async function personalOrgId(db: DbOrTx, userId: string): Promise<string | null> {
+	const rows = await db
 		.select({ id: organization.id, metadata: organization.metadata })
 		.from(member)
 		.innerJoin(organization, eq(organization.id, member.organizationId))
-		.where(eq(member.userId, userId))
-		.all();
+		.where(eq(member.userId, userId));
 	for (const r of rows) {
 		try {
 			const m = JSON.parse(r.metadata ?? '{}') as { personal?: unknown; userId?: unknown };
@@ -306,27 +316,28 @@ function personalOrgId(db: Db, userId: string): string | null {
  * a personal workspace (a design belongs to a person, not a chapter). Other agents add their own
  * kinds of upload here when they enforce them.
  */
-export function workspaceUploadBytes(db: Db, orgId: string): number {
+export async function workspaceUploadBytes(db: DbOrTx, orgId: string): Promise<number> {
 	let total = 0;
-	const photos = db
+	const photos = await db
 		.select({ path: buildPhotos.path, thumb: buildPhotos.thumbPath })
 		.from(buildPhotos)
 		.innerJoin(builds, eq(builds.id, buildPhotos.buildId))
-		.where(eq(builds.organizationId, orgId))
-		.all();
+		.where(eq(builds.organizationId, orgId));
 	for (const p of photos) total += sizeOf(p.path) + (p.thumb ? sizeOf(p.thumb) : 0);
 
-	total += plateFileBytes(db, orgId);
-	total += kitCopyBytes(db, orgId);
+	total += await plateFileBytes(db, orgId);
+	total += await kitCopyBytes(db, orgId);
 
-	const org = db
-		.select({ metadata: organization.metadata })
-		.from(organization)
-		.where(eq(organization.id, orgId))
-		.get();
+	const org = await first(
+		db
+			.select({ metadata: organization.metadata })
+			.from(organization)
+			.where(eq(organization.id, orgId))
+	);
 	try {
 		const m = JSON.parse(org?.metadata ?? '{}') as { personal?: unknown; userId?: unknown };
-		if (m.personal === true && typeof m.userId === 'string') total += snapshotBytes(db, m.userId);
+		if (m.personal === true && typeof m.userId === 'string')
+			total += await snapshotBytes(db, m.userId);
 	} catch {
 		/* not JSON */
 	}
@@ -355,32 +366,30 @@ export function parsedUploadBytes(uploadId: string): number {
  * Plate files a workspace keeps: the plate thumbnails of its builds (`build_plates.thumbnail_path`)
  * and the thumbnails of its parsed-but-unapplied 3MF uploads.
  */
-function plateFileBytes(db: Db, orgId: string): number {
+async function plateFileBytes(db: DbOrTx, orgId: string): Promise<number> {
 	let total = 0;
-	const thumbs = db
+	const thumbs = await db
 		.select({ path: buildPlates.thumbnailPath })
 		.from(buildPlates)
 		.innerJoin(builds, eq(builds.id, buildPlates.buildId))
-		.where(eq(builds.organizationId, orgId))
-		.all();
+		.where(eq(builds.organizationId, orgId));
 	for (const t of thumbs) if (t.path) total += sizeOf(t.path);
-	const pending = db
+	const pending = await db
 		.select({ id: buildUploads.id })
 		.from(buildUploads)
 		.innerJoin(builds, eq(builds.id, buildUploads.buildId))
-		.where(and(eq(builds.organizationId, orgId), eq(buildUploads.status, 'parsed')))
-		.all();
+		.where(and(eq(builds.organizationId, orgId), eq(buildUploads.status, 'parsed')));
 	for (const u of pending) total += parsedUploadBytes(u.id);
 	return total;
 }
 
-function snapshotBytes(db: Db, authorId: string): number {
-	const ids = db
-		.select({ id: colorDesigns.id })
-		.from(colorDesigns)
-		.where(eq(colorDesigns.authorUserId, authorId))
-		.all()
-		.map((r) => r.id);
+async function snapshotBytes(db: DbOrTx, authorId: string): Promise<number> {
+	const ids = (
+		await db
+			.select({ id: colorDesigns.id })
+			.from(colorDesigns)
+			.where(eq(colorDesigns.authorUserId, authorId))
+	).map((r) => r.id);
 	let total = 0;
 	for (const id of ids) total += sizeOf(`designs/${id}.png`);
 	return total;
@@ -391,7 +400,12 @@ function snapshotBytes(db: Db, authorId: string): number {
  * `uploadBytesPerWorkspace`. `addBytes = 0` is the "already over?" check before streaming.
  * `null` limit: returns with no query. Admins pass.
  */
-export function assertUploadRoom(tx: Db, orgId: string, addBytes: number, ctx: QuotaContext): void {
+export async function assertUploadRoom(
+	tx: DbOrTx,
+	orgId: string,
+	addBytes: number,
+	ctx: QuotaContext
+): Promise<void> {
 	const wsLimit = quotaLimit('uploadBytesPerWorkspace');
 	const userLimit = quotaLimit('uploadBytesPerUser');
 	if (wsLimit === null && userLimit === null) return;
@@ -399,15 +413,15 @@ export function assertUploadRoom(tx: Db, orgId: string, addBytes: number, ctx: Q
 		addBytes === 0 ? current < limit : current + addBytes <= limit;
 	let refusal: string | null = null;
 	if (wsLimit !== null) {
-		const current = workspaceUploadBytes(tx, orgId);
+		const current = await workspaceUploadBytes(tx, orgId);
 		if (!fits(current, wsLimit)) refusal = sentence('uploadBytesPerWorkspace', wsLimit, current);
 	}
 	if (refusal === null && userLimit !== null) {
-		const current = userUploadBytes(tx, ctx.userId, orgId);
+		const current = await userUploadBytes(tx, ctx.userId, orgId);
 		if (current !== null && !fits(current, userLimit))
 			refusal = sentence('uploadBytesPerUser', userLimit, current);
 	}
-	if (refusal === null || isExempt(tx, ctx.userId)) return;
+	if (refusal === null || (await isExempt(tx, ctx.userId))) return;
 	throw new QuotaError(refusal);
 }
 
@@ -416,24 +430,27 @@ export function assertUploadRoom(tx: Db, orgId: string, addBytes: number, ctx: Q
  * where they are an owner). `null` when `orgId` is not one of them: an editor uploading into
  * someone else's chapter is limited by that chapter's own limit only.
  */
-export function userUploadBytes(db: Db, userId: string, orgId: string): number | null {
+export async function userUploadBytes(
+	db: DbOrTx,
+	userId: string,
+	orgId: string
+): Promise<number | null> {
 	const ids = new Set<string>();
-	const personal = personalOrgId(db, userId);
+	const personal = await personalOrgId(db, userId);
 	if (personal) ids.add(personal);
-	for (const r of db
+	for (const r of await db
 		.select({ org: member.organizationId, role: member.role })
 		.from(member)
-		.where(eq(member.userId, userId))
-		.all())
+		.where(eq(member.userId, userId)))
 		if (r.role.split(',').some((x) => x.trim() === 'owner')) ids.add(r.org);
 	if (!ids.has(orgId)) return null;
 	let total = 0;
-	for (const id of ids) total += workspaceUploadBytes(db, id);
+	for (const id of ids) total += await workspaceUploadBytes(db, id);
 	return total;
 }
 
 /** The personal workspace a design snapshot is charged to, `null` when the author has none. */
-export function snapshotWorkspace(db: Db, authorId: string): string | null {
+export async function snapshotWorkspace(db: DbOrTx, authorId: string): Promise<string | null> {
 	return personalOrgId(db, authorId);
 }
 
@@ -442,7 +459,7 @@ export function snapshotWorkspace(db: Db, authorId: string): string | null {
  * pushes the workspace over, delete the file and refuse. Call before inserting the row.
  */
 export async function enforceStreamedUpload(
-	db: Db,
+	db: DbOrTx,
 	orgId: string,
 	filePath: string,
 	ctx: QuotaContext
@@ -451,7 +468,7 @@ export async function enforceStreamedUpload(
 		return;
 	if (!existsSync(filePath)) return;
 	try {
-		assertUploadRoom(db, orgId, statSync(filePath).size, ctx);
+		await assertUploadRoom(db, orgId, statSync(filePath).size, ctx);
 	} catch (e) {
 		await rm(filePath, { force: true }).catch(() => {});
 		throw e;
@@ -483,16 +500,16 @@ export interface SseUser {
 	emailVerified?: boolean | null;
 }
 
-function acquireSlot(
-	db: Db,
+async function acquireSlot(
+	db: DbOrTx,
 	u: SseUser,
 	key: 'sseConnectionsPerUser' | 'concurrentUploadsPerUser',
 	map: Map<string, number>
-): () => void {
+): Promise<() => void> {
 	const limit = quotaLimit(key);
 	if (limit !== null) {
 		const current = map.get(u.id) ?? 0;
-		if (current >= limit && !isSiteAdmin(db, u))
+		if (current >= limit && !(await isSiteAdmin(db, u)))
 			throw new QuotaError(sentence(key, limit, current), 429);
 	}
 	map.set(u.id, (map.get(u.id) ?? 0) + 1);
@@ -510,7 +527,7 @@ function acquireSlot(
  * Take one live-connection slot for the user, or throw QuotaError (429). Returns `release()`,
  * safe to call any number of times; call it when the stream closes, cancels or aborts.
  */
-export function acquireSseSlot(db: Db, u: SseUser): () => void {
+export function acquireSseSlot(db: DbOrTx, u: SseUser): Promise<() => void> {
 	return acquireSlot(db, u, 'sseConnectionsPerUser', slots);
 }
 
@@ -519,6 +536,6 @@ export function acquireSseSlot(db: Db, u: SseUser): () => void {
  * Returns an idempotent `release()`: call it in a `finally` around the whole upload so success,
  * error and client abort all free the slot exactly once. `null` limit: counts but never refuses.
  */
-export function acquireUploadSlot(db: Db, u: SseUser): () => void {
+export function acquireUploadSlot(db: DbOrTx, u: SseUser): Promise<() => void> {
 	return acquireSlot(db, u, 'concurrentUploadsPerUser', uploadSlots);
 }

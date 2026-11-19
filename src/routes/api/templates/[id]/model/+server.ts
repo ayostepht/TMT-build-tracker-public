@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { ApiError } from '#lib/server/access.ts';
 import { respond } from '#lib/server/api.ts';
 import { diskHasRoom, importsDir } from '#lib/server/config.ts';
-import { getDb } from '#lib/server/db/index.ts';
+import { first, getDb } from '#lib/server/db/index.ts';
 import { templates } from '#lib/server/db/schema.ts';
 import { acquireUploadSlot, assertUploadRoom } from '#lib/server/quota.ts';
 import { eq } from 'drizzle-orm';
@@ -23,21 +23,24 @@ const MAX_ZIP_BYTES = 200 * 1024 * 1024;
  */
 export const POST: RequestHandler = (event) =>
 	respond(async () => {
-		const userId = requireAdminForTemplate(event, event.params.id);
+		const userId = await requireAdminForTemplate(event, event.params.id);
 		const db = getDb();
 		// Order: upload slot (429), conversion slot (409), already over the upload space (409),
 		// disk guard (507), then stream. All refusals come before any file is created.
-		const release = acquireUploadSlot(db, event.locals.user!);
+		const release = await acquireUploadSlot(db, event.locals.user!);
 		try {
-			assertConversionSlot(db, userId);
+			await assertConversionSlot(db, userId);
 			// Kit files of a workspace's own copy count toward that workspace; global kits have no owner.
 			const orgId =
-				db
-					.select({ o: templates.ownerOrgId })
-					.from(templates)
-					.where(eq(templates.id, event.params.id))
-					.get()?.o ?? null;
-			if (orgId) assertUploadRoom(db, orgId, 0, { userId });
+				(
+					await first(
+						db
+							.select({ o: templates.ownerOrgId })
+							.from(templates)
+							.where(eq(templates.id, event.params.id))
+					)
+				)?.o ?? null;
+			if (orgId) await assertUploadRoom(db, orgId, 0, { userId });
 			if (!diskHasRoom()) throw new ApiError(507, 'The server is almost out of disk space');
 			const jobKey = randomUUID();
 			const dest = join(importsDir(), `${jobKey}.zip`);
@@ -50,9 +53,9 @@ export const POST: RequestHandler = (event) =>
 				// The zip is temporary (deleted once converted; only the GLB stays), so it does not count
 				// itself. Re-check "already over?" now that the stream is done: parallel uploads or
 				// growth while this one streamed are caught before a job is queued.
-				if (orgId) assertUploadRoom(db, orgId, 0, { userId });
+				if (orgId) await assertUploadRoom(db, orgId, 0, { userId });
 				const name = (event.url.searchParams.get('name') ?? 'upload.zip').split(/[\\/]/).pop()!;
-				const job = createJob(db, {
+				const job = await createJob(db, {
 					templateId: event.params.id,
 					inputPath: dest,
 					userId,

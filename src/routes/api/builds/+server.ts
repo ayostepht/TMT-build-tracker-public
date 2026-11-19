@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { getDb } from '#lib/server/db/index.ts';
+import { first, getDb } from '#lib/server/db/index.ts';
 import { templates } from '#lib/server/db/schema.ts';
 import { setSetupStep } from '#lib/server/builds/actions.ts';
 import { ApiError } from '#lib/server/access.ts';
@@ -23,7 +23,7 @@ export const POST: RequestHandler = (event) =>
 		// colors are already chosen, so it starts at the first step that still needs input: the kit's
 		// options when it has any, else the Files step.
 		const wizard = !draft && (o.setup === true || (o.setup !== false && !!str(o.designId)));
-		const id = createBuild(
+		const id = await createBuild(
 			db,
 			{
 				organizationId: o.organizationId as string,
@@ -45,12 +45,13 @@ export const POST: RequestHandler = (event) =>
 			userId
 		);
 		if (wizard && str(o.designId)) {
-			const tpl = db
-				.select({ groups: templates.variantGroups })
-				.from(templates)
-				.where(eq(templates.id, o.templateId as string))
-				.get();
-			setSetupStep(db, id, userId, { step: tpl?.groups?.length ? 2 : 4 });
+			const tpl = await first(
+				db
+					.select({ groups: templates.variantGroups })
+					.from(templates)
+					.where(eq(templates.id, o.templateId as string))
+			);
+			await setSetupStep(db, id, userId, { step: tpl?.groups?.length ? 2 : 4 });
 		}
 		return { id };
 	});

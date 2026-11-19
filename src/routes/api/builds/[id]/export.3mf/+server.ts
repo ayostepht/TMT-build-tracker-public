@@ -9,10 +9,10 @@ import type { RequestHandler } from './$types';
  * 3MF for a slicer: `?flavor=orca|bambu|plain&plates=1,2`. Any team member (viewers too).
  * Streamed; `plain` with several plates is a zip of one 3MF per plate.
  */
-export const GET: RequestHandler = (event) => {
+export const GET: RequestHandler = async (event) => {
 	try {
 		const q = event.url.searchParams;
-		const out = exportBuild3mf(getDb(), event.params.id, requireUserId(event), {
+		const out = await exportBuild3mf(getDb(), event.params.id, requireUserId(event), {
 			flavor: parseFlavor(q.get('flavor')),
 			plates: parsePlates(q.get('plates'))
 		});

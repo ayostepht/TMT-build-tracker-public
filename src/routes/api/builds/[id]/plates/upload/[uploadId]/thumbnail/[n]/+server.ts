@@ -9,7 +9,13 @@ export const GET: RequestHandler = async (event) => {
 		const n = Number(event.params.n);
 		if (!Number.isInteger(n)) return pngResponse(null);
 		return await pngResponse(
-			uploadThumbnailFile(getDb(), event.params.id, requireUserId(event), event.params.uploadId, n)
+			await uploadThumbnailFile(
+				getDb(),
+				event.params.id,
+				requireUserId(event),
+				event.params.uploadId,
+				n
+			)
 		);
 	} catch (e) {
 		const r = apiErrorResponse(e);

@@ -12,9 +12,11 @@ export const load: PageServerLoad = async ({ parent, locals }) => {
 	const db = getDb();
 	const writable = teams.filter((t) => t.role !== 'viewer');
 	const nameOf = new Map(teams.map((t) => [t.id, t.name]));
-	const drafts = draftRows(
-		db,
-		teams.map((t) => t.id)
+	const drafts = (
+		await draftRows(
+			db,
+			teams.map((t) => t.id)
+		)
 	).map((d) => ({ ...d, workspace: nameOf.get(d.organizationId) ?? '' }));
 	const gallery = (locals.user ? await listDesigns(db, locals.user.id) : [])
 		.slice(0, 6)
@@ -28,11 +30,13 @@ export const load: PageServerLoad = async ({ parent, locals }) => {
 	return {
 		gallery,
 		drafts,
-		workspaces: writable.map((t) => ({
-			id: t.id,
-			name: t.name,
-			templates: listTemplatesFor(db, t.id).map((tp) => ({ id: tp.id, name: tp.name }))
-		})),
+		workspaces: await Promise.all(
+			writable.map(async (t) => ({
+				id: t.id,
+				name: t.name,
+				templates: (await listTemplatesFor(db, t.id)).map((tp) => ({ id: tp.id, name: tp.name }))
+			}))
+		),
 		workspaceId: writable.find((t) => t.id === activeTeamId)?.id ?? writable[0]?.id ?? null
 	};
 };
@@ -49,10 +53,10 @@ export const actions: Actions = {
 		const s = (k: string) => String(f.get(k) ?? '').trim();
 		const db = getDb();
 		const orgId = s('organizationId');
-		const taken = draftRows(db, [orgId]).map((d) => d.name);
+		const taken = (await draftRows(db, [orgId])).map((d) => d.name);
 		let id: string;
 		try {
-			id = createBuild(
+			id = await createBuild(
 				db,
 				{
 					organizationId: orgId,

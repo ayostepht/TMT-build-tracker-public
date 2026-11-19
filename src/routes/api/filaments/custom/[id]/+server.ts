@@ -14,7 +14,7 @@ export const PATCH: RequestHandler = async (event) => {
 		const userId = requireUserId(event);
 		return json({
 			ok: true,
-			filament: updateCustomFilament(getDb(), event.params.id, userId, await readJson(event))
+			filament: await updateCustomFilament(getDb(), event.params.id, userId, await readJson(event))
 		});
 	} catch (e) {
 		if (e instanceof DuplicateFilamentError)

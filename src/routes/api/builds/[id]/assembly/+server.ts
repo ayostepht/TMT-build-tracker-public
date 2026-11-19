@@ -11,5 +11,5 @@ export const PATCH: RequestHandler = (event) =>
 		if (typeof body !== 'object' || body === null || Array.isArray(body))
 			throw new ApiError(400, 'Invalid body');
 		const { itemKey, done, note } = body as Record<string, unknown>;
-		setAssemblyItem(getDb(), event.params.id, requireUserId(event), itemKey, { done, note });
+		await setAssemblyItem(getDb(), event.params.id, requireUserId(event), itemKey, { done, note });
 	});

@@ -7,7 +7,7 @@ import { createReadStream } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
-import type { Db } from '../db';
+import type { DbOrTx } from '../db';
 import { templateParts, templatePrintGeometry } from '../db/schema';
 import { maxThreeMfBytes } from '../config';
 import { SEED_NOTE } from '../seed/run';
@@ -44,26 +44,26 @@ async function entryNames(open: SourceFactory): Promise<string[]> {
  * a template. `fileName` is what the admin uploaded, kept in the source note.
  */
 export async function importPrintGeometry(
-	db: Db,
+	db: DbOrTx,
 	templateId: string,
 	path: string,
 	fileName: string
 ): Promise<ImportResult> {
-	const parts = db
-		.select()
-		.from(templateParts)
-		.where(eq(templateParts.templateId, templateId))
-		.orderBy(asc(templateParts.sort))
-		.all()
-		.map((p) => ({
-			slug: p.slug,
-			name: p.name,
-			sourceFile: p.sourceFile,
-			notes: p.notes,
-			allowedMaterials: p.allowedMaterials,
-			components: p.components,
-			qty: p.qty
-		}));
+	const parts = (
+		await db
+			.select()
+			.from(templateParts)
+			.where(eq(templateParts.templateId, templateId))
+			.orderBy(asc(templateParts.sort))
+	).map((p) => ({
+		slug: p.slug,
+		name: p.name,
+		sourceFile: p.sourceFile,
+		notes: p.notes,
+		allowedMaterials: p.allowedMaterials,
+		components: p.components,
+		qty: p.qty
+	}));
 	const open: SourceFactory = Object.assign(
 		() => createReadStream(path, { highWaterMark: 1 << 20 }),
 		{ path }
@@ -135,7 +135,7 @@ export async function importPrintGeometry(
 						if (p.groups?.length) cur.groups = [...(cur.groups ?? []), ...p.groups];
 					}
 				}
-			} else imported += storeExtractedParts(db, templateId, res.parts, fileName);
+			} else imported += await storeExtractedParts(db, templateId, res.parts, fileName);
 			report.push({
 				file: job.label,
 				parts: res.parts.map((p) => p.slug),
@@ -145,7 +145,8 @@ export async function importPrintGeometry(
 				ms: res.report.ms
 			});
 		}
-		if (batch.size) imported += storeExtractedParts(db, templateId, [...batch.values()], fileName);
+		if (batch.size)
+			imported += await storeExtractedParts(db, templateId, [...batch.values()], fileName);
 		return { imported, report };
 	} finally {
 		if (scratch) await rm(scratch, { recursive: true, force: true });
@@ -168,12 +169,16 @@ export interface PrintGeometrySummaryRow {
 }
 
 /** Rows for the kit admin card (also tells seed rows apart from imported ones). */
-export function listPrintGeometry(db: Db, templateId: string): PrintGeometrySummaryRow[] {
-	return db
-		.select()
-		.from(templatePrintGeometry)
-		.where(eq(templatePrintGeometry.templateId, templateId))
-		.all()
+export async function listPrintGeometry(
+	db: DbOrTx,
+	templateId: string
+): Promise<PrintGeometrySummaryRow[]> {
+	return (
+		await db
+			.select()
+			.from(templatePrintGeometry)
+			.where(eq(templatePrintGeometry.templateId, templateId))
+	)
 		.map((r) => {
 			const fp = r.footprint as {
 				pieces?: {

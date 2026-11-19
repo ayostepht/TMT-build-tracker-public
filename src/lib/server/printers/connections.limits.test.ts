@@ -7,7 +7,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { ApiError } from '../access';
-import { openDb, runMigrations } from '../db';
+import { first } from '#lib/server/db/index.ts';
+import { createTestDb, dropTestDb } from '../db/testing';
 import { organization, printers, user } from '../db/schema';
 import { adapters } from './adapters';
 import { resolveCameraSource, MAX_CAMERA_URLS, type CameraTarget } from './camera-source';
@@ -66,13 +67,13 @@ const cfg = (kind: PrinterConfig['kind'], secrets: Record<string, string> = { sh
 const flush = () => vi.advanceTimersByTimeAsync(0);
 const tick = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 
-beforeEach(() => {
+beforeEach(async () => {
 	FakeWs.all = [];
 	vi.useFakeTimers();
 	useFakeSocket(FakeWs);
 	setResolver(async () => ['93.184.216.34']);
 });
-afterEach(() => {
+afterEach(async () => {
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	resetFakeSocket();
@@ -89,7 +90,7 @@ function watch(h: ReturnType<(typeof adapters)['moonraker']>) {
 }
 
 describe('MessageBudget', () => {
-	it('allows the budget per one-second window, then refuses, then resets', () => {
+	it('allows the budget per one-second window, then refuses, then resets', async () => {
 		let now = 1000;
 		const b = new MessageBudget(() => now, 3, 100);
 		expect([b.take(10), b.take(10), b.take(10), b.take(10)]).toEqual([true, true, true, false]);
@@ -286,14 +287,13 @@ describe('handshake timeout and silent sockets', () => {
 });
 
 describe('caps (public quota defaults)', () => {
-	const setup = () => {
+	const setup = async () => {
 		vi.stubEnv('TMT_MODE', 'public');
 		vi.stubEnv('BETTER_AUTH_SECRET', 'unit-test-secret-not-for-production-0123456789abcdef');
-		const db = openDb(':memory:');
-		runMigrations(db);
-		db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' }).run();
+		const db = await createTestDb();
+		await db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' });
 		for (const id of ['o1', 'o2', 'o3'])
-			db.insert(organization).values({ id, name: id, slug: id, createdAt: new Date() }).run();
+			await db.insert(organization).values({ id, name: id, slug: id, createdAt: new Date() });
 		return db;
 	};
 	const link = (n: number) => ({
@@ -302,16 +302,16 @@ describe('caps (public quota defaults)', () => {
 		secrets: { shareLink: `https://shared-token${n}abcdefgh.octoeverywhere.com` }
 	});
 
-	it('an instance-wide cap on link printers (default 200), with a clear 409', () => {
+	it('an instance-wide cap on link printers (default 200), with a clear 409', async () => {
 		const db = setup();
 		vi.stubEnv('QUOTA_LINK_PRINTERS_TOTAL', '3');
 		vi.stubEnv('QUOTA_LINK_PRINTERS_PER_WORKSPACE', 'off');
-		createPrinter(db, 'o1', 'u1', link(1));
-		createPrinter(db, 'o2', 'u1', link(2));
-		createPrinter(db, 'o3', 'u1', link(3));
+		await createPrinter(db, 'o1', 'u1', link(1));
+		await createPrinter(db, 'o2', 'u1', link(2));
+		await createPrinter(db, 'o3', 'u1', link(3));
 		let err: unknown;
 		try {
-			createPrinter(db, 'o1', 'u1', link(4));
+			await createPrinter(db, 'o1', 'u1', link(4));
 		} catch (e) {
 			err = e;
 		}
@@ -320,20 +320,23 @@ describe('caps (public quota defaults)', () => {
 			code: 'quota',
 			message: expect.stringMatching(/This server has reached its limit of printers connected/)
 		});
-		expect(db.select().from(printers).all()).toHaveLength(3);
+		expect(await db.select().from(printers)).toHaveLength(3);
 		// moving an existing link printer to another link is not a new one
-		const first = db.select().from(printers).where(eq(printers.organizationId, 'o1')).get()!;
-		expect(() =>
-			updatePrinter(db, first.id, 'o1', {
-				secrets: { shareLink: 'https://shared-tokenzzabcdefgh.octoeverywhere.com' }
-			})
+		const first = (await first(
+			db.select().from(printers).where(eq(printers.organizationId, 'o1'))
+		))!;
+		expect(
+			() =>
+				await updatePrinter(db, first.id, 'o1', {
+					secrets: { shareLink: 'https://shared-tokenzzabcdefgh.octoeverywhere.com' }
+				})
 		).not.toThrow();
 		// `off` removes it; self-hosted has none by default
 		vi.stubEnv('QUOTA_LINK_PRINTERS_TOTAL', 'off');
-		expect(() => createPrinter(db, 'o1', 'u1', link(5))).not.toThrow();
+		expect(() => await createPrinter(db, 'o1', 'u1', link(5))).not.toThrow();
 	});
 
-	it('the instance-wide default is 200 in public mode', () => {
+	it('the instance-wide default is 200 in public mode', async () => {
 		const db = setup();
 		vi.stubEnv('QUOTA_LINK_PRINTERS_PER_WORKSPACE', 'off');
 		const rows = Array.from({ length: 200 }, (_, i) => ({
@@ -342,16 +345,19 @@ describe('caps (public quota defaults)', () => {
 			kind: 'octoprint',
 			host: 'octoeverywhere'
 		}));
-		for (const r of rows) db.insert(printers).values(r).run();
-		expect(() => createPrinter(db, 'o2', 'u1', link(1))).toThrow(/limit of printers connected/);
+		for (const r of rows) await db.insert(printers).values(r);
+		expect(() => await createPrinter(db, 'o2', 'u1', link(1))).toThrow(
+			/limit of printers connected/
+		);
 	});
 
-	it('manual printers: 10 per workspace by default in public mode, configurable, not on self-hosted', () => {
+	it('manual printers: 10 per workspace by default in public mode, configurable, not on self-hosted', async () => {
 		const db = setup();
-		for (let i = 0; i < 10; i++) createPrinter(db, 'o1', 'u1', { name: `m${i}`, kind: 'manual' });
+		for (let i = 0; i < 10; i++)
+			await createPrinter(db, 'o1', 'u1', { name: `m${i}`, kind: 'manual' });
 		let err: unknown;
 		try {
-			createPrinter(db, 'o1', 'u1', { name: 'm10', kind: 'manual' });
+			await createPrinter(db, 'o1', 'u1', { name: 'm10', kind: 'manual' });
 		} catch (e) {
 			err = e;
 		}
@@ -360,25 +366,25 @@ describe('caps (public quota defaults)', () => {
 			code: 'quota',
 			message: expect.stringMatching(/already has 10 printers that are not connected/)
 		});
-		createPrinter(db, 'o2', 'u1', { name: 'other workspace', kind: 'manual' });
+		await createPrinter(db, 'o2', 'u1', { name: 'other workspace', kind: 'manual' });
 		// turning a link printer into a manual one counts too
-		const l = createPrinter(db, 'o3', 'u1', link(1));
+		const l = await createPrinter(db, 'o3', 'u1', link(1));
 		vi.stubEnv('QUOTA_MANUAL_PRINTERS_PER_WORKSPACE', '0');
-		expect(() => updatePrinter(db, l.id, 'o3', { kind: 'manual' })).toThrow(/Ask the admin/);
+		expect(() => await updatePrinter(db, l.id, 'o3', { kind: 'manual' })).toThrow(/Ask the admin/);
 		vi.stubEnv('QUOTA_MANUAL_PRINTERS_PER_WORKSPACE', 'off');
-		expect(updatePrinter(db, l.id, 'o3', { kind: 'manual' }).kind).toBe('manual');
+		expect((await updatePrinter(db, l.id, 'o3', { kind: 'manual' })).kind).toBe('manual');
 		vi.unstubAllEnvs();
-		const sh = openDb(':memory:');
-		runMigrations(sh);
-		sh.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' }).run();
-		sh.insert(organization).values({ id: 'o1', name: 'o', slug: 'o', createdAt: new Date() }).run();
+		const sh = await createTestDb();
+		await sh.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' });
+		await sh.insert(organization).values({ id: 'o1', name: 'o', slug: 'o', createdAt: new Date() });
 		vi.stubEnv('BETTER_AUTH_SECRET', 'unit-test-secret-not-for-production-0123456789abcdef');
-		for (let i = 0; i < 12; i++) createPrinter(sh, 'o1', 'u1', { name: `m${i}`, kind: 'manual' });
+		for (let i = 0; i < 12; i++)
+			await createPrinter(sh, 'o1', 'u1', { name: `m${i}`, kind: 'manual' });
 	});
 });
 
 describe('test routes: rate limit and uniform hosted failures', () => {
-	it('10 a minute with a burst of 5 per user, separately per user', () => {
+	it('10 a minute with a burst of 5 per user, separately per user', async () => {
 		const now = 1_000_000;
 		for (let i = 0; i < TEST_RATE.burst; i++) limitTests('u1', now);
 		expect(() => limitTests('u1', now)).toThrow(ApiError);
@@ -410,8 +416,12 @@ describe('test routes: rate limit and uniform hosted failures', () => {
 		]);
 		expect(new Set(msgs)).toEqual(new Set([HOSTED_LINK_FAILURE]));
 		// an address (not a link host) gives the same sentence too
-		await expect(
-			uniformHostedFailure(() => resolveAllowed('192.168.0.5', undefined, { allowShareLink: true }))
+		(
+			await expect(
+				uniformHostedFailure(() =>
+					resolveAllowed('192.168.0.5', undefined, { allowShareLink: true })
+				)
+			)
 		).rejects.toThrow(HOSTED_LINK_FAILURE);
 	});
 });
