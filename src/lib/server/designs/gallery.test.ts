@@ -3,7 +3,15 @@ import { eq } from 'drizzle-orm';
 import { ApiError } from '../access';
 import { first, type Db } from '../db';
 import { createTestDb, dropTestDb } from '../db/testing';
-import { colorDesigns, member, organization, siteAdmin, templates, user } from '../db/schema';
+import {
+	colorDesigns,
+	designShareEvents,
+	member,
+	organization,
+	siteAdmin,
+	templates,
+	user
+} from '../db/schema';
 import { templateSeeds } from '../seed';
 import { seedTemplates } from '../seed/run';
 import { findDesign, getDesignDetail, listDesigns } from './designs';
@@ -246,7 +254,10 @@ describe('share and unshare', () => {
 		const a = await addDesign('alice', 'A');
 		await addDesign('bob', 'B');
 		const c = await addDesign('carol', 'C');
-		await db.update(colorDesigns).set({ authorUserId: null }).where(eq(colorDesigns.id, c.id));
+		await db
+			.update(colorDesigns)
+			.set({ authorUserId: null, isPublic: true })
+			.where(eq(colorDesigns.id, c.id));
 		const mine = async (u: string) =>
 			(await listDesigns(db, u))
 				.map((x) => x.name)
@@ -353,5 +364,87 @@ describe('listing', () => {
 		expect(p2.items.map((i) => i.name)).toEqual(['Red 100%']);
 		// the page size is capped
 		expect((await listGallery(db, 'bob', { pageSize: 5000 })).pageSize).toBe(48);
+	});
+});
+
+describe('gallery limits', () => {
+	it('lists only designs on built-in kits, even if an owned-kit design was shared earlier', async () => {
+		const ok = await addDesign('alice', 'Built in');
+		await shareDesign(db, ok.id, 'alice');
+		const base = (await first(db.select().from(templates).where(eq(templates.id, templateId))))!;
+		const [copy] = await db
+			.insert(templates)
+			.values({ ...base, id: 'tpl-owned', slug: 'owned-copy', ownerOrgId: 'o1' })
+			.returning();
+		const [bad] = await db
+			.insert(colorDesigns)
+			.values({
+				templateId: copy.id,
+				slug: 'owned-shared',
+				name: 'On a team copy',
+				authorUserId: 'alice',
+				roles: roles(),
+				partRoles: {},
+				sharedAt: new Date(),
+				firstSharedAt: new Date(),
+				sharedBy: 'alice'
+			})
+			.returning();
+		const g = await listGallery(db, 'bob');
+		expect(g.total).toBe(1);
+		expect(g.items.map((i) => i.id)).toEqual([ok.id]);
+		expect(g.items.map((i) => i.id)).not.toContain(bad.id);
+		const f = await listGallery(db, 'bob', { family: 'red' });
+		expect(f.items.map((i) => i.id)).not.toContain(bad.id);
+	});
+
+	it('a shared design on a team kit copy has no detail and cannot be copied', async () => {
+		const base = (await first(db.select().from(templates).where(eq(templates.id, templateId))))!;
+		await db
+			.insert(templates)
+			.values({ ...base, id: 'tpl-owned2', slug: 'owned-copy-2', ownerOrgId: 'o1' });
+		const [bad] = await db
+			.insert(colorDesigns)
+			.values({
+				templateId: 'tpl-owned2',
+				slug: 'owned-shared-2',
+				name: 'On a team copy',
+				authorUserId: 'alice',
+				roles: roles(),
+				partRoles: {},
+				sharedAt: new Date(),
+				firstSharedAt: new Date(),
+				sharedBy: 'alice'
+			})
+			.returning();
+		expect(await status(() => findSharedDesign(db, bad.id))).toBe(404);
+		expect(await status(() => findSharedDesign(db, bad.slug))).toBe(404);
+		expect(await status(() => getGalleryItem(db, bad.slug, 'bob'))).toBe(404);
+		expect(await status(() => copyGalleryDesign(db, bad.id, 'bob'))).toBe(404);
+	});
+
+	it('an authorless design that is not a seeded example is invisible to strangers', async () => {
+		const d = await addDesign('alice', 'Orphaned');
+		await db.update(colorDesigns).set({ authorUserId: null }).where(eq(colorDesigns.id, d.id));
+		expect(await status(() => findDesign(db, d.id, 'bob'))).toBe(404);
+		expect(await status(() => findDesign(db, d.slug, 'alice'))).toBe(404);
+		expect((await listDesigns(db, 'bob')).map((x) => x.id)).not.toContain(d.id);
+		// the seeded examples carry the marker and stay open
+		const ex = (await listDesigns(db, 'bob')).filter((x) => x.authorUserId === null);
+		expect(ex.length).toBeGreaterThan(0);
+	});
+
+	it('prunes old share events when someone shares, keeping recent ones', async () => {
+		const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+		await db.insert(designShareEvents).values([
+			{ userId: 'bob', designId: null, createdAt: old },
+			{ userId: 'carol', designId: null, createdAt: old },
+			{ userId: 'carol', designId: null, createdAt: new Date() }
+		]);
+		const d = await addDesign('alice');
+		await shareDesign(db, d.id, 'alice');
+		const rows = await db.select().from(designShareEvents);
+		expect(rows.filter((r) => r.createdAt < new Date(Date.now() - 7 * 864e5))).toHaveLength(0);
+		expect(rows).toHaveLength(2);
 	});
 });

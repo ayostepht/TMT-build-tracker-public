@@ -204,6 +204,14 @@ describe('designs', () => {
 		expect(v2.parts.find((p) => p.slug === 'wing-right')!.role).toBe('red');
 	});
 
+	it('saving and renaming never set the seeded-example marker', async () => {
+		const id = await mk();
+		const d = await createDesign(db, 'owner', { buildId: id, name: 'Mine', isPublic: true });
+		await updateDesignMeta(db, d.id, 'owner', { name: 'Mine 2', isPublic: true });
+		const row = await db.select().from(colorDesigns).where(eq(colorDesigns.id, d.id));
+		expect(row[0].isPublic).toBe(false);
+	});
+
 	it('only editors can save; names are required; slugs stay unique', async () => {
 		const id = await mk();
 		expect(await code(() => createDesign(db, 'viewer', { buildId: id, name: 'x' }))).toBe(403);

@@ -20,18 +20,19 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async ({ params, locals, request }) => {
 	// The id is a UUID; refuse anything that could walk the path.
 	if (!/^[A-Za-z0-9_-]+$/.test(params.id)) error(404, 'Not found');
+	const tpl = await first(
+		getDb()
+			.select({ owner: templates.ownerOrgId })
+			.from(templates)
+			.where(eq(templates.id, params.id))
+	);
 	if (locals.user) {
 		// Another workspace's kit copy is not readable (404, same as a missing file).
 		if (!(await canViewTemplate(getDb(), locals.user, params.id))) error(404, 'Not found');
-	} else {
-		const t = await first(
-			getDb()
-				.select({ owner: templates.ownerOrgId })
-				.from(templates)
-				.where(eq(templates.id, params.id))
-		);
-		if (!t || t.owner) error(401, 'Sign in required');
-	}
+	} else if (!tpl || tpl.owner) error(401, 'Sign in required');
+	// The built-in kit is the same for everyone and the URL carries its version, so it may be
+	// cached publicly; a workspace's kit copy stays private to the browser.
+	const cacheControl = `${tpl && !tpl.owner ? 'public' : 'private'}, max-age=31536000, immutable`;
 	const path = templateModelPath(params.id);
 	let size: number;
 	let mtimeMs: number;
@@ -53,14 +54,14 @@ export const GET: RequestHandler = async ({ params, locals, request }) => {
 				'content-length': String(zipped.length),
 				'x-file-size': String(size),
 				vary: 'Accept-Encoding',
-				'cache-control': 'private, max-age=31536000, immutable'
+				'cache-control': cacheControl
 			}
 		});
 	return new Response(Readable.toWeb(createReadStream(path)) as ReadableStream, {
 		headers: {
 			'content-type': 'model/gltf-binary',
 			'content-length': String(size),
-			'cache-control': 'private, max-age=31536000, immutable'
+			'cache-control': cacheControl
 		}
 	});
 };
