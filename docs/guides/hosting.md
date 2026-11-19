@@ -218,6 +218,14 @@ A tunnel makes your server connect **out** to Cloudflare, so you open no port on
 
 Without Compose: create two containers by hand on the same Docker network, the app image with a volume or folder at `/data` (writable by uid `1000`) and `cloudflare/cloudflared` with `tunnel --no-autoupdate run` and the `TUNNEL_TOKEN` variable.
 
+**On Unraid (published image).** CI publishes `ghcr.io/ayostepht/tmt-build-tracker:public` (and `public-sha-<short sha>`) from every green push to the hosted-site branch.
+
+1. In a terminal: `docker network create tmt` (a custom network lets the containers reach each other by name).
+2. Create the app container from `ghcr.io/ayostepht/tmt-build-tracker:public`: name `tmt-build-tracker`, network `tmt`, **no port mapping**. Add a path `/mnt/user/appdata/tmt-build-tracker` to `/data` and run `chown -R 1000:1000 /mnt/user/appdata/tmt-build-tracker` once. Variables: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `PUBLIC_URL=https://tmt.example.com`, `ADMIN_EMAILS`, the sign-in provider ID/secret pairs from step 2, `TRUST_CLOUDFLARE=1`, and optionally the `ANALYTICS_*` settings from section 7.
+3. Create a second container from `cloudflare/cloudflared:latest`: name `cloudflared`, network `tmt`, post arguments `tunnel --no-autoupdate run`, variable `TUNNEL_TOKEN`.
+4. In the tunnel's public hostname, set the service to `http://tmt-build-tracker:3000`.
+5. Update: Docker tab > **Check for Updates**, then apply the update to `tmt-build-tracker`.
+
 **Your own reverse proxy instead of the tunnel.** Publish the app's port only to the proxy (for example `127.0.0.1:3000:3000` in the compose file), terminate https at the proxy, and set `ADDRESS_HEADER=X-Forwarded-For` (with `XFF_DEPTH` set to the number of proxies in front). The proxy must overwrite `X-Forwarded-For`, pass `Host` and `X-Forwarded-Proto`, accept request bodies up to `BODY_SIZE_LIMIT` (Nginx: `client_max_body_size 100m;`), and not buffer the live-update stream (Nginx: `proxy_buffering off;` and `proxy_read_timeout 1h;`, at least for `/api/builds/*/events`; the app sends a keepalive every 25 seconds). Without that, changes from other people appear only after a reload.
 
 Want to keep the database local instead of Supabase? Uncomment the `db` block in the compose file and use the `DATABASE_URL` described there.
