@@ -1,6 +1,6 @@
 # Public hosted site: plan and progress
 
-Track: branch `public-site` (started 2026-11-19 as `claude/elegant-fermi-ea7mci`). Separate from the self-hosted
+Track: branch `public-site/main`, work branches `public-site/<topic>` (started 2026-11-19 as `claude/elegant-fermi-ea7mci`). Separate from the self-hosted
 0.9.x line on `edge`/`main`, which this work never touches. This file is the handoff for this
 track: rewrite the "Progress" section in place as work lands.
 
@@ -88,6 +88,8 @@ verifier close each wave.
 - Final gate on the combined tree: check, lint, 1901 unit tests (twice), build, production start from an empty database (twice, idempotent) green; full e2e 244/245 with the one failure fixed and its specs re-run green.
 
 ### Rules from now on
+
+- **Branches:** the hosted version lives on `public-site/main` (CI publishes `ghcr.io/ayostepht/tmt-build-tracker:public` from it). Work happens on `public-site/<topic>` branches (one task, one branch, one worktree), merged into `public-site/main` through a pull request once checks are green. Never merge into `edge` or `main` from here.
 
 - **Migrations:** until the first real deploy, schema changes regenerate the single `drizzle/0000_baseline.sql`. From the first deploy on, never edit an applied migration: add `0001_…` and later.
 
