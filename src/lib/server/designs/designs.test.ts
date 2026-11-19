@@ -180,6 +180,25 @@ describe('updateBuildDesign', () => {
 });
 
 describe('designs', () => {
+	it('parallel saves of the same name by different people all succeed, each with its own slug', async () => {
+		const own = await mk();
+		const other = await mk(null, 'org2', 'outsider');
+		const savers: [string, string][] = [
+			['owner', own],
+			['editor', own],
+			['outsider', other]
+		];
+		// Several rounds: without the slug lock, two of them pick the same free slug and one insert fails.
+		for (const name of ['Sunrise', 'Dusk', 'Tide', 'Moss', 'Ember']) {
+			const made = await Promise.all(
+				savers.map(([u, buildId]) => createDesign(db, u, { buildId, name }))
+			);
+			const slugs = made.map((m) => m.slug);
+			expect(new Set(slugs).size).toBe(savers.length);
+			expect(slugs).toContain(name.toLowerCase());
+		}
+	});
+
 	it('saves a build as a design with full roles, and builds from it', async () => {
 		const id = await mk();
 		await updateBuildDesign(db, id, 'owner', {

@@ -146,14 +146,15 @@ async function processJob(db: Db, job: ModelJob): Promise<void> {
 		.set({ status: 'running', progress: 1, message: 'Starting' })
 		.where(eq(templateModelJobs.id, job.id));
 	let lastPct = -1;
-	// Progress writes are fire-and-forget (a failed one must not abort the conversion).
+	// Progress writes are fire-and-forget (a failed one must not abort the conversion). They apply
+	// only while the job runs, so a late one cannot overwrite the final progress and message.
 	const onProgress = (pct: number, message: string) => {
 		if (pct === lastPct && !message) return;
 		lastPct = pct;
 		void db
 			.update(templateModelJobs)
 			.set({ progress: Math.min(99, Math.max(1, Math.round(pct))), message })
-			.where(eq(templateModelJobs.id, job.id))
+			.where(and(eq(templateModelJobs.id, job.id), eq(templateModelJobs.status, 'running')))
 			.catch(quiet);
 	};
 	try {

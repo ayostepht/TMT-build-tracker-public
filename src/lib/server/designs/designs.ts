@@ -83,8 +83,15 @@ function slugBase(name: string): string {
 	);
 }
 
+/**
+ * A slug no design has yet. Call it inside the transaction that inserts the row: it takes a
+ * transaction-scoped lock on the slug base, so two parallel inserts of the same name (two demo
+ * starts seeding "Sample colors", two people saving "Sunrise") cannot both pick the same free
+ * slug; the second waits for the first to commit, then sees its row and picks a suffixed one.
+ */
 export async function uniqueSlug(db: DbOrTx, name: string): Promise<string> {
 	const base = slugBase(name);
+	await advisoryLock(db, `design-slug:${base}`);
 	let slug = base;
 	while (
 		await first(

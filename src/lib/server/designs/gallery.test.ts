@@ -108,7 +108,12 @@ describe('who sees what', () => {
 		await shareDesign(db, d.id, 'alice');
 		const item = await getGalleryItem(db, d.id, 'bob');
 		expect(item.sharerName).toBe('Alice Maker');
-		expect(JSON.stringify(item)).not.toMatch(/example\.test|@|T1|o1/);
+		// No email anywhere, and the team (id o1, name T1, slug t1) is never a value. Match whole JSON
+		// strings: a bare /T1/ also matches the ISO time in sharedAt between 10:00 and 19:59 UTC.
+		const json = JSON.stringify(item);
+		expect(json).not.toMatch(/example\.test|@/);
+		expect(json).not.toMatch(/"(o1|T1|t1)"/);
+		expect(json).not.toMatch(/organization|team/i);
 		expect(publicSharerName('jane.doe@corp.example')).toBe('jane');
 		expect(publicSharerName('')).toBe('A maker');
 		expect(publicSharerName(null)).toBe('A maker');

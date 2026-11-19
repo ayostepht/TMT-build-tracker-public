@@ -65,7 +65,8 @@ describe('model jobs', () => {
 			seen.push((await getJob(db, tid, job.id))!.status);
 			expect(t.parts.length).toBeGreaterThan(10);
 			onProgress(50, 'half way');
-			expect((await getJob(db, tid, job.id))!.progress).toBe(50);
+			// Progress writes are fire-and-forget: wait for this one instead of racing it.
+			await vi.waitFor(async () => expect((await getJob(db, tid, job.id))!.progress).toBe(50));
 			return result;
 		});
 		await runQueue(db);
@@ -81,6 +82,28 @@ describe('model jobs', () => {
 		expect(model.version).toBe('abc123');
 		expect(model.sourceNote).toContain('steps.zip');
 		expect(existsSync(input)).toBe(false);
+	});
+
+	it('a progress write that lands after the job finished does not overwrite it', async () => {
+		const job = await createJob(db, {
+			templateId: tid,
+			inputPath: zip('late.zip'),
+			userId: null,
+			fileName: 'late.zip'
+		});
+		let report: ((pct: number, message: string) => void) | null = null;
+		setConverter(async (_p, _t, onProgress) => {
+			report = onProgress;
+			return result;
+		});
+		await runQueue(db);
+		report!(70, 'late');
+		// The write is fire-and-forget; give it time to land (or be filtered out).
+		await new Promise((r) => setTimeout(r, 300));
+		const j = (await getJob(db, tid, job.id))!;
+		expect(j.status).toBe('done');
+		expect(j.progress).toBe(100);
+		expect(j.message).toContain('late.zip');
 	});
 
 	it('marks the job failed with the error message', async () => {
