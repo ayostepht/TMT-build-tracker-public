@@ -2,10 +2,11 @@ import { error } from '@sveltejs/kit';
 import { ApiError } from '#lib/server/access.ts';
 import { first, getDb } from '#lib/server/db/index.ts';
 import { editableTargets, getDesignDetail } from '#lib/server/designs/designs.ts';
+import { copiedFromCredit, copyCounts, publicSharerName } from '#lib/server/designs/gallery.ts';
 import { loadTemplateModel } from '#lib/server/designs/model.ts';
 import { isSiteAdmin } from '#lib/server/access.ts';
 import { inactiveSlugs } from '#lib/domain/variants.ts';
-import { templates } from '#lib/server/db/schema.ts';
+import { colorDesigns, templates } from '#lib/server/db/schema.ts';
 import { eq } from 'drizzle-orm';
 import type { PageServerLoad } from './$types';
 
@@ -26,8 +27,13 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 						.where(eq(templates.id, design.templateId))
 				)
 			)?.g ?? [];
+		const row = await first(db.select().from(colorDesigns).where(eq(colorDesigns.id, design.id)));
 		return {
 			design,
+			// "Copied from X by Y" while the original is still in the gallery.
+			credit: row ? await copiedFromCredit(db, row) : null,
+			copies: row && row.sharedAt ? ((await copyCounts(db, [row])).get(row.id) ?? 0) : 0,
+			sharerName: publicSharerName(locals.user.name),
 			model: await loadTemplateModel(db, design.templateId),
 			hidden: [...inactiveSlugs(groups, null)],
 			targets: await editableTargets(db, locals.user.id, design.templateId),
