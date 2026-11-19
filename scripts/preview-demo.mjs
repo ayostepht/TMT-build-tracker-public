@@ -263,7 +263,7 @@ const lines = [
 	`  Sign in:  http://localhost:${signinPort}/  (owner, ${DEMO.email})`,
 	`            http://localhost:${signinPort}/?as=editor  (editor, ${DEMO.editorEmail})`,
 	`            (the sign-in helper listens on 127.0.0.1 only, so it works from this computer, not from a phone;`,
-	`            there is no password. To use a phone, sign in here first, or sign in on the phone via an SSH tunnel to port ${signinPort}.)`,
+	`            there is no password. On a phone, reach it through an SSH tunnel to port ${signinPort}.)`,
 	`  Data:     data/preview/data + database ${previewDbName}${fresh ? ' (fresh)' : ''}`,
 	...seeded.summary.map((s) => `  ${s}`),
 	kit.ok
