@@ -14,6 +14,9 @@ repository was split off on 2026-11-19) is in the sibling repository,
 
 ## 2026-11
 
+- **2026-11-19, third deploy.** Image from `main` 25a4000 (#5: color picker scrolls as one
+  container; hover no longer shifts the swatch list). No migration. Maintainer confirmed the
+  picker scrolls smoothly in a short window.
 - **2026-11-19, second deploy.** Image from `main` aeab2bc (includes #1 docs, #2 repository
   links and working preview, #3 team slug retry). Migration: `0001_drop_duplicate_org_slug_index`
   applied on start; Supabase advisor confirms the duplicate index is gone. Nothing to watch.
