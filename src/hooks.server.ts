@@ -67,7 +67,10 @@ const handleRequest: Handle = async ({ event, resolve }) => {
 	return handleLimited(event, resolve);
 };
 
-const handleLimited = async (event: RequestEvent, resolve: Parameters<Handle>[0]['resolve']) => {
+const handleLimited = async (
+	event: RequestEvent,
+	resolve: Parameters<Handle>[0]['resolve']
+): Promise<Response> => {
 	const auth = getAuth();
 	if (shouldWarnUndeclaredProxy(event.request.headers, trustedProxy() !== null, proxyHintLogged)) {
 		proxyHintLogged = true;
@@ -91,7 +94,7 @@ const handleLimited = async (event: RequestEvent, resolve: Parameters<Handle>[0]
 	const session = await auth.api.getSession({ headers: event.request.headers });
 	event.locals.session = session?.session ?? null;
 	event.locals.user = session?.user ?? null;
-	const limited = writeRateResponse(
+	const limited = await writeRateResponse(
 		event.locals.user,
 		event.request.method,
 		event.url.pathname,

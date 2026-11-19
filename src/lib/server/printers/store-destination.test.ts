@@ -8,7 +8,7 @@ import { decryptSecrets } from './secrets';
 const L1 = 'https://shared-testtoken12345678.octoeverywhere.com';
 const L2 = 'https://shared-othertoken87654321.octoeverywhere.com';
 
-async function setup() {
+async function await setup() {
 	const db = await createTestDb();
 	await db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' });
 	await db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() });
@@ -28,7 +28,7 @@ async function setup() {
 
 describe('stored secrets belong to the link they were saved for', () => {
 	it('keeping the same link keeps everything stored with it; a typed address is ignored', async () => {
-		const { db, octo } = setup();
+		const { db, octo } = await setup();
 		const r = await updatePrinter(db, octo.id, 'o', { host: '10.0.0.9', name: 'Renamed' });
 		expect(decryptSecrets(r.secretEnc)).toEqual({ shareLink: L1, apiKey: 'KEY' });
 		expect(r.host).toBe('octoeverywhere'); // an address cannot hide next to a link
@@ -38,13 +38,13 @@ describe('stored secrets belong to the link they were saved for', () => {
 	});
 
 	it('typing the same link again does not drop the stored key', async () => {
-		const { db, octo } = setup();
+		const { db, octo } = await setup();
 		const r = await updatePrinter(db, octo.id, 'o', { secrets: { shareLink: `${L1}/` } });
 		expect(decryptSecrets(r.secretEnc)).toEqual({ shareLink: L1, apiKey: 'KEY' });
 	});
 
 	it('changing the link replaces it and carries nothing else over (no key rides to another relay)', async () => {
-		const { db, octo, elegoo } = setup();
+		const { db, octo, elegoo } = await setup();
 		const r = await updatePrinter(db, octo.id, 'o', { secrets: { shareLink: L2 } });
 		expect(decryptSecrets(r.secretEnc)).toEqual({ shareLink: L2 });
 		const e = await updatePrinter(db, elegoo.id, 'o', { secrets: { shareLink: L2 } });
@@ -60,23 +60,21 @@ describe('stored secrets belong to the link they were saved for', () => {
 	});
 
 	it('a link cannot be removed: a connected printer always has one', async () => {
-		const { db, octo } = setup();
-		expect(() => await updatePrinter(db, octo.id, 'o', { secrets: { shareLink: '' } })).toThrow(
+		const { db, octo } = await setup();
+		await expect(updatePrinter(db, octo.id, 'o', { secrets: { shareLink: '' } })).rejects.toThrow(
 			ApiError
 		);
-		expect(
-			() => await configFromInput(db, 'o', { id: octo.id, secrets: { shareLink: '' } })
-		).toThrow(/shared link/i);
+		await expect(configFromInput(db, 'o', { id: octo.id, secrets: { shareLink: '' } })).rejects.toThrow(/shared link/i);
 		// pausing and renaming stay possible
 		expect((await updatePrinter(db, octo.id, 'o', { enabled: false })).enabled).toBe(false);
 	});
 
 	it('a manual printer holds no secrets and no address, and cannot become a link printer without a link', async () => {
-		const { db, manual } = setup();
+		const { db, manual } = await setup();
 		expect(manual).toMatchObject({ host: 'manual', secretEnc: null, port: null, cameraUrl: null });
 		const m = await updatePrinter(db, manual.id, 'o', { secrets: { shareLink: L1 } });
 		expect(m.secretEnc).toBeNull(); // still manual: no secrets kept
-		expect(() => await updatePrinter(db, manual.id, 'o', { kind: 'octoprint' })).toThrow(
+		await expect(updatePrinter(db, manual.id, 'o', { kind: 'octoprint' })).rejects.toThrow(
 			/shared link/i
 		);
 		const ok = await updatePrinter(db, manual.id, 'o', {
@@ -88,22 +86,16 @@ describe('stored secrets belong to the link they were saved for', () => {
 	});
 
 	it('a printer type that cannot use a link is refused', async () => {
-		const { db } = setup();
-		expect(
-			() =>
-				await createPrinter(db, 'o', 'u1', {
+		const { db } = await setup();
+		await expect(createPrinter(db, 'o', 'u1', {
 					name: 'x',
 					kind: 'manual',
 					secrets: { shareLink: L1 }
-				})
-		).not.toThrow();
-		expect(
-			() =>
-				await createPrinter(db, 'o', 'u1', {
+				})).resolves.not.toThrow();
+		await expect(createPrinter(db, 'o', 'u1', {
 					name: 'x',
 					kind: 'bambu-lan',
 					secrets: { shareLink: L1 }
-				})
-		).toThrow(/Unknown printer type/);
+				})).rejects.toThrow(/Unknown printer type/);
 	});
 });

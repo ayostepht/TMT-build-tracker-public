@@ -66,7 +66,7 @@ const printing = (
 	totalLayers: 100,
 	...extra
 });
-const jobs = () => await db.select().from(printerJobs);
+const jobs = async () => await db.select().from(printerJobs);
 const partStatus = (slug: string) =>
 	(await first(db.select().from(buildParts).where(eq(buildParts.partSlug, slug))))!.status;
 
@@ -162,7 +162,7 @@ describe('job lifecycle', () => {
 		expect(run.hours).toBe(1);
 		expect(partStatus('handle-left')).toBe('Printed');
 		expect(await buildJobs(db, buildId, 'org1')).toHaveLength(0);
-		expect(() => await confirmJob(db, j.id, 'org1', 'owner', {})).toThrow(/already logged/);
+		await expect(confirmJob(db, j.id, 'org1', 'owner', {})).rejects.toThrow(/already logged/);
 	});
 
 	it('logs automatically when the team setting is on', async () => {
@@ -223,7 +223,7 @@ describe('job lifecycle', () => {
 		await linkJob(db, j.id, 'org1', 'owner', buildId, 2);
 		expect(jobs()[0]).toMatchObject({ buildId, plateNumber: 2 });
 		expect(partStatus('handle-right')).toBe('Printing');
-		const view = await loadBuildView(db, buildId, 'owner')!;
+		const view = (await loadBuildView(db, buildId, 'owner'))!;
 		expect(view.state['handle-right'].startedAt).toBe(at(0).toISOString());
 		expect(view.state['handle-right'].runEstSeconds).toBe(3300);
 		expect(
@@ -276,15 +276,14 @@ describe('job lifecycle', () => {
 
 describe('manual log paths next to a linked printer', () => {
 	it('manual run for the same plate still works', async () => {
-		expect(
-			() =>
-				await addRun(db, buildId, 'owner', {
-					plateNumber: 1,
-					date: '2026-11-03',
-					result: 'Success',
-					grams: 10
-				})
-		).not.toThrow();
+		await expect(
+			addRun(db, buildId, 'owner', {
+				plateNumber: 1,
+				date: '2026-11-03',
+				result: 'Success',
+				grams: 10
+			})
+		).resolves.not.toThrow();
 	});
 });
 
@@ -366,7 +365,7 @@ describe('per-part runs (wheel rims: one color per print)', () => {
 	it('links with chosen partSlugs and rejects bad ones', async () => {
 		const id = startUnlinked();
 		for (const bad of [[], ['handle-left'], ['rims-1-4', 'nope'], 'rims-1-4', [3]])
-			expect(() => await linkJob(db, id, 'org1', 'owner', buildId, 13, bad)).toThrow(/partSlugs/);
+			await expect(linkJob(db, id, 'org1', 'owner', buildId, 13, bad)).rejects.toThrow(/partSlugs/);
 		expect(jobs()[0].buildId).toBeNull();
 		await linkJob(db, id, 'org1', 'owner', buildId, 13, ['rims-2-3']);
 		expect(jobPartSlugs()).toEqual(['rims-2-3']);
@@ -554,7 +553,7 @@ describe('per-part runs (wheel rims: one color per print)', () => {
 
 describe('suggestions from "Start on printer" and take-off', async () => {
 	const slicerFile = 'ECC_0.4_tmt_4691_Overture PETG HF_0.2_11h1m.gcode';
-	const expectPlate = (plate: number, partSlugs?: string[], jobId?: string) =>
+	const expectPlate = async (plate: number, partSlugs?: string[], jobId?: string) =>
 		await setExpected(db, 'org1', printerId, {
 			buildId,
 			plate,
@@ -652,8 +651,8 @@ describe('suggestions from "Start on printer" and take-off', async () => {
 describe('cancelled or failed prints', async () => {
 	const FILE = 'Plate 1 - Handle Left.gcode';
 	const filamentUsed = () =>
-		filamentStats(await loadBuildView(db, buildId, 'owner')!).reduce((a, f) => a + f.used, 0);
-	const stop = (progress: number, extra: Partial<PrinterStatus> = {}, min = 20) =>
+		filamentStats((await loadBuildView(db, buildId, 'owner'))!).reduce((a, f) => a + f.used, 0);
+	const stop = async (progress: number, extra: Partial<PrinterStatus> = {}, min = 20) =>
 		await processStatus(
 			db,
 			printerId,
@@ -763,13 +762,13 @@ describe('cancelled or failed prints', async () => {
 			at(203)
 		);
 		expect(partStatus('rims-1-4')).toBe('Printing');
-		const st = await loadBuildView(db, buildId, 'owner')!.state['rims-1-4'];
+		const st = (await loadBuildView(db, buildId, 'owner'))!.state['rims-1-4'];
 		expect(st.startedAt).toBeNull();
 		expect(await db.select().from(printRuns)).toHaveLength(1);
 	});
 
 	describe('terminal status that resets progress', async () => {
-		const terminal = (extra: Partial<PrinterStatus>, min = 40) =>
+		const terminal = async (extra: Partial<PrinterStatus>, min = 40) =>
 			await processStatus(
 				db,
 				printerId,
@@ -842,7 +841,7 @@ describe('cancelled or failed prints', async () => {
 		expect(partStatus('handle-left')).toBe('Printing');
 		stop(0, { layer: 1 }, 3);
 		expect(partStatus('handle-left')).toBe('Reprint');
-		expect(await loadBuildView(db, buildId, 'owner')!.state['handle-left'].startedAt).toBeNull();
+		expect((await loadBuildView(db, buildId, 'owner'))!.state['handle-left'].startedAt).toBeNull();
 
 		await processStatus(db, printerId, printing(FILE, 40, 1500, { layer: 40 }), at(30));
 		expect(partStatus('handle-left')).toBe('Printing');
@@ -933,7 +932,7 @@ describe('team job history keeps unlinked prints apart', () => {
 describe('linking a job over parts that are already Printing', async () => {
 	const FILE_A = 'Plate 1 - Handle Left.gcode';
 	const FILE_B = 'slice_b_17h44m.gcode'; // another slice: no plate match, linked by hand
-	const view = () => await loadBuildView(db, buildId, 'owner')!;
+	const view = async () => (await loadBuildView(db, buildId, 'owner'))!;
 	const plateEst = () =>
 		(await first(db.select().from(buildPlates).where(eq(buildPlates.number, 1))))!.manualEstSeconds;
 	const link = async (jobId: string, st: PrinterStatus) => {
@@ -1062,7 +1061,7 @@ describe('attach run-time estimate', () => {
 
 describe('Partial confirm with per-part results (issue 46)', () => {
 	const multi = async () => {
-		const v = await loadBuildView(db, buildId, 'owner')!;
+		const v = (await loadBuildView(db, buildId, 'owner'))!;
 		const plate = v.plates.find((p) => !p.perPartRuns && p.parts.length >= 2 && p.runs <= 1)!;
 		return { plate, v };
 	};
@@ -1111,21 +1110,20 @@ describe('Partial confirm with per-part results (issue 46)', () => {
 		const keptSlugs = [plate.parts[0]];
 		expect(status({ result: 'Partial', split: { keptSlugs, keptGrams: over } })).toBe(400);
 		expect(status({ result: 'Partial', split: { keptSlugs, lostGrams: over } })).toBe(400);
-		expect(
-			() =>
-				await confirmJobRuns(db, id, 'org1', 'owner', {
-					result: 'Partial',
-					split: { keptSlugs, lostGrams: over }
-				})
-		).toThrow(/at most 100000 g/);
+		await expect(
+			confirmJobRuns(db, id, 'org1', 'owner', {
+				result: 'Partial',
+				split: { keptSlugs, lostGrams: over }
+			})
+		).rejects.toThrow(/at most 100000 g/);
 		expect(await db.select().from(printRuns)).toHaveLength(0);
 	});
 
 	it('rejects a bad split without logging anything', async () => {
 		const { plate } = multi();
 		const id = finishOn(plate.number);
-		const bad = (body: Record<string, unknown>) =>
-			expect(() => await confirmJobRuns(db, id, 'org1', 'owner', body)).toThrow();
+		const bad = async (body: Record<string, unknown>) =>
+			await expect(confirmJobRuns(db, id, 'org1', 'owner', body)).rejects.toThrow();
 		bad({ result: 'Failed', split: { keptSlugs: [plate.parts[0]] } });
 		bad({ result: 'Partial', split: { keptSlugs: ['nope'] } });
 		bad({ result: 'Partial', split: { keptSlugs: ['__proto__'] } });

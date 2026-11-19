@@ -178,8 +178,7 @@ describe('model jobs', () => {
 	});
 });
 
-// TODO(wave 2): skipped until templates/fork.ts (canManageTemplate) and access.ts are async.
-describe.skip('model admin permissions', () => {
+describe('model admin permissions', () => {
 	it('lets only the site admin through and hides everything else as 404', async () => {
 		await db
 			.insert(user)
@@ -215,8 +214,7 @@ describe('runQueue', () => {
 	});
 });
 
-// TODO(wave 2): skipped until quota.ts / access.ts are async (assertUnder compares a sync count).
-describe.skip('conversion slots per user', () => {
+describe('conversion slots per user', () => {
 	const mkTpl = async (slug: string) =>
 		(await db.insert(templates).values({ slug, name: slug, version: '1' }).returning())[0].id;
 	const job = (templateId: string, userId: string | null, name: string) =>
@@ -231,7 +229,7 @@ describe.skip('conversion slots per user', () => {
 
 	it('limit 1: a second queued job is refused (409 + code), other users are not', async () => {
 		vi.stubEnv('QUOTA_STEP_CONVERSIONS_PER_USER', '1');
-		const t2 = await await mkTpl('t2');
+		const t2 = await mkTpl('t2');
 		await job(tid, 'u1', 'a.zip');
 		let err: unknown;
 		try {
@@ -252,7 +250,7 @@ describe.skip('conversion slots per user', () => {
 
 	it('the slot frees after success and after failure', async () => {
 		vi.stubEnv('QUOTA_STEP_CONVERSIONS_PER_USER', '1');
-		const t2 = await await mkTpl('t2');
+		const t2 = await mkTpl('t2');
 		await job(tid, 'u1', 'a.zip');
 		setConverter(async () => result);
 		await runQueue(db);

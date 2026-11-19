@@ -303,7 +303,7 @@ describe('caps (public quota defaults)', () => {
 	});
 
 	it('an instance-wide cap on link printers (default 200), with a clear 409', async () => {
-		const db = setup();
+		const db = await setup();
 		vi.stubEnv('QUOTA_LINK_PRINTERS_TOTAL', '3');
 		vi.stubEnv('QUOTA_LINK_PRINTERS_PER_WORKSPACE', 'off');
 		await createPrinter(db, 'o1', 'u1', link(1));
@@ -325,19 +325,18 @@ describe('caps (public quota defaults)', () => {
 		const first = (await first(
 			db.select().from(printers).where(eq(printers.organizationId, 'o1'))
 		))!;
-		expect(
-			() =>
-				await updatePrinter(db, first.id, 'o1', {
-					secrets: { shareLink: 'https://shared-tokenzzabcdefgh.octoeverywhere.com' }
-				})
-		).not.toThrow();
+		await expect(
+			updatePrinter(db, first.id, 'o1', {
+				secrets: { shareLink: 'https://shared-tokenzzabcdefgh.octoeverywhere.com' }
+			})
+		).resolves.not.toThrow();
 		// `off` removes it; self-hosted has none by default
 		vi.stubEnv('QUOTA_LINK_PRINTERS_TOTAL', 'off');
-		expect(() => await createPrinter(db, 'o1', 'u1', link(5))).not.toThrow();
+		await expect(createPrinter(db, 'o1', 'u1', link(5))).resolves.not.toThrow();
 	});
 
 	it('the instance-wide default is 200 in public mode', async () => {
-		const db = setup();
+		const db = await setup();
 		vi.stubEnv('QUOTA_LINK_PRINTERS_PER_WORKSPACE', 'off');
 		const rows = Array.from({ length: 200 }, (_, i) => ({
 			organizationId: 'o1',
@@ -346,13 +345,13 @@ describe('caps (public quota defaults)', () => {
 			host: 'octoeverywhere'
 		}));
 		for (const r of rows) await db.insert(printers).values(r);
-		expect(() => await createPrinter(db, 'o2', 'u1', link(1))).toThrow(
+		await expect(createPrinter(db, 'o2', 'u1', link(1))).rejects.toThrow(
 			/limit of printers connected/
 		);
 	});
 
 	it('manual printers: 10 per workspace by default in public mode, configurable, not on self-hosted', async () => {
-		const db = setup();
+		const db = await setup();
 		for (let i = 0; i < 10; i++)
 			await createPrinter(db, 'o1', 'u1', { name: `m${i}`, kind: 'manual' });
 		let err: unknown;
@@ -370,7 +369,9 @@ describe('caps (public quota defaults)', () => {
 		// turning a link printer into a manual one counts too
 		const l = await createPrinter(db, 'o3', 'u1', link(1));
 		vi.stubEnv('QUOTA_MANUAL_PRINTERS_PER_WORKSPACE', '0');
-		expect(() => await updatePrinter(db, l.id, 'o3', { kind: 'manual' })).toThrow(/Ask the admin/);
+		await expect(updatePrinter(db, l.id, 'o3', { kind: 'manual' })).rejects.toThrow(
+			/Ask the admin/
+		);
 		vi.stubEnv('QUOTA_MANUAL_PRINTERS_PER_WORKSPACE', 'off');
 		expect((await updatePrinter(db, l.id, 'o3', { kind: 'manual' })).kind).toBe('manual');
 		vi.unstubAllEnvs();

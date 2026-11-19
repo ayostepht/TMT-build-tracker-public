@@ -46,15 +46,9 @@ export async function countActiveConversions(db: DbOrTx, userId: string): Promis
 export async function assertConversionSlot(db: DbOrTx, userId: string | null): Promise<void> {
 	if (!userId) return;
 	try {
-		// assertUnder becomes async (with an async counter) in the next wave; awaiting is harmless now.
-		await assertUnder(
-			db as never,
-			'stepConversionsPerUser',
-			() => countActiveConversions(db, userId) as never,
-			{
-				userId
-			}
-		);
+		await assertUnder(db, 'stepConversionsPerUser', () => countActiveConversions(db, userId), {
+			userId
+		});
 	} catch (e) {
 		if (e instanceof QuotaError) {
 			const limit = quotaLimit('stepConversionsPerUser') ?? 0;

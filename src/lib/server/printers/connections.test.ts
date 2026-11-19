@@ -333,7 +333,7 @@ describe('the printer store: link kinds, manual', () => {
 	};
 
 	it('Klipper and OctoPrint take the encrypted link, need no address, never return it', async () => {
-		const db = setup();
+		const db = await setup();
 		for (const kind of ['moonraker', 'octoprint'] as const) {
 			const row = await createPrinter(db, 'o', 'u1', {
 				name: kind,
@@ -352,7 +352,7 @@ describe('the printer store: link kinds, manual', () => {
 	});
 
 	it('a bad link is refused without echoing it', async () => {
-		const db = setup();
+		const db = await setup();
 		let msg = '';
 		try {
 			await createPrinter(db, 'o', 'u1', {
@@ -368,33 +368,31 @@ describe('the printer store: link kinds, manual', () => {
 	});
 
 	it('a printer that is not on a link has no way in: no address, no Bambu LAN', async () => {
-		const db = setup();
-		expect(() => await createPrinter(db, 'o', 'u1', { name: 'K', kind: 'moonraker' })).toThrow(
+		const db = await setup();
+		await expect(createPrinter(db, 'o', 'u1', { name: 'K', kind: 'moonraker' })).rejects.toThrow(
 			/shared link/i
 		);
-		expect(
-			() =>
-				await createPrinter(db, 'o', 'u1', {
-					name: 'K',
-					kind: 'moonraker',
-					host: '10.0.0.7',
-					port: 7125,
-					secrets: { apiKey: 'KEY' }
-				})
-		).toThrow(/shared link/i);
-		expect(
-			() =>
-				await createPrinter(db, 'o', 'u1', {
-					name: 'B',
-					kind: 'bambu-lan',
-					host: '10.0.0.8',
-					secrets: { accessCode: 'C', serial: 'S' }
-				})
-		).toThrow(/Unknown printer type/);
+		await expect(
+			createPrinter(db, 'o', 'u1', {
+				name: 'K',
+				kind: 'moonraker',
+				host: '10.0.0.7',
+				port: 7125,
+				secrets: { apiKey: 'KEY' }
+			})
+		).rejects.toThrow(/shared link/i);
+		await expect(
+			createPrinter(db, 'o', 'u1', {
+				name: 'B',
+				kind: 'bambu-lan',
+				host: '10.0.0.8',
+				secrets: { accessCode: 'C', serial: 'S' }
+			})
+		).rejects.toThrow(/Unknown printer type/);
 	});
 
 	it('manual: a name is enough; no host, port, secrets or camera are kept', async () => {
-		const db = setup();
+		const db = await setup();
 		const row = await createPrinter(db, 'o', 'u1', {
 			name: 'Garage printer',
 			kind: 'manual',
@@ -426,9 +424,11 @@ describe('the printer store: link kinds, manual', () => {
 	});
 
 	it('manual to connected needs a link; connected to manual drops everything', async () => {
-		const db = setup();
+		const db = await setup();
 		const m = await createPrinter(db, 'o', 'u1', { name: 'M', kind: 'manual' });
-		expect(() => await updatePrinter(db, m.id, 'o', { kind: 'octoprint' })).toThrow(/shared link/i);
+		await expect(updatePrinter(db, m.id, 'o', { kind: 'octoprint' })).rejects.toThrow(
+			/shared link/i
+		);
 		const up = await updatePrinter(db, m.id, 'o', {
 			kind: 'octoprint',
 			secrets: { apiKey: 'K', shareLink: LINK }
@@ -439,7 +439,7 @@ describe('the printer store: link kinds, manual', () => {
 	});
 
 	it('the supervisor never dials a manual printer, and a test says there is nothing to test', async () => {
-		const db = setup();
+		const db = await setup();
 		await createPrinter(db, 'o', 'u1', { name: 'M', kind: 'manual' });
 		await createPrinter(db, 'o', 'u1', {
 			name: 'L',
@@ -494,7 +494,7 @@ describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 	};
 
 	it('allows link printers of the three kinds and manual ones; refuses every address', async () => {
-		const db = setup();
+		const db = await setup();
 		for (const kind of ['elegoo-sdcp', 'moonraker', 'octoprint'] as const)
 			expect(
 				(await createPrinter(db, 'o2', 'u1', { name: kind, kind, secrets: { shareLink: LINK } }))
@@ -502,29 +502,27 @@ describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 			).toBe('octoeverywhere');
 		expect((await createPrinter(db, 'o', 'u1', { name: 'M', kind: 'manual' })).kind).toBe('manual');
 		for (const kind of ['elegoo-sdcp', 'moonraker', 'octoprint'] as const)
-			expect(
-				() =>
-					await createPrinter(db, 'o', 'u1', {
-						name: 'x',
-						kind,
-						host: '192.168.0.5',
-						secrets: { apiKey: 'k' }
-					})
-			).toThrow(/shared link/i);
-		expect(
-			() =>
-				await createPrinter(db, 'o', 'u1', {
+			await expect(
+				createPrinter(db, 'o', 'u1', {
 					name: 'x',
-					kind: 'bambu-lan',
-					secrets: { shareLink: LINK }
+					kind,
+					host: '192.168.0.5',
+					secrets: { apiKey: 'k' }
 				})
-		).toThrow(/Unknown printer type/);
+			).rejects.toThrow(/shared link/i);
+		await expect(
+			createPrinter(db, 'o', 'u1', {
+				name: 'x',
+				kind: 'bambu-lan',
+				secrets: { shareLink: LINK }
+			})
+		).rejects.toThrow(/Unknown printer type/);
 		expect(await db.select().from(printers)).toHaveLength(4);
 	});
 
 	it('caps link printers per workspace (default 3), counted per workspace; manual ones do not count', async () => {
-		const db = setup();
-		const mk = (org: string, n: number, kind = 'octoprint') =>
+		const db = await setup();
+		const mk = async (org: string, n: number, kind = 'octoprint') =>
 			await createPrinter(db, org, 'u1', {
 				name: `p${n}`,
 				kind,
@@ -545,16 +543,16 @@ describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 		await createPrinter(db, 'o', 'u1', { name: 'M1', kind: 'manual' });
 		await createPrinter(db, 'o', 'u1', { name: 'M2', kind: 'manual' });
 		// replacing the link of one of the three is not a fourth printer
-		expect(
-			() => await updatePrinter(db, third.id, 'o', { secrets: { shareLink: LINK2 } })
-		).not.toThrow();
+		await expect(
+			updatePrinter(db, third.id, 'o', { secrets: { shareLink: LINK2 } })
+		).resolves.not.toThrow();
 		// deleting one makes room
 		await db.delete(printers).where(eq(printers.id, third.id));
 		expect(() => mk('o', 6)).not.toThrow();
 	});
 
 	it('the cap is configurable and `off` removes it', async () => {
-		const db = setup();
+		const db = await setup();
 		vi.stubEnv('QUOTA_LINK_PRINTERS_PER_WORKSPACE', '1');
 		const body = (n: number) => ({
 			name: `p${n}`,
@@ -562,27 +560,26 @@ describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 			secrets: { shareLink: `https://shared-token${n}abcdefgh.octoeverywhere.com` }
 		});
 		await createPrinter(db, 'o', 'u1', body(1));
-		expect(() => await createPrinter(db, 'o', 'u1', body(2))).toThrow(/limit on this server/);
+		await expect(createPrinter(db, 'o', 'u1', body(2))).rejects.toThrow(/limit on this server/);
 		vi.stubEnv('QUOTA_LINK_PRINTERS_PER_WORKSPACE', '0');
-		expect(() => await createPrinter(db, 'o2', 'u1', body(3))).toThrow(/Ask the admin/);
+		await expect(createPrinter(db, 'o2', 'u1', body(3))).rejects.toThrow(/Ask the admin/);
 		vi.stubEnv('QUOTA_LINK_PRINTERS_PER_WORKSPACE', 'off');
-		expect(() => await createPrinter(db, 'o2', 'u1', body(4))).not.toThrow();
+		await expect(createPrinter(db, 'o2', 'u1', body(4))).resolves.not.toThrow();
 	});
 
 	it('edits: a LAN address cannot be set; pausing and renaming stay; a link can be changed', async () => {
-		const db = setup();
+		const db = await setup();
 		const link = await createPrinter(db, 'o', 'u1', {
 			name: 'L',
 			kind: 'octoprint',
 			secrets: { shareLink: LINK }
 		});
-		expect(() => await updatePrinter(db, link.id, 'o', { secrets: { shareLink: '' } })).toThrow(
+		await expect(updatePrinter(db, link.id, 'o', { secrets: { shareLink: '' } })).rejects.toThrow(
 			/shared link/i
 		);
-		expect(
-			() =>
-				await updatePrinter(db, link.id, 'o', { host: '192.168.0.5', secrets: { shareLink: '' } })
-		).toThrow(/shared link/i);
+		await expect(
+			updatePrinter(db, link.id, 'o', { host: '192.168.0.5', secrets: { shareLink: '' } })
+		).rejects.toThrow(/shared link/i);
 		expect(
 			(await updatePrinter(db, link.id, 'o', { name: 'Renamed', enabled: false })).enabled
 		).toBe(false);
@@ -595,15 +592,15 @@ describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 		expect((await updatePrinter(db, lan.id, 'o', { name: 'older', enabled: false })).name).toBe(
 			'older'
 		);
-		expect(() => await updatePrinter(db, lan.id, 'o', { enabled: true })).toThrow(/shared link/i);
+		await expect(updatePrinter(db, lan.id, 'o', { enabled: true })).rejects.toThrow(/shared link/i);
 		expect(toPublic(lan)).toMatchObject({ connection: 'link', blocked: LINK_ONLY_MESSAGE });
 	});
 
 	it('connection tests: a link is allowed (resolves the link only); a LAN address is refused', async () => {
-		const db = setup();
-		expect(
-			() => await configFromInput(db, 'o', { kind: 'moonraker', host: '192.168.0.5' })
-		).toThrow(/shared link/i);
+		const db = await setup();
+		await expect(
+			configFromInput(db, 'o', { kind: 'moonraker', host: '192.168.0.5' })
+		).rejects.toThrow(/shared link/i);
 		expect(
 			await configFromInput(db, 'o', {
 				kind: 'octoprint',
@@ -664,7 +661,7 @@ describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 	});
 
 	it('the supervisor connects link printers only', async () => {
-		const db = setup();
+		const db = await setup();
 		await createPrinter(db, 'o', 'u1', {
 			name: 'L',
 			kind: 'moonraker',

@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { catalogPrinter } from '#lib/printers/catalog.ts';
 import { printerFromCatalog } from '#lib/printers/printer.ts';
 import { first, type Db } from '../db';
@@ -23,55 +23,53 @@ let templateId: string;
 const orgId = 'org1';
 const cc = printerFromCatalog(catalogPrinter('elegoo-centauri-carbon')!, 0);
 
-beforeEach(() => {
+beforeEach(async () => {
 	db = await createTestDb();
-	seedTemplates(db, templateSeeds);
-	templateId = db.select({ id: templates.id }).from(templates).get()!.id;
-	db.insert(organization)
-		.values({ id: orgId, name: 'Chapter', slug: 'chapter', createdAt: new Date() })
-		.run();
-	db.insert(user).values({ id: 'owner', name: 'Olive', email: 'o@example.test' }).run();
-	db.insert(member)
-		.values({
-			id: 'm1',
-			organizationId: orgId,
-			userId: 'owner',
-			role: 'owner',
-			createdAt: new Date()
-		})
-		.run();
+	await seedTemplates(db, templateSeeds);
+	templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
+	await db
+		.insert(organization)
+		.values({ id: orgId, name: 'Chapter', slug: 'chapter', createdAt: new Date() });
+	await db.insert(user).values({ id: 'owner', name: 'Olive', email: 'o@example.test' });
+	await db.insert(member).values({
+		id: 'm1',
+		organizationId: orgId,
+		userId: 'owner',
+		role: 'owner',
+		createdAt: new Date()
+	});
 });
 
-const mk = () =>
-	createBuild(
+const mk = async () =>
+	await createBuild(
 		db,
 		{ organizationId: orgId, templateId, designId: null, name: 'B', printer: cc },
 		'owner'
 	);
-const view = (id: string) => loadBuildView(db, id, 'owner')!;
-const plates = (id: string) => JSON.stringify(view(id).plates);
-const layoutKey = (id: string) => buildLayouts(db, id, 'owner').layouts[0].key;
-const liveJob = (id: string) => {
-	const printerId = createPrinter(db, orgId, 'owner', {
-		name: 'Shop',
-		kind: 'elegoo-sdcp',
-		secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
-		catalogId: 'elegoo-centauri-carbon'
-	}).id;
-	db.insert(printerJobs)
-		.values({
-			printerId,
-			buildId: id,
-			plateNumber: 2,
-			partSlugs: view(id).plates[1]?.parts ?? [],
-			status: 'printing',
-			startedAt: new Date()
+const view = async (id: string) => (await loadBuildView(db, id, 'owner'))!;
+const plates = async (id: string) => JSON.stringify((await view(id)).plates);
+const layoutKey = async (id: string) => (await buildLayouts(db, id, 'owner')).layouts[0].key;
+const liveJob = async (id: string) => {
+	const printerId = (
+		await createPrinter(db, orgId, 'owner', {
+			name: 'Shop',
+			kind: 'elegoo-sdcp',
+			secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
+			catalogId: 'elegoo-centauri-carbon'
 		})
-		.run();
+	).id;
+	await db.insert(printerJobs).values({
+		printerId,
+		buildId: id,
+		plateNumber: 2,
+		partSlugs: (await view(id)).plates[1]?.parts ?? [],
+		status: 'printing',
+		startedAt: new Date()
+	});
 };
-const refusal = (fn: () => unknown): BuildStartedError => {
+const refusal = async (fn: () => unknown): Promise<BuildStartedError> => {
 	try {
-		fn();
+		await fn();
 	} catch (e) {
 		expect(e).toBeInstanceOf(BuildStartedError);
 		return e as BuildStartedError;
@@ -79,59 +77,65 @@ const refusal = (fn: () => unknown): BuildStartedError => {
 	throw new Error('expected a refusal');
 };
 
+afterEach(async () => dropTestDb(db));
+
 describe('plate replacement on a started build', () => {
-	it('works without a prompt on an unstarted build', () => {
-		const id = mk();
-		expect(view(id).started.started).toBe(false);
-		expect(arrangeForPrinter(db, id, 'owner').plates).toBeGreaterThan(0);
-		expect(setPlateLayout(db, id, 'owner', { key: layoutKey(id) }).plates).toBeGreaterThan(0);
+	it('works without a prompt on an unstarted build', async () => {
+		const id = await mk();
+		expect((await view(id)).started.started).toBe(false);
+		expect((await arrangeForPrinter(db, id, 'owner')).plates).toBeGreaterThan(0);
+		expect(
+			(await setPlateLayout(db, id, 'owner', { key: await layoutKey(id) })).plates
+		).toBeGreaterThan(0);
 	});
 
-	it('refuses a live job, even with confirm, and changes nothing', () => {
-		const id = mk();
-		liveJob(id);
-		const before = plates(id);
-		const e1 = refusal(() =>
-			arrangeForPrinter(db, id, 'owner', { confirm: true, convertRuns: true })
+	it('refuses a live job, even with confirm, and changes nothing', async () => {
+		const id = await mk();
+		await liveJob(id);
+		const before = await plates(id);
+		const e1 = await refusal(
+			async () => await arrangeForPrinter(db, id, 'owner', { confirm: true, convertRuns: true })
 		);
 		expect(e1.status).toBe(409);
 		expect(e1.code).toBe('build-started');
 		expect(e1.message).toMatch(/Plate 2 is printing on Shop.*wait until the print finishes/);
 		expect(e1.extra.started.liveJobs).toBe(1);
-		refusal(() => setPlateLayout(db, id, 'owner', { key: layoutKey(id), confirm: true }));
-		expect(plates(id)).toBe(before);
+		await refusal(
+			async () => await setPlateLayout(db, id, 'owner', { key: await layoutKey(id), confirm: true })
+		);
+		expect(await plates(id)).toBe(before);
 	});
 
-	it('needs confirm when a part is Printing by hand, and names it', () => {
-		const id = mk();
-		setPartStatus(db, id, 'owner', 'handle-left', { status: 'Printing' });
-		const before = plates(id);
-		const e = refusal(() => arrangeForPrinter(db, id, 'owner'));
+	it('needs confirm when a part is Printing by hand, and names it', async () => {
+		const id = await mk();
+		await setPartStatus(db, id, 'owner', 'handle-left', { status: 'Printing' });
+		const before = await plates(id);
+		const e = await refusal(async () => await arrangeForPrinter(db, id, 'owner'));
 		expect(e.message).toMatch(/renumbers/);
 		expect(e.message).toMatch(/marked Printing by hand/);
 		expect(e.extra.started.liveJobs).toBe(0);
-		refusal(() => setPlateLayout(db, id, 'owner', { key: layoutKey(id) }));
-		expect(plates(id)).toBe(before);
-		expect(arrangeForPrinter(db, id, 'owner', { confirm: true }).plates).toBeGreaterThan(0);
+		await refusal(async () => await setPlateLayout(db, id, 'owner', { key: await layoutKey(id) }));
+		expect(await plates(id)).toBe(before);
+		expect((await arrangeForPrinter(db, id, 'owner', { confirm: true })).plates).toBeGreaterThan(0);
 		// statuses stay as they were
-		expect(view(id).state['handle-left'].status).toBe('Printing');
+		expect((await view(id)).state['handle-left'].status).toBe('Printing');
 		expect(
-			setPlateLayout(db, id, 'owner', { key: layoutKey(id), confirm: true }).plates
+			(await setPlateLayout(db, id, 'owner', { key: await layoutKey(id), confirm: true })).plates
 		).toBeGreaterThan(0);
 	});
 
-	it('a logged part run needs confirm too, and confirm converts plate logs', () => {
-		const id = mk();
-		addRun(db, id, 'owner', {
+	it('a logged part run needs confirm too, and confirm converts plate logs', async () => {
+		const id = await mk();
+		await addRun(db, id, 'owner', {
 			date: '2026-03-01',
 			result: 'Success',
 			plateNumber: 1,
 			grams: 10
 		});
-		const e = refusal(() => arrangeForPrinter(db, id, 'owner'));
+		const e = await refusal(async () => await arrangeForPrinter(db, id, 'owner'));
 		expect(e.message).toMatch(/print log/);
-		const r = arrangeForPrinter(db, id, 'owner', { confirm: true });
+		const r = await arrangeForPrinter(db, id, 'owner', { confirm: true });
 		expect(r.convertedRuns).toBe(1);
-		expect(view(id).runs.every((x) => x.plateNumber === null)).toBe(true);
+		expect((await view(id)).runs.every((x) => x.plateNumber === null)).toBe(true);
 	});
 });

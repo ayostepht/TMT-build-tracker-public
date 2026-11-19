@@ -17,6 +17,7 @@ import type { RequestHandler } from './$types';
  * `removeRoles` drops slots nothing uses (Undo of an automatically added slot).
  */
 export const PATCH: RequestHandler = (event) =>
-	respond(async () =>
-		updateBuildDesign(getDb(), event.params.id, requireUserId(event), await readJson(event))
-	);
+	respond(async () => {
+		const body = await readJson(event);
+		return await updateBuildDesign(getDb(), event.params.id, requireUserId(event), body);
+	});

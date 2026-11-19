@@ -93,7 +93,7 @@ const up = async (id: string, thumbBytes: number, userId = 'owner') => {
 		userId,
 		{ name: 'a.3mf', size },
 		parsed,
-		loadBuildView(db, id, userId)!
+		(await loadBuildView(db, id, userId))!
 	);
 };
 const files = () => {
@@ -120,7 +120,7 @@ describe('kept 3MF bytes count against the workspace', () => {
 
 	it('refuses an upload that pushes the workspace over and writes no file', async () => {
 		const id = await mk();
-		await expect(await up(id, 2 * MB)).rejects.toMatchObject({ status: 409, code: 'quota' });
+		await expect(up(id, 2 * MB)).rejects.toMatchObject({ status: 409, code: 'quota' });
 		expect(files()).toEqual([]);
 		expect(await db.select().from(buildUploads)).toHaveLength(0);
 	});
@@ -131,7 +131,7 @@ describe('kept 3MF bytes count against the workspace', () => {
 		const second = await up(id, 900_000); // 900k total after replace, not 1.6 MB
 		expect(await workspaceUploadBytes(db, orgId)).toBe(900_000);
 		expect(existsSync(uploadDir(firstUp.uploadId))).toBe(false);
-		await expect(await up(id, 1_100_000)).rejects.toBeInstanceOf(QuotaError);
+		await expect(up(id, 1_100_000)).rejects.toBeInstanceOf(QuotaError);
 		// the refused replacement keeps the previous pending upload intact
 		expect(existsSync(uploadDir(second.uploadId))).toBe(true);
 		expect(await workspaceUploadBytes(db, orgId)).toBe(900_000);
@@ -145,16 +145,16 @@ describe('kept 3MF bytes count against the workspace', () => {
 			.insert(buildPlates)
 			.values({ buildId: id, number: 99, name: 'P', thumbnailPath: `plates/${id}/1.png` });
 		await expect(assertUploadRoom(db, orgId, 0, { userId: 'owner' })).rejects.toThrow(QuotaError);
-		await expect(await up(id, 10)).rejects.toBeInstanceOf(QuotaError);
+		await expect(up(id, 10)).rejects.toBeInstanceOf(QuotaError);
 	});
 
 	it('null limit measures nothing; site admins are exempt', async () => {
 		const id = await mk();
 		vi.stubEnv('ADMIN_EMAILS', 'boss@example.test');
-		await expect(await up(id, 2 * MB, 'owner')).rejects.toBeInstanceOf(QuotaError);
-		await expect(await up(id, 2 * MB, 'boss')).resolves.toBeTruthy();
+		await expect(up(id, 2 * MB, 'owner')).rejects.toBeInstanceOf(QuotaError);
+		await expect(up(id, 2 * MB, 'boss')).resolves.toBeTruthy();
 		vi.stubEnv('QUOTA_UPLOAD_MB_PER_WORKSPACE', 'off');
-		await expect(await up(id, 5 * MB)).resolves.toBeTruthy();
+		await expect(up(id, 5 * MB)).resolves.toBeTruthy();
 	});
 });
 
@@ -181,7 +181,7 @@ describe('upload slots', () => {
 
 	it('null limit never refuses; admins are exempt', async () => {
 		vi.stubEnv('QUOTA_CONCURRENT_UPLOADS_PER_USER', 'off');
-		const rel = [1, 2, 3, 4].map(() => await acquireUploadSlot(db, u));
+		const rel = await Promise.all([1, 2, 3, 4].map(() => acquireUploadSlot(db, u)));
 		rel.forEach((r) => r());
 		vi.stubEnv('QUOTA_CONCURRENT_UPLOADS_PER_USER', '1');
 		vi.stubEnv('ADMIN_EMAILS', 'boss@example.test');

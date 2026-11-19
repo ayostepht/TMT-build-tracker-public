@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { ApiError } from '../access';
-import { openDb, runMigrations, type Db } from '../db';
+import { first, type Db } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import {
 	activity,
 	buildParts,
@@ -23,33 +24,34 @@ let db: Db;
 let templateId: string;
 const orgId = 'org1';
 
-beforeEach(() => {
-	db = openDb(':memory:');
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
-	templateId = db.select({ id: templates.id }).from(templates).get()!.id;
-	db.insert(organization)
-		.values({ id: orgId, name: 'Chapter', slug: 'chapter', createdAt: new Date() })
-		.run();
+beforeEach(async () => {
+	db = await createTestDb();
+	await seedTemplates(db, templateSeeds);
+	templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
+	await db
+		.insert(organization)
+		.values({ id: orgId, name: 'Chapter', slug: 'chapter', createdAt: new Date() });
 	for (const u of ['owner', 'editor', 'viewer']) {
-		db.insert(user)
-			.values({ id: u, name: `User ${u}`, email: `${u}@example.test` })
-			.run();
-		db.insert(member)
-			.values({ id: `m-${u}`, organizationId: orgId, userId: u, role: u, createdAt: new Date() })
-			.run();
+		await db.insert(user).values({ id: u, name: `User ${u}`, email: `${u}@example.test` });
+		await db
+			.insert(member)
+			.values({ id: `m-${u}`, organizationId: orgId, userId: u, role: u, createdAt: new Date() });
 	}
 });
-const mk = (kind: 'build' | 'draft' = 'build') =>
-	createBuild(db, { organizationId: orgId, templateId, designId: null, name: 'B', kind }, 'owner');
-const view = (id: string) => loadBuildView(db, id, 'owner')!;
-const lastKind = (id: string) =>
-	db.select().from(activity).where(eq(activity.buildId, id)).all().at(-1)!;
+const mk = async (kind: 'build' | 'draft' = 'build') =>
+	await createBuild(
+		db,
+		{ organizationId: orgId, templateId, designId: null, name: 'B', kind },
+		'owner'
+	);
+const view = async (id: string) => (await loadBuildView(db, id, 'owner'))!;
+const lastKind = async (id: string) =>
+	(await db.select().from(activity).where(eq(activity.buildId, id))).at(-1)!;
 
 describe('updatePart manualGrams', () => {
-	it('stores the typed weight, shows it as "your entry" and fills the plate and totals', () => {
-		const id = mk();
-		const before = view(id);
+	it('stores the typed weight, shows it as "your entry" and fills the plate and totals', async () => {
+		const id = await mk();
+		const before = await view(id);
 		expect(partGrams(before, 'rear-caster-left').source).toBe('none');
 		expect(
 			plateGrams(
@@ -57,8 +59,8 @@ describe('updatePart manualGrams', () => {
 				before.plates.find((p) => p.number === 9)!
 			).unknown
 		).toEqual(['rear-caster-left', 'rear-caster-right']);
-		updatePart(db, id, 'editor', 'rear-caster-left', { manualGrams: 62.456 });
-		const v = view(id);
+		await updatePart(db, id, 'editor', 'rear-caster-left', { manualGrams: 62.456 });
+		const v = await view(id);
 		expect(v.state['rear-caster-left'].manualGrams).toBe(62.46);
 		expect(partGrams(v, 'rear-caster-left')).toMatchObject({ total: 62.46, source: 'user' });
 		const plate = v.plates.find((p) => p.number === 9)!;
@@ -73,39 +75,45 @@ describe('updatePart manualGrams', () => {
 		).toContain('set the weight of');
 	});
 
-	it('null clears it; clearing a part with no entry is refused', () => {
-		const id = mk();
-		updatePart(db, id, 'owner', 'push-top', { manualGrams: 300 });
-		updatePart(db, id, 'owner', 'push-top', { manualGrams: null });
-		expect(view(id).state['push-top'].manualGrams).toBeNull();
-		expect(partGrams(view(id), 'push-top').source).toBe('bom');
+	it('null clears it; clearing a part with no entry is refused', async () => {
+		const id = await mk();
+		await updatePart(db, id, 'owner', 'push-top', { manualGrams: 300 });
+		await updatePart(db, id, 'owner', 'push-top', { manualGrams: null });
+		expect((await view(id)).state['push-top'].manualGrams).toBeNull();
+		expect(partGrams(await view(id), 'push-top').source).toBe('bom');
 		expect(lastKind(id).payload).toMatchObject({ manualGrams: null, cleared: true });
-		expect(() => updatePart(db, id, 'owner', 'push-top', { manualGrams: null })).toThrow(ApiError);
+		(
+			await expect(await updatePart(db, id, 'owner', 'push-top', { manualGrams: null }))
+		).rejects.toThrow(ApiError);
 	});
 
-	it.each([[-1], [Number.NaN], [20001], ['12'], [Infinity]])('refuses %s', (bad) => {
-		const id = mk();
-		expect(() => updatePart(db, id, 'owner', 'push-top', { manualGrams: bad })).toThrow(ApiError);
-		expect(view(id).state['push-top'].manualGrams ?? null).toBeNull();
+	it.each([[-1], [Number.NaN], [20001], ['12'], [Infinity]])('refuses %s', async (bad) => {
+		const id = await mk();
+		(
+			await expect(await updatePart(db, id, 'owner', 'push-top', { manualGrams: bad }))
+		).rejects.toThrow(ApiError);
+		expect((await view(id)).state['push-top'].manualGrams ?? null).toBeNull();
 	});
 
-	it('is refused for viewers (403) and in drafts (400)', () => {
-		const id = mk();
-		expect(() => updatePart(db, id, 'viewer', 'push-top', { manualGrams: 5 })).toThrow(
-			expect.objectContaining({ status: 403 })
-		);
-		const d = mk('draft');
-		expect(() => updatePart(db, d, 'owner', 'push-top', { manualGrams: 5 })).toThrow(
-			expect.objectContaining({ status: 400 })
-		);
+	it('is refused for viewers (403) and in drafts (400)', async () => {
+		const id = await mk();
+		(
+			await expect(await updatePart(db, id, 'viewer', 'push-top', { manualGrams: 5 }))
+		).rejects.toThrow(expect.objectContaining({ status: 403 }));
+		const d = await mk('draft');
+		(
+			await expect(await updatePart(db, d, 'owner', 'push-top', { manualGrams: 5 }))
+		).rejects.toThrow(expect.objectContaining({ status: 400 }));
 	});
 
-	it('must be sent on its own, and an unknown part is a 404', () => {
-		const id = mk();
-		expect(() =>
-			updatePart(db, id, 'owner', 'push-top', { manualGrams: 5, assigneeUserId: null })
-		).toThrow(ApiError);
-		expect(() => updatePart(db, id, 'owner', 'nope', { manualGrams: 5 })).toThrow(
+	it('must be sent on its own, and an unknown part is a 404', async () => {
+		const id = await mk();
+		(
+			await expect(
+				await updatePart(db, id, 'owner', 'push-top', { manualGrams: 5, assigneeUserId: null })
+			)
+		).rejects.toThrow(ApiError);
+		await expect(updatePart(db, id, 'owner', 'nope', { manualGrams: 5 })).rejects.toThrow(
 			expect.objectContaining({ status: 404 })
 		);
 	});
@@ -114,12 +122,12 @@ describe('updatePart manualGrams', () => {
 describe('request-supplied keys', () => {
 	it.each(['__proto__', 'constructor', 'toString', 'hasOwnProperty'])(
 		'part slug %s is a 404 and writes no activity',
-		(slug) => {
-			const id = mk();
-			const n = () => db.select().from(activity).where(eq(activity.buildId, id)).all().length;
-			const before = n();
+		async (slug) => {
+			const id = await mk();
+			const n = async () => (await db.select().from(activity).where(eq(activity.buildId, id))).length;
+			const before = await n();
 			for (const body of [{ manualGrams: 5 }, { comps: { 0: true } }]) {
-				expect(() => updatePart(db, id, 'owner', slug, body)).toThrow(
+				await expect(updatePart(db, id, 'owner', slug, body)).rejects.toThrow(
 					expect.objectContaining({ status: 404 })
 				);
 			}
@@ -127,32 +135,33 @@ describe('request-supplied keys', () => {
 		}
 	);
 
-	it('plate grams over the cap are a 400', () => {
-		const id = mk();
-		const slug = view(id).plates.find((p) => p.number === 13)!.parts[0];
-		expect(() => updatePlate(db, id, 'owner', 10, { slicerGrams: 20001 })).toThrow(
+	it('plate grams over the cap are a 400', async () => {
+		const id = await mk();
+		const slug = (await view(id)).plates.find((p) => p.number === 13)!.parts[0];
+		await expect(updatePlate(db, id, 'owner', 10, { slicerGrams: 20001 })).rejects.toThrow(
 			expect.objectContaining({ status: 400 })
 		);
-		expect(() => updatePlate(db, id, 'owner', 13, { slicerByPart: { [slug]: 1e9 } })).toThrow(
-			expect.objectContaining({ status: 400 })
-		);
-		updatePlate(db, id, 'owner', 10, { slicerGrams: 20000 });
+		(
+			await expect(await updatePlate(db, id, 'owner', 13, { slicerByPart: { [slug]: 1e9 } }))
+		).rejects.toThrow(expect.objectContaining({ status: 400 }));
+		await updatePlate(db, id, 'owner', 10, { slicerGrams: 20000 });
 	});
 });
 
 describe('updatePlate sets the grams source', () => {
-	const src = (id: string, n: number) =>
-		db
-			.select({ s: buildPlates.slicerGramsSource })
-			.from(buildPlates)
-			.where(and(eq(buildPlates.buildId, id), eq(buildPlates.number, n)))
-			.get()!.s;
+	const src = async (id: string, n: number) =>
+		(await first(
+			db
+				.select({ s: buildPlates.slicerGramsSource })
+				.from(buildPlates)
+				.where(and(eq(buildPlates.buildId, id), eq(buildPlates.number, n)))
+		))!.s;
 
-	it('typed grams are "user"; clearing them clears the source; the activity payload stays clean', () => {
-		const id = mk();
-		updatePlate(db, id, 'owner', 10, { slicerGrams: 280 });
+	it('typed grams are "user"; clearing them clears the source; the activity payload stays clean', async () => {
+		const id = await mk();
+		await updatePlate(db, id, 'owner', 10, { slicerGrams: 280 });
 		expect(src(id, 10)).toBe('user');
-		const v = view(id);
+		const v = await view(id);
 		expect(v.plates.find((p) => p.number === 10)!.gramsSource).toBe('user');
 		expect(
 			plateGrams(
@@ -164,29 +173,29 @@ describe('updatePlate sets the grams source', () => {
 			source: 'user'
 		});
 		expect(lastKind(id).payload).not.toHaveProperty('slicerGramsSource');
-		updatePlate(db, id, 'owner', 10, { slicerGrams: null });
+		await updatePlate(db, id, 'owner', 10, { slicerGrams: null });
 		expect(src(id, 10)).toBeNull();
 	});
 
-	it('per-part entries are "user" too', () => {
-		const id = mk();
-		const slug = view(id).plates.find((p) => p.number === 13)!.parts[0];
-		updatePlate(db, id, 'owner', 13, { slicerByPart: { [slug]: 120 } });
+	it('per-part entries are "user" too', async () => {
+		const id = await mk();
+		const slug = (await view(id)).plates.find((p) => p.number === 13)!.parts[0];
+		await updatePlate(db, id, 'owner', 13, { slicerByPart: { [slug]: 120 } });
 		expect(src(id, 13)).toBe('user');
-		updatePlate(db, id, 'owner', 13, { slicerByPart: {} });
+		await updatePlate(db, id, 'owner', 13, { slicerByPart: {} });
 		expect(src(id, 13)).toBeNull();
 	});
 });
 
 describe('loadBuildView grams columns', () => {
-	it('reads manual_grams from build_parts', () => {
-		const id = mk();
-		db.update(buildParts)
+	it('reads manual_grams from build_parts', async () => {
+		const id = await mk();
+		await db
+			.update(buildParts)
 			.set({ manualGrams: 12.5 })
-			.where(and(eq(buildParts.buildId, id), eq(buildParts.partSlug, 'push-top')))
-			.run();
-		expect(view(id).state['push-top'].manualGrams).toBe(12.5);
-		expect(view(id).state['seat-center'].manualGrams).toBeNull();
+			.where(and(eq(buildParts.buildId, id), eq(buildParts.partSlug, 'push-top')));
+		expect((await view(id)).state['push-top'].manualGrams).toBe(12.5);
+		expect((await view(id)).state['seat-center'].manualGrams).toBeNull();
 	});
 
 	it('infers the source of rows from before the column existed', () => {

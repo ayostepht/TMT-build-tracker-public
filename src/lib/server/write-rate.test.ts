@@ -17,10 +17,10 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('write rate limit', () => {
-	it('is off in selfhost and on in public mode', () => {
+	it('is off in selfhost and on in public mode', async () => {
 		vi.stubEnv('TMT_MODE', 'selfhost');
 		expect(writeRateConfig()).toBeNull();
-		expect(writeRateResponse(u, 'POST', '/api/builds', () => false)).toBeNull();
+		expect(await writeRateResponse(u, 'POST', '/api/builds', () => false)).toBeNull();
 		vi.stubEnv('TMT_MODE', 'public');
 		expect(writeRateConfig()).toEqual({ perMin: 120, burst: 60 });
 		vi.stubEnv('WRITE_RATE_PER_MIN', 'off');
@@ -31,7 +31,7 @@ describe('write rate limit', () => {
 		const now = 1_000_000;
 		let refused: Response | null = null;
 		for (let i = 0; i < 61 && !refused; i++)
-			refused = writeRateResponse(u, 'PATCH', '/api/builds/x', () => false, now);
+			refused = await writeRateResponse(u, 'PATCH', '/api/builds/x', () => false, now);
 		expect(refused?.status).toBe(429);
 		expect(Number(refused!.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
 		expect(await refused!.json()).toMatchObject({ code: 'rate' });
@@ -46,20 +46,20 @@ describe('write rate limit', () => {
 		expect(takeWriteToken('a', cfg, 600)).toBe(0); // 2/s refill
 	});
 
-	it('ignores reads, auth routes and anonymous requests', () => {
+	it('ignores reads, auth routes and anonymous requests', async () => {
 		vi.stubEnv('WRITE_RATE_BURST', '1');
 		for (let i = 0; i < 5; i++) {
-			expect(writeRateResponse(u, 'GET', '/api/builds', () => false, 0)).toBeNull();
-			expect(writeRateResponse(u, 'POST', '/api/auth/sign-in', () => false, 0)).toBeNull();
-			expect(writeRateResponse(null, 'POST', '/api/builds', () => false, 0)).toBeNull();
+			expect(await writeRateResponse(u, 'GET', '/api/builds', () => false, 0)).toBeNull();
+			expect(await writeRateResponse(u, 'POST', '/api/auth/sign-in', () => false, 0)).toBeNull();
+			expect(await writeRateResponse(null, 'POST', '/api/builds', () => false, 0)).toBeNull();
 		}
 	});
 
 	it('limits form actions outside /api/ and shapes the refusal per caller', async () => {
 		vi.stubEnv('WRITE_RATE_BURST', '1');
 		const path = '/teams/x/members';
-		expect(writeRateResponse(u, 'POST', path, () => false, 0)).toBeNull();
-		const plain = writeRateResponse(
+		expect(await writeRateResponse(u, 'POST', path, () => false, 0)).toBeNull();
+		const plain = await writeRateResponse(
 			u,
 			'POST',
 			path,
@@ -73,7 +73,7 @@ describe('write rate limit', () => {
 		expect(html).toContain('Too many changes');
 		expect(html).not.toContain('javascript:');
 		expect(html).toContain('<a href="/">Go back</a>');
-		const enh = writeRateResponse(
+		const enh = await writeRateResponse(
 			u,
 			'POST',
 			path,
@@ -84,14 +84,14 @@ describe('write rate limit', () => {
 		const body = await enh!.json();
 		expect(body).toMatchObject({ type: 'failure', status: 429 });
 		expect(JSON.parse(body.data)).toEqual([{ error: 1, code: 2 }, expect.any(String), 'rate']);
-		const json = writeRateResponse(u, 'POST', path, () => false, 0, new Headers());
+		const json = await writeRateResponse(u, 'POST', path, () => false, 0, new Headers());
 		expect(await json!.json()).toMatchObject({ code: 'rate' });
 	});
 
-	it('exempts site admins', () => {
+	it('exempts site admins', async () => {
 		vi.stubEnv('WRITE_RATE_BURST', '1');
 		for (let i = 0; i < 10; i++)
-			expect(writeRateResponse(u, 'POST', '/api/builds', () => true, 0)).toBeNull();
+			expect(await writeRateResponse(u, 'POST', '/api/builds', () => true, 0)).toBeNull();
 	});
 
 	it('points Go back at a same-host Referer path, else home', () => {

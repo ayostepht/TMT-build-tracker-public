@@ -159,7 +159,7 @@ describe('shared link storage', () => {
 	});
 
 	it('stores the link encrypted, needs no address, and never returns it', async () => {
-		const db = setup();
+		const db = await setup();
 		const row = await createPrinter(db, 'o', 'u1', body());
 		expect(row.host).toBe('octoeverywhere');
 		expect(row.secretEnc).not.toContain(HOST);
@@ -177,7 +177,7 @@ describe('shared link storage', () => {
 	});
 
 	it('rejects a bad link without echoing it, and a missing link', async () => {
-		const db = setup();
+		const db = await setup();
 		let msg = '';
 		try {
 			await createPrinter(
@@ -192,19 +192,18 @@ describe('shared link storage', () => {
 		expect(msg).toBeTruthy();
 		expect(msg).not.toContain('evil.example');
 		// a connected printer needs a link: an address alone is no longer a way to add one
-		expect(
-			() =>
-				await createPrinter(db, 'o', 'u1', { name: 'x', kind: 'elegoo-sdcp', host: '192.168.0.5' })
-		).toThrow(/shared link/i);
+		await expect(
+			createPrinter(db, 'o', 'u1', { name: 'x', kind: 'elegoo-sdcp', host: '192.168.0.5' })
+		).rejects.toThrow(/shared link/i);
 		// Bambu LAN is gone: it is not a printer type any more
-		expect(() => await createPrinter(db, 'o', 'u1', body({ kind: 'bambu-lan' }))).toThrow(
+		await expect(createPrinter(db, 'o', 'u1', body({ kind: 'bambu-lan' }))).rejects.toThrow(
 			/Unknown printer type/
 		);
 		expect(await db.select().from(printers)).toHaveLength(0);
 	});
 
 	it('keeps the link on edit, ignores a typed address or camera address, and refuses to clear it', async () => {
-		const db = setup();
+		const db = await setup();
 		const row = await createPrinter(
 			db,
 			'o',
@@ -223,7 +222,7 @@ describe('shared link storage', () => {
 		expect(a.host).toBe('octoeverywhere');
 		expect(decryptSecrets(a.secretEnc)).toEqual({ shareLink: LINK });
 		// a link printer cannot go back to an address: clearing the link is refused
-		expect(() => await updatePrinter(db, row.id, 'o', { secrets: { shareLink: '' } })).toThrow(
+		await expect(updatePrinter(db, row.id, 'o', { secrets: { shareLink: '' } })).rejects.toThrow(
 			/shared link/i
 		);
 		// pausing and renaming stay possible
@@ -231,7 +230,7 @@ describe('shared link storage', () => {
 	});
 
 	it('connection tests use the stored link when none is typed', async () => {
-		const db = setup();
+		const db = await setup();
 		const row = await createPrinter(db, 'o', 'u1', body());
 		const cfg = await configFromInput(db, 'o', { id: row.id, kind: 'elegoo-sdcp' });
 		expect(cfg.secrets.shareLink).toBe(LINK);
@@ -253,12 +252,12 @@ describe('credential hygiene (review findings)', () => {
 	};
 
 	it('M1: an address is never stored: a typed host (a pasted link included) is ignored', async () => {
-		const db = setup();
+		const db = await setup();
 		for (const host of [HOST, LINK, `${LINK}/`, 'foo.octoeverywhere.com', '192.168.0.5']) {
-			expect(
-				() => await createPrinter(db, 'o', 'u1', { name: 'x', kind: 'elegoo-sdcp', host }),
+			await expect(
+				createPrinter(db, 'o', 'u1', { name: 'x', kind: 'elegoo-sdcp', host }),
 				host
-			).toThrow(/shared link/i);
+			).rejects.toThrow(/shared link/i);
 		}
 		expect(await db.select().from(printers)).toHaveLength(0);
 		const row = await createPrinter(db, 'o', 'u1', {
@@ -296,23 +295,22 @@ describe('credential hygiene (review findings)', () => {
 	});
 
 	it('L2: tests cannot end up dialling the placeholder', async () => {
-		const db = setup();
+		const db = await setup();
 		const row = await createPrinter(db, 'o', 'u1', {
 			name: 'Shop CC',
 			kind: 'elegoo-sdcp',
 			secrets: { shareLink: LINK }
 		});
-		expect(
-			() =>
-				await configFromInput(db, 'o', {
-					id: row.id,
-					kind: 'elegoo-sdcp',
-					secrets: { shareLink: '' }
-				})
-		).toThrow(/shared link/i);
-		expect(
-			() => await configFromInput(db, 'o', { kind: 'bambu-lan', secrets: { shareLink: LINK } })
-		).toThrow(/Unknown printer type/);
+		await expect(
+			configFromInput(db, 'o', {
+				id: row.id,
+				kind: 'elegoo-sdcp',
+				secrets: { shareLink: '' }
+			})
+		).rejects.toThrow(/shared link/i);
+		await expect(
+			configFromInput(db, 'o', { kind: 'bambu-lan', secrets: { shareLink: LINK } })
+		).rejects.toThrow(/Unknown printer type/);
 		expect(
 			(await configFromInput(db, 'o', { id: row.id, kind: 'elegoo-sdcp' })).secrets.shareLink
 		).toBe(LINK);

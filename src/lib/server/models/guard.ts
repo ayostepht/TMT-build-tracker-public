@@ -19,9 +19,7 @@ export async function assertTemplateAdmin(
 	const t = await first(
 		db.select({ id: templates.id }).from(templates).where(eq(templates.id, templateId))
 	);
-	// canManageTemplate is ported to async in the next wave; awaiting a sync value is harmless.
-	if (!t || !(await canManageTemplate(db as never, user, templateId)))
-		throw new ApiError(404, 'Not found');
+	if (!t || !(await canManageTemplate(db, user, templateId))) throw new ApiError(404, 'Not found');
 }
 
 /** Request-handler version: 401 when signed out. Returns the user id. */

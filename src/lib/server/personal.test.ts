@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { createAuth, type Auth } from './auth';
 import { ApiError } from './access';
 import { moveBuild } from './builds/actions';
 import { createBuild } from './builds/create';
-import { openDb, runMigrations, type Db } from './db';
+import { first, type Db } from './db';
+import { createTestDb, dropTestDb } from './db/testing';
 import { activity, builds, member, organization, templates, user } from './db/schema';
 import { templateSeeds } from './seed';
 import { seedTemplates } from './seed/run';
@@ -26,30 +27,31 @@ async function signUp(name: string, email: string) {
 	return { id: res.response.user.id, headers: new Headers({ cookie }) };
 }
 
-function addChapter(id: string, userId: string, role: string) {
-	db.insert(organization)
-		.values({ id, name: `Chapter ${id}`, slug: id, createdAt: new Date() })
-		.run();
-	db.insert(member)
-		.values({ id: `m-${id}-${userId}`, organizationId: id, userId, role, createdAt: new Date() })
-		.run();
+async function addChapter(id: string, userId: string, role: string) {
+	await db
+		.insert(organization)
+		.values({ id, name: `Chapter ${id}`, slug: id, createdAt: new Date() });
+	await db
+		.insert(member)
+		.values({ id: `m-${id}-${userId}`, organizationId: id, userId, role, createdAt: new Date() });
 }
 
-beforeEach(() => {
-	db = openDb(':memory:');
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
-	templateId = db.select({ id: templates.id }).from(templates).get()!.id;
+afterEach(() => dropTestDb(db));
+
+beforeEach(async () => {
+	db = await createTestDb();
+	await seedTemplates(db, templateSeeds);
+	templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
 	auth = createAuth(db);
 });
 
 describe('personal workspace', () => {
 	it('sign-up creates exactly one, owned by the user, and makes it active', async () => {
 		const u = await signUp('Pat Maker', 'pat@example.test');
-		const teams = listTeams(db, u.id);
+		const teams = await listTeams(db, u.id);
 		expect(teams).toHaveLength(1);
 		expect(teams[0]).toMatchObject({ personal: true, role: 'owner', name: "Pat Maker's builds" });
-		expect(db.select().from(organization).all()).toHaveLength(1);
+		expect(await db.select().from(organization)).toHaveLength(1);
 		const session = await auth.api.getSession({ headers: u.headers });
 		expect(session?.session.activeOrganizationId).toBe(teams[0].id);
 	});
@@ -57,23 +59,33 @@ describe('personal workspace', () => {
 	it('gets a unique slug when two users share a name', async () => {
 		await signUp('Pat', 'a@example.test');
 		await signUp('Pat', 'b@example.test');
-		const slugs = db.select({ slug: organization.slug }).from(organization).all();
+		const slugs = await db.select({ slug: organization.slug }).from(organization);
 		expect(new Set(slugs.map((s) => s.slug)).size).toBe(2);
 	});
 
-	it('is created lazily for a legacy user, once', () => {
-		db.insert(user).values({ id: 'legacy', name: 'Old Timer', email: 'old@example.test' }).run();
-		expect(findPersonalWorkspace(db, 'legacy')).toBeNull();
-		const a = ensurePersonalWorkspace(db, { id: 'legacy', name: 'Old Timer' });
-		const b = ensurePersonalWorkspace(db, { id: 'legacy', name: 'Old Timer' });
+	it('is created lazily for a legacy user, once', async () => {
+		await db.insert(user).values({ id: 'legacy', name: 'Old Timer', email: 'old@example.test' });
+		expect(await findPersonalWorkspace(db, 'legacy')).toBeNull();
+		const a = await ensurePersonalWorkspace(db, { id: 'legacy', name: 'Old Timer' });
+		const b = await ensurePersonalWorkspace(db, { id: 'legacy', name: 'Old Timer' });
 		expect(a.created).toBe(true);
 		expect(b).toEqual({ id: a.id, created: false });
-		expect(listTeams(db, 'legacy').filter((t) => t.personal)).toHaveLength(1);
+		expect((await listTeams(db, 'legacy')).filter((t) => t.personal)).toHaveLength(1);
+	});
+
+	it('concurrent ensure calls create exactly one workspace', async () => {
+		await db.insert(user).values({ id: 'racer', name: 'Racer', email: 'racer@example.test' });
+		const results = await Promise.all(
+			Array.from({ length: 5 }, () => ensurePersonalWorkspace(db, { id: 'racer', name: 'Racer' }))
+		);
+		expect(results.filter((x) => x.created)).toHaveLength(1);
+		expect(new Set(results.map((x) => x.id)).size).toBe(1);
+		expect((await listTeams(db, 'racer')).filter((t) => t.personal)).toHaveLength(1);
 	});
 
 	it('rejects invitations', async () => {
 		const u = await signUp('Pat', 'pat@example.test');
-		const personal = findPersonalWorkspace(db, u.id)!;
+		const personal = (await findPersonalWorkspace(db, u.id))!;
 		await expect(
 			auth.api.createInvitation({
 				body: { email: 'friend@example.test', role: 'viewer', organizationId: personal.id },
@@ -106,62 +118,63 @@ describe('personal workspace', () => {
 describe('moveBuild', () => {
 	async function setup() {
 		const u = await signUp('Pat', 'pat@example.test');
-		const personal = findPersonalWorkspace(db, u.id)!;
-		const buildId = createBuild(
+		const personal = (await findPersonalWorkspace(db, u.id))!;
+		const buildId = await createBuild(
 			db,
 			{ organizationId: personal.id, templateId, designId: null, name: 'Chair' },
 			u.id
 		);
 		return { u, personal, buildId };
 	}
-	const orgOf = (id: string) =>
-		db.select({ o: builds.organizationId }).from(builds).where(eq(builds.id, id)).get()!.o;
+	const orgOf = async (id: string) =>
+		(await first(db.select({ o: builds.organizationId }).from(builds).where(eq(builds.id, id))))!.o;
 
 	it('works for an owner who is editor in the target chapter, and logs it', async () => {
 		const { u, buildId } = await setup();
-		addChapter('c1', u.id, 'editor');
-		moveBuild(db, buildId, u.id, { organizationId: 'c1' });
-		expect(orgOf(buildId)).toBe('c1');
-		const row = db
-			.select()
-			.from(activity)
-			.where(and(eq(activity.buildId, buildId), eq(activity.kind, 'build.move')))
-			.get();
+		await addChapter('c1', u.id, 'editor');
+		await moveBuild(db, buildId, u.id, { organizationId: 'c1' });
+		expect(await orgOf(buildId)).toBe('c1');
+		const row = await first(
+			db
+				.select()
+				.from(activity)
+				.where(and(eq(activity.buildId, buildId), eq(activity.kind, 'build.move')))
+		);
 		expect(row?.payload).toMatchObject({ to: 'c1', toName: 'Chapter c1' });
 	});
 
 	it('rejects viewers of the target, non-members and personal targets', async () => {
 		const { u, personal, buildId } = await setup();
-		addChapter('viewer-c', u.id, 'viewer');
-		db.insert(user).values({ id: 'someone-else', name: 'S', email: 's@example.test' }).run();
-		addChapter('foreign', 'someone-else', 'owner');
-		const move = (to: string) => () => moveBuild(db, buildId, u.id, { organizationId: to });
-		expect(move('viewer-c')).toThrowError(expect.objectContaining({ status: 403 }));
-		expect(move('foreign')).toThrowError(expect.objectContaining({ status: 404 }));
-		expect(move(personal.id)).toThrow(ApiError);
-		expect(orgOf(buildId)).toBe(personal.id);
+		await addChapter('viewer-c', u.id, 'viewer');
+		await db.insert(user).values({ id: 'someone-else', name: 'S', email: 's@example.test' });
+		await addChapter('foreign', 'someone-else', 'owner');
+		const move = (to: string) => moveBuild(db, buildId, u.id, { organizationId: to });
+		await expect(move('viewer-c')).rejects.toMatchObject({ status: 403 });
+		await expect(move('foreign')).rejects.toMatchObject({ status: 404 });
+		await expect(move(personal.id)).rejects.toThrow(ApiError);
+		expect(await orgOf(buildId)).toBe(personal.id);
 	});
 
 	it('is owner-only on the source and only from a personal workspace', async () => {
 		const { u, buildId } = await setup();
 		const other = await signUp('Other', 'other@example.test');
-		addChapter('c2', other.id, 'owner');
-		expect(() => moveBuild(db, buildId, other.id, { organizationId: 'c2' })).toThrowError(
-			expect.objectContaining({ status: 404 })
-		);
+		await addChapter('c2', other.id, 'owner');
+		await expect(moveBuild(db, buildId, other.id, { organizationId: 'c2' })).rejects.toMatchObject({
+			status: 404
+		});
 		// A build already in a chapter cannot be moved between chapters.
-		addChapter('c3', u.id, 'owner');
-		moveBuild(db, buildId, u.id, { organizationId: 'c3' });
-		addChapter('c4', u.id, 'owner');
-		expect(() => moveBuild(db, buildId, u.id, { organizationId: 'c4' })).toThrow(ApiError);
+		await addChapter('c3', u.id, 'owner');
+		await moveBuild(db, buildId, u.id, { organizationId: 'c3' });
+		await addChapter('c4', u.id, 'owner');
+		await expect(moveBuild(db, buildId, u.id, { organizationId: 'c4' })).rejects.toThrow(ApiError);
 	});
 });
 
 describe('deleting a personal workspace', () => {
 	it('is refused while it holds builds', async () => {
 		const u = await signUp('Pat', 'pat@example.test');
-		const personal = findPersonalWorkspace(db, u.id)!;
-		createBuild(
+		const personal = (await findPersonalWorkspace(db, u.id))!;
+		await createBuild(
 			db,
 			{ organizationId: personal.id, templateId, designId: null, name: 'Chair' },
 			u.id
@@ -169,6 +182,6 @@ describe('deleting a personal workspace', () => {
 		await expect(
 			auth.api.deleteOrganization({ body: { organizationId: personal.id }, headers: u.headers })
 		).rejects.toThrow();
-		expect(findPersonalWorkspace(db, u.id)).not.toBeNull();
+		expect(await findPersonalWorkspace(db, u.id)).not.toBeNull();
 	});
 });

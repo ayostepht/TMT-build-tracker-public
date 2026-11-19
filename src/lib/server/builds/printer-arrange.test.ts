@@ -1,13 +1,14 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { describeActivity } from '#lib/domain/activity.ts';
 import type { BuildPrinter } from '#lib/domain/types.ts';
 import { catalogPrinter } from '#lib/printers/catalog.ts';
 import { printerFromCatalog } from '#lib/printers/printer.ts';
 import { ApiError } from '../access';
-import { openDb, runMigrations, type Db } from '../db';
+import { first, type Db } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import { buildPlates, builds, member, organization, templates, user } from '../db/schema';
 import { timeLeftText, timeStats } from '#lib/domain/accounting.ts';
 import { templateSeeds } from '../seed';
@@ -23,7 +24,8 @@ import { and, eq } from 'drizzle-orm';
 let db: Db;
 let templateId: string;
 const orgId = 'org1';
-process.env.DATABASE_URL = join(mkdtempSync(join(tmpdir(), 'tmt-arr-')), 'unused.db');
+
+afterEach(async () => dropTestDb(db));
 
 const cc = printerFromCatalog(catalogPrinter('elegoo-centauri-carbon')!, 0);
 const bed = (x: number, y = x, mmSlots = 1) => ({
@@ -35,64 +37,64 @@ const bed = (x: number, y = x, mmSlots = 1) => ({
 	mmSlots
 });
 
-beforeEach(() => {
-	db = openDb(':memory:');
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
-	templateId = db.select({ id: templates.id }).from(templates).get()!.id;
-	db.insert(organization)
-		.values({ id: orgId, name: 'Chapter', slug: 'chapter', createdAt: new Date() })
-		.run();
+beforeEach(async () => {
+	db = await createTestDb();
+	await seedTemplates(db, templateSeeds);
+	templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
+	await db
+		.insert(organization)
+		.values({ id: orgId, name: 'Chapter', slug: 'chapter', createdAt: new Date() });
 	for (const [u, role] of [
 		['owner', 'owner'],
 		['editor', 'editor'],
 		['viewer', 'viewer'],
 		['outsider', '']
 	]) {
-		db.insert(user)
-			.values({ id: u, name: `User ${u}`, email: `${u}@example.test`, createdAt: new Date() })
-			.run();
+		await db
+			.insert(user)
+			.values({ id: u, name: `User ${u}`, email: `${u}@example.test`, createdAt: new Date() });
 		if (role)
-			db.insert(member)
-				.values({ id: `m-${u}`, organizationId: orgId, userId: u, role, createdAt: new Date() })
-				.run();
+			await db
+				.insert(member)
+				.values({ id: `m-${u}`, organizationId: orgId, userId: u, role, createdAt: new Date() });
 	}
 });
 
 const mk = (printer?: BuildPrinter) =>
-	createBuild(
+	await createBuild(
 		db,
 		{ organizationId: orgId, templateId, designId: null, name: 'B', printer },
 		'owner'
 	);
-const view = (id: string) => loadBuildView(db, id, 'owner')!;
-const plateOf = (id: string, slug: string) => view(id).plates.find((p) => p.parts.includes(slug))!;
+const view = async (id: string) => (await loadBuildView(db, id, 'owner'))!;
+const plateOf = async (id: string, slug: string) =>
+	(await view(id)).plates.find((p) => p.parts.includes(slug))!;
 
 describe('setPrinter', () => {
-	it('lets editors and owners set it, not viewers or outsiders', () => {
-		const id = mk();
-		expect(view(id).printer).toBeNull();
-		setPrinter(db, id, 'editor', { printer: cc });
-		expect(view(id).printer).toMatchObject({
+	it('lets editors and owners set it, not viewers or outsiders', async () => {
+		const id = await mk();
+		expect((await view(id)).printer).toBeNull();
+		await setPrinter(db, id, 'editor', { printer: cc });
+		expect((await view(id)).printer).toMatchObject({
 			name: 'Elegoo Centauri Carbon',
 			bedX: 256,
 			margin: 1
 		});
-		expect(() => setPrinter(db, id, 'viewer', { printer: cc })).toThrow(ApiError);
+		await expect(setPrinter(db, id, 'viewer', { printer: cc })).rejects.toThrow(ApiError);
 		try {
-			setPrinter(db, id, 'viewer', { printer: cc });
+			await setPrinter(db, id, 'viewer', { printer: cc });
 		} catch (e) {
 			expect((e as ApiError).status).toBe(403);
 		}
 		try {
-			setPrinter(db, id, 'outsider', { printer: cc });
+			await setPrinter(db, id, 'outsider', { printer: cc });
 		} catch (e) {
 			expect((e as ApiError).status).toBe(404);
 		}
 	});
 
-	it('validates the input', () => {
-		const id = mk();
+	it('validates the input', async () => {
+		const id = await mk();
 		for (const bad of [
 			{ ...cc, bedX: 10 },
 			{ ...cc, bedY: 'x' },
@@ -101,61 +103,61 @@ describe('setPrinter', () => {
 			{ ...cc, mmSlots: 0 },
 			{ ...cc, margin: 500 }
 		])
-			expect(() => setPrinter(db, id, 'owner', { printer: bad })).toThrow(/./);
-		expect(() => setPrinter(db, id, 'owner', {})).toThrow(ApiError);
+			await expect(setPrinter(db, id, 'owner', { printer: bad })).rejects.toThrow(/./);
+		await expect(setPrinter(db, id, 'owner', {})).rejects.toThrow(ApiError);
 	});
 
-	it('clears with null, writes an activity row and emits an event', () => {
-		const id = mk();
+	it('clears with null, writes an activity row and emits an event', async () => {
+		const id = await mk();
 		const events = onBuildEvents(id);
-		setPrinter(db, id, 'owner', { printer: cc });
+		await setPrinter(db, id, 'owner', { printer: cc });
 		expect(events.at(-1)).toMatchObject({ type: 'changed', kind: 'build.printer' });
-		const a = view(id).activity.find((x) => x.kind === 'build.printer')!;
+		const a = (await view(id)).activity.find((x) => x.kind === 'build.printer')!;
 		expect(a.kind).toBe('build.printer');
-		expect(describeActivity(a, view(id))).toBe(
+		expect(describeActivity(a, await view(id))).toBe(
 			'User owner set the printer to Elegoo Centauri Carbon (256×256 mm bed)'
 		);
-		setPrinter(db, id, 'owner', { printer: null });
-		expect(view(id).printer).toBeNull();
+		await setPrinter(db, id, 'owner', { printer: null });
+		expect((await view(id)).printer).toBeNull();
 	});
 });
 
 describe('arrangeForPrinter', () => {
-	it('needs a printer', () => {
-		const id = mk();
-		expect(() => arrangeForPrinter(db, id, 'owner')).toThrow(/printer/i);
+	it('needs a printer', async () => {
+		const id = await mk();
+		await expect(arrangeForPrinter(db, id, 'owner')).rejects.toThrow(/printer/i);
 	});
 
-	it('is applied on creation when a printer is given', () => {
-		const id = mk(cc);
-		const v = view(id);
+	it('is applied on creation when a printer is given', async () => {
+		const id = await mk(cc);
+		const v = await view(id);
 		expect(v.plates.length).toBeGreaterThan(5);
 		expect(v.plates.every((p) => p.source === 'arranged')).toBe(true);
-		const row = db.select().from(builds).where(eq(builds.id, id)).get()!;
+		const row = (await first(db.select().from(builds).where(eq(builds.id, id))))!;
 		expect(row.plateLayout).toBe('arranged');
 		// every active part sits on exactly... at least one plate
 		for (const p of v.parts) expect(v.plates.some((pl) => pl.parts.includes(p.slug))).toBe(true);
 	});
 
-	it('permissions: viewers cannot arrange', () => {
-		const id = mk(cc);
-		expect(() => arrangeForPrinter(db, id, 'viewer')).toThrow(ApiError);
+	it('permissions: viewers cannot arrange', async () => {
+		const id = await mk(cc);
+		await expect(arrangeForPrinter(db, id, 'viewer')).rejects.toThrow(ApiError);
 	});
 
-	it('single-filament bed: PETG and TPU never share a plate, and colors stay apart', () => {
-		const id = mk(bed(256, 256, 1));
-		const v = view(id);
+	it('single-filament bed: PETG and TPU never share a plate, and colors stay apart', async () => {
+		const id = await mk(bed(256, 256, 1));
+		const v = await view(id);
 		for (const pl of v.plates) {
 			const roles = new Set(pl.parts.map((s) => v.parts.find((p) => p.slug === s)!.role));
 			expect(roles.size).toBe(1);
 		}
 	});
 
-	it('multi-material bed uses fewer plates than a single-filament bed', () => {
-		const single = view(mk(bed(350, 320, 1))).plates.length;
-		const multi = view(mk(bed(350, 320, 4))).plates.length;
+	it('multi-material bed uses fewer plates than a single-filament bed', async () => {
+		const single = (await view(await mk(bed(350, 320, 1)))).plates.length;
+		const multi = (await view(await mk(bed(350, 320, 4)))).plates.length;
 		expect(multi).toBeLessThan(single);
-		const v = view(mk(bed(350, 320, 4)));
+		const v = await view(await mk(bed(350, 320, 4)));
 		for (const pl of v.plates) {
 			const mats = new Set(
 				pl.parts.map(
@@ -166,106 +168,106 @@ describe('arrangeForPrinter', () => {
 		}
 	});
 
-	it('warns about parts that do not fit a small bed', () => {
-		const id = mk(bed(180));
-		const info = buildArrangement(db, id, 'owner');
+	it('warns about parts that do not fit a small bed', async () => {
+		const id = await mk(bed(180));
+		const info = await buildArrangement(db, id, 'owner');
 		const over = info.fresh!.warnings.filter((w) => w.code === 'oversize').map((w) => w.slug);
 		expect(over).toContain('wheel-mount-left');
 		expect(info.fresh!.warnings.find((w) => w.slug === 'footrest')?.message).toMatch(/Two pieces/);
 	});
 
-	it('moving a part to another color re-arranges automatically when no plate has logs', () => {
-		const id = mk(bed(256, 256, 1));
-		const before = plateOf(id, 'wing-left');
+	it('moving a part to another color re-arranges automatically when no plate has logs', async () => {
+		const id = await mk(bed(256, 256, 1));
+		const before = await plateOf(id, 'wing-left');
 		expect(
-			before.parts.every((s) => view(id).parts.find((p) => p.slug === s)!.role === 'accent')
+			before.parts.every((s) => (await view(id)).parts.find((p) => p.slug === s)!.role === 'accent')
 		).toBe(true);
-		updateBuildDesign(db, id, 'owner', { partRoles: { 'wing-left': 'primary' } });
-		const after = plateOf(id, 'wing-left');
+		await updateBuildDesign(db, id, 'owner', { partRoles: { 'wing-left': 'primary' } });
+		const after = await plateOf(id, 'wing-left');
 		expect(
-			after.parts.every((s) => view(id).parts.find((p) => p.slug === s)!.role === 'primary')
+			after.parts.every((s) => (await view(id)).parts.find((p) => p.slug === s)!.role === 'primary')
 		).toBe(true);
-		expect(buildArrangement(db, id, 'owner').stale).toBe(false);
+		expect((await buildArrangement(db, id, 'owner')).stale).toBe(false);
 	});
 
-	it('re-arranging keeps typed plate grams and time on a plate with the same parts, drops nothing else', () => {
-		const id = mk(bed(256, 256, 1));
-		const pl = plateOf(id, 'wing-left');
-		updatePlate(db, id, 'owner', pl.number, { slicerGrams: 123, manualEstSeconds: 3600 });
-		arrangeForPrinter(db, id, 'owner');
-		const after = view(id).plates.find((p) => p.number === pl.number)!;
+	it('re-arranging keeps typed plate grams and time on a plate with the same parts, drops nothing else', async () => {
+		const id = await mk(bed(256, 256, 1));
+		const pl = await plateOf(id, 'wing-left');
+		await updatePlate(db, id, 'owner', pl.number, { slicerGrams: 123, manualEstSeconds: 3600 });
+		await arrangeForPrinter(db, id, 'owner');
+		const after = (await view(id)).plates.find((p) => p.number === pl.number)!;
 		expect(after.parts).toEqual(pl.parts);
 		expect(after).toMatchObject({ slicerGrams: 123, gramsSource: 'user', estSeconds: 3600 });
 		// other plates carry nothing
-		for (const o of view(id).plates.filter((p) => p.number !== pl.number))
+		for (const o of (await view(id)).plates.filter((p) => p.number !== pl.number))
 			expect(o.slicerGrams).toBeNull();
 		// a plate whose parts changed does not keep the number
-		updateBuildDesign(db, id, 'owner', { partRoles: { 'wing-left': 'primary' } });
-		const moved = plateOf(id, 'wing-left');
+		await updateBuildDesign(db, id, 'owner', { partRoles: { 'wing-left': 'primary' } });
+		const moved = await plateOf(id, 'wing-left');
 		if (moved.parts.join() !== pl.parts.join()) expect(moved.slicerGrams).toBeNull();
 	});
 
-	it('changing the printer or a variant re-arranges too', () => {
-		const id = mk(bed(350, 320, 1));
-		const n1 = view(id).plates.length;
-		setPrinter(db, id, 'owner', { printer: bed(350, 320, 4) });
-		expect(view(id).plates.length).toBeLessThan(n1);
-		setVariant(db, id, 'owner', { group: 'footrest', option: 'two-piece' });
-		expect(view(id).plates.some((p) => p.parts.includes('footrest-front'))).toBe(true);
-		expect(view(id).plates.some((p) => p.parts.includes('footrest'))).toBe(false);
+	it('changing the printer or a variant re-arranges too', async () => {
+		const id = await mk(bed(350, 320, 1));
+		const n1 = (await view(id)).plates.length;
+		await setPrinter(db, id, 'owner', { printer: bed(350, 320, 4) });
+		expect((await view(id)).plates.length).toBeLessThan(n1);
+		await setVariant(db, id, 'owner', { group: 'footrest', option: 'two-piece' });
+		expect((await view(id)).plates.some((p) => p.parts.includes('footrest-front'))).toBe(true);
+		expect((await view(id)).plates.some((p) => p.parts.includes('footrest'))).toBe(false);
 	});
 
-	it('with plate print logs it leaves plates alone, reports stale, and asks before converting', () => {
-		const id = mk(bed(256, 256, 1));
-		const first = view(id).plates[0];
-		addRun(db, id, 'owner', {
+	it('with plate print logs it leaves plates alone, reports stale, and asks before converting', async () => {
+		const id = await mk(bed(256, 256, 1));
+		const first = (await view(id)).plates[0];
+		await addRun(db, id, 'owner', {
 			date: '2026-03-01',
 			result: 'Success',
 			plateNumber: first.number,
 			grams: 100
 		});
-		const platesBefore = JSON.stringify(view(id).plates);
-		updateBuildDesign(db, id, 'owner', { partRoles: { 'wing-left': 'primary' } });
-		expect(JSON.stringify(view(id).plates)).toBe(platesBefore);
-		const info = buildArrangement(db, id, 'owner');
+		const platesBefore = JSON.stringify((await view(id)).plates);
+		await updateBuildDesign(db, id, 'owner', { partRoles: { 'wing-left': 'primary' } });
+		expect(JSON.stringify((await view(id)).plates)).toBe(platesBefore);
+		const info = await buildArrangement(db, id, 'owner');
 		expect(info.stale).toBe(true);
 		expect(info.hasPlateRuns).toBe(true);
 		try {
-			arrangeForPrinter(db, id, 'owner');
+			await arrangeForPrinter(db, id, 'owner');
 			expect.unreachable();
 		} catch (e) {
 			expect((e as ApiError).status).toBe(409);
 		}
-		const res = arrangeForPrinter(db, id, 'owner', { convertRuns: true });
+		const res = await arrangeForPrinter(db, id, 'owner', { convertRuns: true });
 		expect(res.convertedRuns).toBe(1);
-		expect(view(id).runs.every((r) => r.plateNumber === null)).toBe(true);
-		expect(buildArrangement(db, id, 'owner').stale).toBe(false);
+		expect((await view(id)).runs.every((r) => r.plateNumber === null)).toBe(true);
+		expect((await buildArrangement(db, id, 'owner')).stale).toBe(false);
 	});
 
-	it('a null item in a stored arrangement does not throw and marks it stale only by content', () => {
-		const id = mk(bed(256, 256, 1));
-		const row = db.select().from(buildPlates).where(eq(buildPlates.buildId, id)).all()[0];
+	it('a null item in a stored arrangement does not throw and marks it stale only by content', async () => {
+		const id = await mk(bed(256, 256, 1));
+		const row = (await db.select().from(buildPlates).where(eq(buildPlates.buildId, id)))[0];
 		expect(row.arrangement).toBeTruthy();
 		const bad = { ...row.arrangement!, items: [null, ...row.arrangement!.items] } as never;
-		db.update(buildPlates)
+		await db
+			.update(buildPlates)
 			.set({ arrangement: bad })
-			.where(and(eq(buildPlates.buildId, id), eq(buildPlates.number, row.number)))
-			.run();
-		expect(() => buildArrangement(db, id, 'owner')).not.toThrow();
+			.where(and(eq(buildPlates.buildId, id), eq(buildPlates.number, row.number)));
+		expect(() => await buildArrangement(db, id, 'owner')).not.toThrow();
 	});
 
-	it('leaves other layouts alone when the printer changes', () => {
-		const id = mk();
-		setPlateLayout(db, id, 'owner', { key: 'h2d' });
-		const before = JSON.stringify(view(id).plates);
-		setPrinter(db, id, 'owner', { printer: cc });
-		expect(JSON.stringify(view(id).plates)).toBe(before);
+	it('leaves other layouts alone when the printer changes', async () => {
+		const id = await mk();
+		await setPlateLayout(db, id, 'owner', { key: 'h2d' });
+		const before = JSON.stringify((await view(id)).plates);
+		await setPrinter(db, id, 'owner', { printer: cc });
+		expect(JSON.stringify((await view(id)).plates)).toBe(before);
 	});
 
-	it('stores positions that fit the bed', () => {
-		const id = mk(bed(256, 256, 4));
-		const info = buildArrangement(db, id, 'owner');
-		expect(info.plates.length).toBe(view(id).plates.length);
+	it('stores positions that fit the bed', async () => {
+		const id = await mk(bed(256, 256, 4));
+		const info = await buildArrangement(db, id, 'owner');
+		expect(info.plates.length).toBe((await view(id)).plates.length);
 		for (const pl of info.plates)
 			if (!pl.oversize)
 				for (const i of pl.items) {
@@ -277,9 +279,9 @@ describe('arrangeForPrinter', () => {
 });
 
 describe('print time estimates on arranged plates', () => {
-	it('arranged plates get a time estimate marked as such, and the build has a total', () => {
-		const id = mk(cc);
-		const v = view(id);
+	it('arranged plates get a time estimate marked as such, and the build has a total', async () => {
+		const id = await mk(cc);
+		const v = await view(id);
 		expect(v.plates.every((p) => p.estSource === 'estimate' && (p.estSeconds ?? 0) > 0)).toBe(true);
 		const t = timeStats(v);
 		expect(t.known).toBe(true);
@@ -289,21 +291,21 @@ describe('print time estimates on arranged plates', () => {
 		expect(timeLeftText(t).kind).toBe('estimate');
 	});
 
-	it('computes the estimate in the loader when the stored plate has none', () => {
-		const id = mk(cc);
-		db.update(buildPlates).set({ estSeconds: null }).where(eq(buildPlates.buildId, id)).run();
-		expect(view(id).plates.every((p) => (p.estSeconds ?? 0) > 0)).toBe(true);
+	it('computes the estimate in the loader when the stored plate has none', async () => {
+		const id = await mk(cc);
+		await db.update(buildPlates).set({ estSeconds: null }).where(eq(buildPlates.buildId, id));
+		expect((await view(id)).plates.every((p) => (p.estSeconds ?? 0) > 0)).toBe(true);
 	});
 
-	it('stores the estimate when arranging', () => {
-		const id = mk(cc);
-		const rows = db.select().from(buildPlates).where(eq(buildPlates.buildId, id)).all();
+	it('stores the estimate when arranging', async () => {
+		const id = await mk(cc);
+		const rows = await db.select().from(buildPlates).where(eq(buildPlates.buildId, id));
 		expect(rows.every((r) => (r.estSeconds ?? 0) > 0)).toBe(true);
 	});
 
-	it('keeps MakeGood profile times on a plain X/P/A layout', () => {
-		const id = mk();
-		const p = view(id).plates[0];
+	it('keeps MakeGood profile times on a plain X/P/A layout', async () => {
+		const id = await mk();
+		const p = (await view(id)).plates[0];
 		expect(p.estSource).toBe('profile');
 	});
 });

@@ -8,7 +8,8 @@ import { ApiError } from './access';
 import { decideNewUser } from './auth-policy';
 import { deleteAccount, exportAccountData, planAccountDeletion } from './account';
 import { createBuild } from './builds/create';
-import { openDb, runMigrations, type Db } from './db';
+import { first, type Db } from './db';
+import { createTestDb, dropTestDb } from './db/testing';
 import {
 	account,
 	activity,
@@ -32,18 +33,20 @@ let auth: Auth;
 let dir: string;
 let templateId: string;
 
-beforeEach(() => {
+beforeEach(async () => {
 	dir = mkdtempSync(join(tmpdir(), 'tmt-account-'));
-	vi.stubEnv('DATABASE_URL', join(dir, 'tmt.db'));
+	vi.stubEnv('DATA_DIR', dir);
 	vi.stubEnv('BETTER_AUTH_SECRET', 'a'.repeat(40));
 	for (const k of ['TMT_MODE', 'PUBLIC_URL', 'ADMIN_EMAILS', 'SIGNUP']) vi.stubEnv(k, '');
-	db = openDb(':memory:');
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
-	templateId = db.select({ id: templates.id }).from(templates).get()!.id;
+	db = await createTestDb();
+	await seedTemplates(db, templateSeeds);
+	templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
 	auth = createAuth(db);
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(async () => {
+	vi.unstubAllEnvs();
+	await dropTestDb(db);
+});
 
 async function signUp(name: string, email: string) {
 	const res = await auth.api.signUpEmail({
@@ -81,7 +84,7 @@ describe('organization quotas through the plugin endpoints', () => {
 		expect(body.message).toContain('You already created 1 chapter');
 		expect(body.code).toBe('QUOTA');
 		expect(
-			db.select().from(organization).where(eq(organization.slug, 'two')).get()
+			await first(db.select().from(organization).where(eq(organization.slug, 'two')))
 		).toBeUndefined();
 	});
 
@@ -98,7 +101,7 @@ describe('organization quotas through the plugin endpoints', () => {
 		const guest = await signUp('Guest', 'guest@example.test');
 		await post('/organization/create', owner.cookie, { name: 'C1', slug: 'c1' });
 		await post('/organization/create', guest.cookie, { name: 'G1', slug: 'g1' });
-		const org = db.select().from(organization).where(eq(organization.slug, 'c1')).get()!;
+		const org = (await first(db.select().from(organization).where(eq(organization.slug, 'c1'))))!;
 		const inv = await post('/organization/invite-member', owner.cookie, {
 			email: 'guest@example.test',
 			role: 'viewer',
@@ -112,7 +115,7 @@ describe('organization quotas through the plugin endpoints', () => {
 		expect(((await acc.json()) as { message: string }).message).toContain(
 			'already belong to 1 chapter'
 		);
-		expect(db.select().from(member).where(eq(member.organizationId, org.id)).all()).toHaveLength(1);
+		expect(await db.select().from(member).where(eq(member.organizationId, org.id))).toHaveLength(1);
 		const c2 = await post('/organization/create', guest.cookie, { name: 'G2', slug: 'g2' });
 		expect(c2.status).toBe(409);
 	});
@@ -122,7 +125,7 @@ describe('organization quotas through the plugin endpoints', () => {
 		const owner = await signUp('Owner', 'owner@example.test');
 		const guest = await signUp('Guest', 'guest@example.test');
 		await post('/organization/create', owner.cookie, { name: 'C1', slug: 'c1' });
-		const org = db.select().from(organization).where(eq(organization.slug, 'c1')).get()!;
+		const org = (await first(db.select().from(organization).where(eq(organization.slug, 'c1'))))!;
 		vi.stubEnv('QUOTA_PENDING_INVITES_PER_CHAPTER', '1');
 		const invite = (email: string) =>
 			post('/organization/invite-member', owner.cookie, {
@@ -219,20 +222,18 @@ function writeUpload(rel: string) {
 }
 
 function addChapter(id: string, members: [string, string][]) {
-	db.insert(organization)
-		.values({ id, name: `Chapter ${id}`, slug: id, createdAt: new Date() })
-		.run();
-	members.forEach(([userId, role], i) =>
-		db
-			.insert(member)
-			.values({
+	await db
+		.insert(organization)
+		.values({ id, name: `Chapter ${id}`, slug: id, createdAt: new Date() });
+	members.forEach(
+		([userId, role], i) =>
+			await db.insert(member).values({
 				id: `m-${id}-${userId}`,
 				organizationId: id,
 				userId,
 				role,
 				createdAt: new Date(1000 + i)
 			})
-			.run()
 	);
 }
 
@@ -247,7 +248,7 @@ function addBuild(orgId: string, userId: string, kind: 'build' | 'draft' = 'buil
 function addPhotoRow(buildId: string, userId: string) {
 	const rel = `photos/${buildId}/p.webp`;
 	const abs = writeUpload(rel);
-	db.insert(buildPhotos).values({ buildId, kind: 'progress', path: rel, createdBy: userId }).run();
+	await db.insert(buildPhotos).values({ buildId, kind: 'progress', path: rel, createdBy: userId });
 	return abs;
 }
 
@@ -268,64 +269,64 @@ describe('deleteAccount', () => {
 		const sharedPhoto = addPhotoRow(shared, pat.id);
 		const chapterDraft = addBuild('c1', pat.id, 'draft');
 		// a design with a preview
-		const [dsg] = db
+		const [dsg] = await db
 			.insert(colorDesigns)
 			.values({ templateId, slug: 'd-pat', name: 'D', authorUserId: pat.id })
-			.returning({ id: colorDesigns.id })
-			.all();
+			.returning({ id: colorDesigns.id });
 		const designPng = writeUpload(`designs/${dsg.id}.png`);
-		db.insert(verification)
-			.values({
-				id: 'v1',
-				identifier: 'pat@example.test',
-				value: 'x',
-				expiresAt: new Date(Date.now() + 1e6)
-			})
-			.run();
-		db.insert(invitation)
-			.values({
-				id: 'i1',
-				organizationId: 'c1',
-				email: 'someone@example.test',
-				status: 'pending',
-				expiresAt: new Date(Date.now() + 1e6),
-				inviterId: pat.id
-			})
-			.run();
-		const act = db.select().from(activity).where(eq(activity.buildId, shared)).all();
+		await db.insert(verification).values({
+			id: 'v1',
+			identifier: 'pat@example.test',
+			value: 'x',
+			expiresAt: new Date(Date.now() + 1e6)
+		});
+		await db.insert(invitation).values({
+			id: 'i1',
+			organizationId: 'c1',
+			email: 'someone@example.test',
+			status: 'pending',
+			expiresAt: new Date(Date.now() + 1e6),
+			inviterId: pat.id
+		});
+		const act = await db.select().from(activity).where(eq(activity.buildId, shared));
 		void act;
 
 		const res = await deleteAccount(db, pat.id);
 		expect(res.leftChapters).toEqual(['Chapter c1']);
-		expect(db.select().from(user).where(eq(user.id, pat.id)).get()).toBeUndefined();
+		expect(await first(db.select().from(user).where(eq(user.id, pat.id)))).toBeUndefined();
 		expect(
-			db.select().from(organization).where(eq(organization.id, personal.id)).get()
+			await first(db.select().from(organization).where(eq(organization.id, personal.id)))
 		).toBeUndefined();
-		expect(db.select().from(builds).where(eq(builds.id, mine)).get()).toBeUndefined();
-		expect(db.select().from(builds).where(eq(builds.id, myDraft)).get()).toBeUndefined();
-		expect(db.select().from(builds).where(eq(builds.id, chapterDraft)).get()).toBeUndefined();
-		const kept = db.select().from(builds).where(eq(builds.id, shared)).get()!;
+		expect(await first(db.select().from(builds).where(eq(builds.id, mine)))).toBeUndefined();
+		expect(await first(db.select().from(builds).where(eq(builds.id, myDraft)))).toBeUndefined();
+		expect(
+			await first(db.select().from(builds).where(eq(builds.id, chapterDraft)))
+		).toBeUndefined();
+		const kept = (await first(db.select().from(builds).where(eq(builds.id, shared))))!;
 		expect(kept.createdBy).toBe(lee.id);
 		expect(existsSync(photo)).toBe(false);
 		expect(existsSync(sharedPhoto)).toBe(true);
 		expect(existsSync(designPng)).toBe(false);
-		expect(db.select().from(colorDesigns).where(eq(colorDesigns.id, dsg.id)).get()).toBeUndefined();
-		expect(db.select().from(session).where(eq(session.userId, pat.id)).all()).toHaveLength(0);
-		expect(db.select().from(account).where(eq(account.userId, pat.id)).all()).toHaveLength(0);
-		expect(db.select().from(verification).all()).toHaveLength(0);
-		expect(db.select().from(invitation).where(eq(invitation.id, 'i1')).get()).toBeUndefined();
 		expect(
-			db
+			await first(db.select().from(colorDesigns).where(eq(colorDesigns.id, dsg.id)))
+		).toBeUndefined();
+		expect(await db.select().from(session).where(eq(session.userId, pat.id))).toHaveLength(0);
+		expect(await db.select().from(account).where(eq(account.userId, pat.id))).toHaveLength(0);
+		expect(await db.select().from(verification)).toHaveLength(0);
+		expect(
+			await first(db.select().from(invitation).where(eq(invitation.id, 'i1')))
+		).toBeUndefined();
+		expect(
+			await db
 				.select()
 				.from(member)
 				.where(and(eq(member.userId, pat.id)))
-				.all()
 		).toHaveLength(0);
 		// others untouched
-		expect(db.select().from(user).where(eq(user.id, lee.id)).get()).toBeTruthy();
+		expect(await first(db.select().from(user).where(eq(user.id, lee.id)))).toBeTruthy();
 		expect(findPersonalWorkspace(db, lee.id)).toBeTruthy();
 		// the activity left in the chapter no longer names anyone
-		for (const a of db.select().from(activity).where(eq(activity.buildId, shared)).all())
+		for (const a of await db.select().from(activity).where(eq(activity.buildId, shared)))
 			expect(a.userId).toBeNull();
 	});
 
@@ -337,17 +338,17 @@ describe('deleteAccount', () => {
 			[pat.id, 'owner'],
 			[lee.id, 'viewer']
 		]);
-		const before = db.select().from(user).all().length;
+		const before = (await db.select().from(user)).length;
 		await expect(deleteAccount(db, pat.id)).rejects.toThrow(
 			'Make someone else an owner of Chapter c1 first'
 		);
-		expect(db.select().from(user).all()).toHaveLength(before);
+		expect(await db.select().from(user)).toHaveLength(before);
 		expect(planAccountDeletion(db, pat.id).find((f) => f.orgId === 'c1')?.fate).toBe('blocked');
 		// once someone else owns it, it goes through
-		db.update(member)
+		await db
+			.update(member)
 			.set({ role: 'owner' })
-			.where(eq(member.id, `m-c1-${lee.id}`))
-			.run();
+			.where(eq(member.id, `m-c1-${lee.id}`));
 		await expect(deleteAccount(db, pat.id)).resolves.toBeTruthy();
 	});
 
@@ -359,7 +360,9 @@ describe('deleteAccount', () => {
 		const photo = addPhotoRow(b, pat.id);
 		const res = await deleteAccount(db, pat.id);
 		expect(res.deletedWorkspaces).toContain('Chapter solo');
-		expect(db.select().from(organization).where(eq(organization.id, 'solo')).get()).toBeUndefined();
+		expect(
+			await first(db.select().from(organization).where(eq(organization.id, 'solo')))
+		).toBeUndefined();
 		expect(existsSync(photo)).toBe(false);
 		expect(existsSync(join(dir, 'uploads', 'photos', b))).toBe(false);
 	});
@@ -372,16 +375,14 @@ describe('deleteAccount', () => {
 describe('kit copies used from another workspace', () => {
 	function copyFor(orgId: string) {
 		const id = `copy-${orgId}`;
-		db.insert(templates)
-			.values({
-				id,
-				slug: id,
-				name: 'Copy',
-				version: '1',
-				ownerOrgId: orgId,
-				baseTemplateId: templateId
-			} as never)
-			.run();
+		await db.insert(templates).values({
+			id,
+			slug: id,
+			name: 'Copy',
+			version: '1',
+			ownerOrgId: orgId,
+			baseTemplateId: templateId
+		} as never);
 		return id;
 	}
 
@@ -396,11 +397,11 @@ describe('kit copies used from another workspace', () => {
 		]);
 		const copy = copyFor(personal.id);
 		const b = addBuild('c1', pat.id);
-		db.update(builds).set({ templateId: copy }).where(eq(builds.id, b)).run();
+		await db.update(builds).set({ templateId: copy }).where(eq(builds.id, b));
 		await expect(deleteAccount(db, pat.id)).resolves.toBeTruthy();
-		const row = db.select().from(builds).where(eq(builds.id, b)).get()!;
+		const row = (await first(db.select().from(builds).where(eq(builds.id, b))))!;
 		expect(row.templateId).toBe(templateId);
-		expect(db.select().from(templates).where(eq(templates.id, copy)).get()).toBeUndefined();
+		expect(await first(db.select().from(templates).where(eq(templates.id, copy)))).toBeUndefined();
 	});
 
 	it('chapter deletion likewise re-points builds elsewhere', async () => {
@@ -411,26 +412,26 @@ describe('kit copies used from another workspace', () => {
 		const copy = copyFor(org.id);
 		const personal = findPersonalWorkspace(db, owner.id)!;
 		const b = addBuild(personal.id, owner.id);
-		db.update(builds).set({ templateId: copy }).where(eq(builds.id, b)).run();
+		await db.update(builds).set({ templateId: copy }).where(eq(builds.id, b));
 		const del = await post('/organization/delete', owner.cookie, { organizationId: org.id });
 		expect(del.status).toBe(200);
-		expect(db.select().from(builds).where(eq(builds.id, b)).get()!.templateId).toBe(templateId);
+		expect((await first(db.select().from(builds).where(eq(builds.id, b))))!.templateId).toBe(
+			templateId
+		);
 	});
 });
 
 describe('deleteOwnedTemplates scope', () => {
 	function copy(orgId: string, base: string | null) {
 		const id = `c-${orgId}`;
-		db.insert(templates)
-			.values({
-				id,
-				slug: id,
-				name: 'Copy',
-				version: '1',
-				ownerOrgId: orgId,
-				baseTemplateId: base
-			} as never)
-			.run();
+		await db.insert(templates).values({
+			id,
+			slug: id,
+			name: 'Copy',
+			version: '1',
+			ownerOrgId: orgId,
+			baseTemplateId: base
+		} as never);
 		return id;
 	}
 
@@ -440,10 +441,10 @@ describe('deleteOwnedTemplates scope', () => {
 		const personal = findPersonalWorkspace(db, pat.id)!;
 		const c = copy(personal.id, templateId);
 		const b = addBuild(personal.id, pat.id);
-		db.update(builds).set({ templateId: c }).where(eq(builds.id, b)).run();
+		await db.update(builds).set({ templateId: c }).where(eq(builds.id, b));
 		await expect(deleteAccount(db, pat.id)).resolves.toBeTruthy();
-		expect(db.select().from(builds).where(eq(builds.id, b)).get()).toBeUndefined();
-		expect(db.select().from(templates).where(eq(templates.id, c)).get()).toBeUndefined();
+		expect(await first(db.select().from(builds).where(eq(builds.id, b)))).toBeUndefined();
+		expect(await first(db.select().from(templates).where(eq(templates.id, c)))).toBeUndefined();
 	});
 
 	it('keeps a surviving chapter build on a copy with a null base, on the built-in kit', async () => {
@@ -457,10 +458,12 @@ describe('deleteOwnedTemplates scope', () => {
 		]);
 		const c = copy(personal.id, null);
 		const b = addBuild('c1', lee.id);
-		db.update(builds).set({ templateId: c }).where(eq(builds.id, b)).run();
+		await db.update(builds).set({ templateId: c }).where(eq(builds.id, b));
 		await expect(deleteAccount(db, pat.id)).resolves.toBeTruthy();
-		expect(db.select().from(builds).where(eq(builds.id, b)).get()!.templateId).toBe(templateId);
-		expect(db.select().from(templates).where(eq(templates.id, c)).get()).toBeUndefined();
+		expect((await first(db.select().from(builds).where(eq(builds.id, b))))!.templateId).toBe(
+			templateId
+		);
+		expect(await first(db.select().from(templates).where(eq(templates.id, c)))).toBeUndefined();
 	});
 
 	it('refuses with 409 and deletes nothing when no built-in kit can take the build', async () => {
@@ -474,12 +477,12 @@ describe('deleteOwnedTemplates scope', () => {
 		]);
 		const c = copy(personal.id, null);
 		const b = addBuild('c1', lee.id);
-		db.update(builds).set({ templateId: c }).where(eq(builds.id, b)).run();
+		await db.update(builds).set({ templateId: c }).where(eq(builds.id, b));
 		// Make every other template a copy so none is global.
-		db.update(templates).set({ ownerOrgId: 'c1' }).where(eq(templates.id, templateId)).run();
+		await db.update(templates).set({ ownerOrgId: 'c1' }).where(eq(templates.id, templateId));
 		await expect(deleteAccount(db, pat.id)).rejects.toMatchObject({ status: 409 });
-		expect(db.select().from(builds).where(eq(builds.id, b)).get()!.templateId).toBe(c);
-		expect(db.select().from(user).where(eq(user.id, pat.id)).get()).toBeTruthy();
+		expect((await first(db.select().from(builds).where(eq(builds.id, b))))!.templateId).toBe(c);
+		expect(await first(db.select().from(user).where(eq(user.id, pat.id)))).toBeTruthy();
 	});
 });
 
@@ -488,22 +491,19 @@ describe('pruneOldInvitations', () => {
 		await signUp('Admin', 'admin@example.test');
 		const owner = await signUp('Owner', 'owner@example.test');
 		await post('/organization/create', owner.cookie, { name: 'C1', slug: 'c1' });
-		const org = db.select().from(organization).where(eq(organization.slug, 'c1')).get()!;
+		const org = (await first(db.select().from(organization).where(eq(organization.slug, 'c1'))))!;
 		const far = new Date(Date.now() + 86_400_000);
 		const mk = (i: number, status: string) =>
-			db
-				.insert(invitation)
-				.values({
-					id: `inv-${status}-${i}`,
-					organizationId: org.id,
-					email: `x${i}@example.test`,
-					role: 'viewer',
-					status,
-					expiresAt: far,
-					createdAt: new Date(1000 + i),
-					inviterId: owner.id
-				})
-				.run();
+			await db.insert(invitation).values({
+				id: `inv-${status}-${i}`,
+				organizationId: org.id,
+				email: `x${i}@example.test`,
+				role: 'viewer',
+				status,
+				expiresAt: far,
+				createdAt: new Date(1000 + i),
+				inviterId: owner.id
+			});
 		for (let i = 0; i < 60; i++) mk(i, 'canceled');
 		mk(100, 'accepted');
 		mk(101, 'pending');
@@ -513,7 +513,7 @@ describe('pruneOldInvitations', () => {
 			organizationId: org.id
 		});
 		expect(r.status).toBe(200);
-		const rows = db.select().from(invitation).where(eq(invitation.organizationId, org.id)).all();
+		const rows = await db.select().from(invitation).where(eq(invitation.organizationId, org.id));
 		expect(rows.filter((x) => x.status === 'canceled')).toHaveLength(50);
 		expect(rows.some((x) => x.id === 'inv-canceled-0')).toBe(false);
 		expect(rows.some((x) => x.id === 'inv-canceled-59')).toBe(true);
@@ -532,7 +532,7 @@ describe('chapter deletion removes files (plugin endpoint)', () => {
 		const photo = addPhotoRow(b, owner.id);
 		const del = await post('/organization/delete', owner.cookie, { organizationId: org.id });
 		expect(del.status).toBe(200);
-		expect(db.select().from(builds).where(eq(builds.id, b)).get()).toBeUndefined();
+		expect(await first(db.select().from(builds).where(eq(builds.id, b)))).toBeUndefined();
 		expect(existsSync(photo)).toBe(false);
 	});
 });
@@ -568,7 +568,7 @@ describe('last site admin', () => {
 			status: 409,
 			code: 'last_admin'
 		});
-		expect(db.select().from(user).where(eq(user.id, admin.id)).get()).toBeTruthy();
+		expect(await first(db.select().from(user).where(eq(user.id, admin.id)))).toBeTruthy();
 	});
 
 	it('lets them go once another account is a site admin (ADMIN_EMAILS)', async () => {
@@ -587,10 +587,9 @@ describe('last site admin', () => {
 		vi.stubEnv('TMT_MODE', 'public');
 		vi.stubEnv('ADMIN_EMAILS', 'boss@example.test, real@example.test');
 		const mk = (id: string, verified: boolean) =>
-			db
+			await db
 				.insert(user)
-				.values({ id, name: id, email: `${id}@example.test`, emailVerified: verified })
-				.run();
+				.values({ id, name: id, email: `${id}@example.test`, emailVerified: verified });
 		mk('boss', false);
 		mk('real', true);
 		mk('pat', true);

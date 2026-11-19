@@ -245,7 +245,7 @@ describe('camera source (through an OctoEverywhere link)', () => {
 
 describe('camera settings on a saved printer', async () => {
 	const LINK = 'https://shared-testtoken12345678.octoeverywhere.com';
-	async function setup() {
+	async function await setup() {
 		const db = await createTestDb();
 		await db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' });
 		await db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() });
@@ -253,7 +253,7 @@ describe('camera settings on a saved printer', async () => {
 	}
 	const base = { name: 'P', kind: 'elegoo-sdcp', secrets: { shareLink: LINK } };
 	it('a custom camera address is never stored, on create or edit', async () => {
-		const db = setup();
+		const db = await setup();
 		const row = await createPrinter(db, 'o', 'u1', {
 			...base,
 			cameraUrl: 'http://10.0.0.5:8080/s'
@@ -267,7 +267,7 @@ describe('camera settings on a saved printer', async () => {
 		expect(view).not.toContain('10.0.0.5');
 	});
 	it('the camera can be switched off; a manual printer has none', async () => {
-		const db = setup();
+		const db = await setup();
 		const row = await createPrinter(db, 'o', 'u1', { ...base });
 		expect(toPublic(row).cameraEnabled).toBe(true);
 		expect((await updatePrinter(db, row.id, 'o', { cameraEnabled: false })).cameraEnabled).toBe(

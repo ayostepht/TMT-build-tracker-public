@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { count, eq } from 'drizzle-orm';
 import { describeActivity } from '#lib/domain/activity.ts';
 import { ApiError, isSiteAdmin, requireSiteAdmin } from '../access';
-import { openDb, runMigrations, type Db } from '../db';
+import { first, type Db } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import {
 	activity,
 	buildParts,
@@ -29,35 +30,32 @@ let db: Db;
 let templateId: string;
 const orgId = 'org1';
 
-function addUser(id: string, createdAt = new Date()) {
-	db.insert(user)
-		.values({ id, name: `User ${id}`, email: `${id}@Example.test`, createdAt })
-		.run();
+async function addUser(id: string, createdAt = new Date()) {
+	await db.insert(user).values({ id, name: `User ${id}`, email: `${id}@Example.test`, createdAt });
 }
 
-beforeEach(() => {
-	db = openDb(':memory:');
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
-	templateId = db.select({ id: templates.id }).from(templates).get()!.id;
-	db.insert(organization)
-		.values({ id: orgId, name: 'Chapter', slug: 'chapter', createdAt: new Date() })
-		.run();
+beforeEach(async () => {
+	db = await createTestDb();
+	await seedTemplates(db, templateSeeds);
+	templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
+	await db
+		.insert(organization)
+		.values({ id: orgId, name: 'Chapter', slug: 'chapter', createdAt: new Date() });
 	for (const [u, role] of [
 		['owner', 'owner'],
 		['editor', 'editor'],
 		['viewer', 'viewer']
 	]) {
-		addUser(u);
-		db.insert(member)
-			.values({ id: `m-${u}`, organizationId: orgId, userId: u, role, createdAt: new Date() })
-			.run();
+		await addUser(u);
+		await db
+			.insert(member)
+			.values({ id: `m-${u}`, organizationId: orgId, userId: u, role, createdAt: new Date() });
 	}
-	addUser('outsider');
+	await addUser('outsider');
 });
 
-const mk = (variantChoices?: Record<string, string>) =>
-	createBuild(
+const mk = async (variantChoices?: Record<string, string>) =>
+	await createBuild(
 		db,
 		{ organizationId: orgId, templateId, designId: null, name: 'B', variantChoices },
 		'owner'
@@ -82,10 +80,10 @@ describe('seed reconcile', () => {
 		};
 	}
 
-	it('adds new parts, groups and placements to an already seeded DB without touching builds', () => {
+	it('adds new parts, groups and placements to an already seeded DB without touching builds', async () => {
 		const old = openDb(':memory:');
 		runMigrations(old);
-		seedTemplates(old, [oldSeed()]);
+		await seedTemplates(old, [oldSeed()]);
 		const tid = old.select({ id: templates.id }).from(templates).get()!.id;
 		old
 			.insert(organization)
@@ -96,17 +94,17 @@ describe('seed reconcile', () => {
 			.insert(member)
 			.values({ id: 'm', organizationId: orgId, userId: 'o', role: 'owner', createdAt: new Date() })
 			.run();
-		const bid = createBuild(
+		const bid = await createBuild(
 			old,
 			{ organizationId: orgId, templateId: tid, designId: null, name: 'B' },
 			'o'
 		);
-		setPartStatus(old, bid, 'o', 'cushion-top', { status: 'Printed' });
+		await setPartStatus(old, bid, 'o', 'cushion-top', { status: 'Printed' });
 		const buildsBefore = JSON.stringify(old.select().from(builds).all());
 		const rowsBefore = old.select({ n: count() }).from(buildParts).get()!.n;
 		expect(rowsBefore).toBe(33);
 
-		const first = seedTemplates(old, templateSeeds);
+		const first = await seedTemplates(old, templateSeeds);
 		expect(first).toEqual({ inserted: [], updated: [tmt.slug] });
 		expect(old.select({ n: count() }).from(templateParts).get()!.n).toBe(tmt.parts.length);
 		expect(old.select({ n: count() }).from(templatePartPlacements).get()!.n).toBe(tmt.parts.length);
@@ -118,19 +116,19 @@ describe('seed reconcile', () => {
 		expect(old.select({ n: count() }).from(buildParts).get()!.n).toBe(rowsBefore);
 
 		// idempotent
-		expect(seedTemplates(old, templateSeeds)).toEqual({ inserted: [], updated: [] });
+		expect(await seedTemplates(old, templateSeeds)).toEqual({ inserted: [], updated: [] });
 
 		// backfill adds the new rows lazily, once, and keeps progress
-		expect(backfillBuildParts(old)).toBe(tmt.parts.length - 33);
-		expect(backfillBuildParts(old)).toBe(0);
-		const v = loadBuildView(old, bid, 'o')!;
+		expect(await backfillBuildParts(old)).toBe(tmt.parts.length - 33);
+		expect(await backfillBuildParts(old)).toBe(0);
+		const v = (await loadBuildView(old, bid, 'o'))!;
 		expect(v.parts).toHaveLength(33);
 		expect(v.allParts).toHaveLength(tmt.parts.length);
 		expect(v.state['cushion-top'].status).toBe('Printed');
 	});
 
-	it('counts placed and unplaced parts', () => {
-		const rows = db.select().from(templatePartPlacements).all();
+	it('counts placed and unplaced parts', async () => {
+		const rows = await db.select().from(templatePartPlacements);
 		const placed = tmt.placements!.filter((p) => p.placed).length;
 		expect(rows.filter((r) => r.placed)).toHaveLength(placed);
 		expect(rows.filter((r) => !r.placed)).toHaveLength(tmt.parts.length - placed);
@@ -147,12 +145,12 @@ describe('seed reconcile', () => {
 });
 
 describe('variants in the build view', () => {
-	it('defaults to the default options and creates rows for every part', () => {
-		const id = mk();
+	it('defaults to the default options and creates rows for every part', async () => {
+		const id = await mk();
 		expect(
-			db.select({ n: count() }).from(buildParts).where(eq(buildParts.buildId, id)).get()!.n
+			(await first(db.select({ n: count() }).from(buildParts).where(eq(buildParts.buildId, id))))!.n
 		).toBe(tmt.parts.length);
-		const v = loadBuildView(db, id, 'owner')!;
+		const v = (await loadBuildView(db, id, 'owner'))!;
 		expect(v.variantChoices).toEqual({
 			seat: 'cushions',
 			'rear-caster': 'kit',
@@ -169,20 +167,20 @@ describe('variants in the build view', () => {
 		expect(v.model).toBeNull();
 	});
 
-	it('treats a build with no stored choices as defaults', () => {
-		const id = mk();
-		db.update(builds).set({ variantChoices: null }).where(eq(builds.id, id)).run();
-		expect(loadBuildView(db, id, 'owner')!.variantChoices.seat).toBe('cushions');
+	it('treats a build with no stored choices as defaults', async () => {
+		const id = await mk();
+		await db.update(builds).set({ variantChoices: null }).where(eq(builds.id, id));
+		expect((await loadBuildView(db, id, 'owner'))!.variantChoices.seat).toBe('cushions');
 	});
 
-	it('switching the seat swaps parts and plates, and progress survives a round trip', () => {
-		const id = mk();
-		setPartStatus(db, id, 'owner', 'cushion-top', { status: 'Printed' });
+	it('switching the seat swaps parts and plates, and progress survives a round trip', async () => {
+		const id = await mk();
+		await setPartStatus(db, id, 'owner', 'cushion-top', { status: 'Printed' });
 		const events = onBuildEvents(id);
-		setVariant(db, id, 'editor', { group: 'seat', option: 'bucket-seat' });
+		await setVariant(db, id, 'editor', { group: 'seat', option: 'bucket-seat' });
 		expect(events.map((e) => e.kind)).toContain('build.variant');
 
-		let v = loadBuildView(db, id, 'owner')!;
+		let v = (await loadBuildView(db, id, 'owner'))!;
 		const slugs = v.parts.map((p) => p.slug);
 		expect(slugs).toContain('bucket-seat');
 		expect(slugs).not.toContain('cushion-top');
@@ -194,7 +192,9 @@ describe('variants in the build view', () => {
 		expect(v.plates.flatMap((p) => p.parts)).not.toContain('cushion-top');
 		expect(v.allParts.map((p) => p.slug)).toContain('cushion-top');
 
-		const act = db.select().from(activity).where(eq(activity.kind, 'build.variant')).get()!;
+		const act = (await first(
+			db.select().from(activity).where(eq(activity.kind, 'build.variant'))
+		))!;
 		expect(act.userId).toBe('editor');
 		expect(
 			describeActivity(
@@ -210,16 +210,16 @@ describe('variants in the build view', () => {
 			)
 		).toBe('Steph switched Seat to Foaming TPU bucket seat');
 
-		setVariant(db, id, 'owner', { group: 'seat', option: 'cushions' });
-		v = loadBuildView(db, id, 'owner')!;
+		await setVariant(db, id, 'owner', { group: 'seat', option: 'cushions' });
+		v = (await loadBuildView(db, id, 'owner'))!;
 		expect(v.state['cushion-top'].status).toBe('Printed');
 		expect(v.plates.map((p) => p.number)).toContain(19);
 		expect(v.parts.map((p) => p.slug)).not.toContain('bucket-seat');
 	});
 
-	it('swaps the rims plate and keeps plateless variant parts as their own units', () => {
-		const id = mk({ rim: 'smaller', footrest: 'two-piece' });
-		const v = loadBuildView(db, id, 'owner')!;
+	it('swaps the rims plate and keeps plateless variant parts as their own units', async () => {
+		const id = await mk({ rim: 'smaller', footrest: 'two-piece' });
+		const v = (await loadBuildView(db, id, 'owner'))!;
 		expect(v.plates.map((p) => p.number)).not.toContain(13);
 		expect(v.plates.map((p) => p.number)).not.toContain(24);
 		expect(v.parts.map((p) => p.slug)).toEqual(
@@ -227,42 +227,50 @@ describe('variants in the build view', () => {
 		);
 	});
 
-	it('enforces permissions and validates input', () => {
-		const id = mk();
+	it('enforces permissions and validates input', async () => {
+		const id = await mk();
 		const body = { group: 'seat', option: 'bucket-seat' };
-		expect(() => setVariant(db, id, 'viewer', body)).toThrowError(
+		await expect(setVariant(db, id, 'viewer', body)).rejects.toThrowError(
 			expect.objectContaining({ status: 403 })
 		);
-		expect(() => setVariant(db, id, 'outsider', body)).toThrowError(
+		await expect(setVariant(db, id, 'outsider', body)).rejects.toThrowError(
 			expect.objectContaining({ status: 404 })
 		);
-		expect(() => setVariant(db, id, 'owner', { group: 'nope', option: 'x' })).toThrow(ApiError);
-		expect(() => setVariant(db, id, 'owner', { group: 'seat', option: 'nope' })).toThrow(ApiError);
-		expect(() => setVariant(db, id, 'owner', { group: 'seat' })).toThrow(ApiError);
+		(
+			await expect(await setVariant(db, id, 'owner', { group: 'nope', option: 'x' }))
+		).rejects.toThrow(ApiError);
+		(
+			await expect(await setVariant(db, id, 'owner', { group: 'seat', option: 'nope' }))
+		).rejects.toThrow(ApiError);
+		await expect(setVariant(db, id, 'owner', { group: 'seat' })).rejects.toThrow(ApiError);
 		expect(
-			db.select({ n: count() }).from(activity).where(eq(activity.kind, 'build.variant')).get()!.n
+			(await first(
+				db.select({ n: count() }).from(activity).where(eq(activity.kind, 'build.variant'))
+			))!.n
 		).toBe(0);
-		expect(() =>
-			createBuild(
-				db,
-				{
-					organizationId: orgId,
-					templateId,
-					designId: null,
-					name: 'x',
-					variantChoices: { seat: 'zzz' }
-				},
-				'owner'
+		(
+			await expect(
+				await createBuild(
+					db,
+					{
+						organizationId: orgId,
+						templateId,
+						designId: null,
+						name: 'x',
+						variantChoices: { seat: 'zzz' }
+					},
+					'owner'
+				)
 			)
-		).toThrow(ApiError);
+		).rejects.toThrow(ApiError);
 	});
 
-	it('exposes the model once a template_models row exists', () => {
-		const id = mk();
-		db.insert(templateModels)
-			.values({ templateId, glbPath: 'x.glb', version: 'v1', size: 10, slugs: ['seat-center'] })
-			.run();
-		const m = loadBuildView(db, id, 'viewer')!.model!;
+	it('exposes the model once a template_models row exists', async () => {
+		const id = await mk();
+		await db
+			.insert(templateModels)
+			.values({ templateId, glbPath: 'x.glb', version: 'v1', size: 10, slugs: ['seat-center'] });
+		const m = (await loadBuildView(db, id, 'viewer'))!.model!;
 		expect(m.url).toBe(`/api/templates/${templateId}/model.glb?v=v1`);
 		expect(m.slugs).toEqual(['seat-center']);
 		expect(m.placements).toHaveLength(tmt.parts.length);
@@ -274,7 +282,7 @@ describe('variants in the build view', () => {
 });
 
 describe('site admin', () => {
-	it('is the earliest user, or anyone in ADMIN_EMAILS (case-insensitive)', () => {
+	it('is the earliest user, or anyone in ADMIN_EMAILS (case-insensitive)', async () => {
 		const empty = openDb(':memory:');
 		runMigrations(empty);
 		const add = (id: string, email: string, t: number) =>
@@ -288,14 +296,14 @@ describe('site admin', () => {
 		const prev = process.env.ADMIN_EMAILS;
 		try {
 			delete process.env.ADMIN_EMAILS;
-			expect(isSiteAdmin(empty, { id: 'first', email: 'first@x.test' })).toBe(true);
-			expect(isSiteAdmin(empty, { id: 'second', email: 'second@x.test' })).toBe(false);
+			expect(await isSiteAdmin(empty, { id: 'first', email: 'first@x.test' })).toBe(true);
+			expect(await isSiteAdmin(empty, { id: 'second', email: 'second@x.test' })).toBe(false);
 			expect(() => requireSiteAdmin(empty, { id: 'second', email: 'second@x.test' })).toThrow(
 				ApiError
 			);
 			process.env.ADMIN_EMAILS = ' THIRD@x.test , other@x.test';
-			expect(isSiteAdmin(empty, { id: 'third', email: 'Third@X.test' })).toBe(true);
-			expect(isSiteAdmin(empty, { id: 'second', email: 'second@x.test' })).toBe(false);
+			expect(await isSiteAdmin(empty, { id: 'third', email: 'Third@X.test' })).toBe(true);
+			expect(await isSiteAdmin(empty, { id: 'second', email: 'second@x.test' })).toBe(false);
 		} finally {
 			if (prev === undefined) delete process.env.ADMIN_EMAILS;
 			else process.env.ADMIN_EMAILS = prev;

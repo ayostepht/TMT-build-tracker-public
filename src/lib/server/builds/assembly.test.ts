@@ -14,7 +14,8 @@ import {
 } from '#lib/domain/assembly.ts';
 import { ASSEMBLY_SECTIONS } from '#lib/domain/assembly.ts';
 import { ApiError } from '../access';
-import { openDb, runMigrations, type Db } from '../db';
+import { first, type Db } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import {
 	activity,
 	builds,
@@ -39,27 +40,24 @@ let db: Db;
 let templateId: string;
 let buildId: string;
 
-beforeEach(() => {
-	db = openDb(':memory:');
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
-	templateId = db.select({ id: templates.id }).from(templates).get()!.id;
-	db.insert(organization)
-		.values({ id: 'org1', name: 'Chapter', slug: 'chapter', createdAt: new Date() })
-		.run();
+beforeEach(async () => {
+	db = await createTestDb();
+	await seedTemplates(db, templateSeeds);
+	templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
+	await db
+		.insert(organization)
+		.values({ id: 'org1', name: 'Chapter', slug: 'chapter', createdAt: new Date() });
 	for (const u of ['owner', 'editor', 'viewer', 'outsider'])
-		db.insert(user)
-			.values({ id: u, name: `User ${u}`, email: `${u}@example.test` })
-			.run();
+		await db.insert(user).values({ id: u, name: `User ${u}`, email: `${u}@example.test` });
 	for (const [u, role] of [
 		['owner', 'owner'],
 		['editor', 'editor'],
 		['viewer', 'viewer']
 	])
-		db.insert(member)
-			.values({ id: `m-${u}`, organizationId: 'org1', userId: u, role, createdAt: new Date() })
-			.run();
-	buildId = createBuild(
+		await db
+			.insert(member)
+			.values({ id: `m-${u}`, organizationId: 'org1', userId: u, role, createdAt: new Date() });
+	buildId = await createBuild(
 		db,
 		{ organizationId: 'org1', templateId, designId: null, name: 'Chair' },
 		'owner'
@@ -102,22 +100,22 @@ describe('seed assembly steps', () => {
 		}
 	});
 
-	it('is stored on the template and reconciling again changes nothing', () => {
-		const n = db
+	it('is stored on the template and reconciling again changes nothing', async () => {
+		const n = await db
 			.select()
 			.from(templateAssemblySteps)
-			.where(eq(templateAssemblySteps.templateId, templateId))
-			.all();
+			.where(eq(templateAssemblySteps.templateId, templateId));
 		expect(n).toHaveLength(steps.length);
-		expect(seedTemplates(db, templateSeeds).updated).toEqual([]);
+		expect((await seedTemplates(db, templateSeeds)).updated).toEqual([]);
 	});
 });
 
 describe('variant filtering', () => {
-	const keys = () => loadBuildView(db, buildId, 'owner')!.assembly.steps.map((s) => s.key);
+	const keys = async () =>
+		(await loadBuildView(db, buildId, 'owner'))!.assembly.steps.map((s) => s.key);
 
-	it('shows the default variants', () => {
-		const k = keys();
+	it('shows the default variants', async () => {
+		const k = await keys();
 		expect(k).toContain('frame.footrest-one');
 		expect(k).not.toContain('frame.footrest-two');
 		expect(k).toContain('seat.cushions');
@@ -126,12 +124,12 @@ describe('variant filtering', () => {
 		expect(k).toContain('extras.push-handle');
 	});
 
-	it('follows the chosen options and filters step parts to active ones', () => {
-		setVariant(db, buildId, 'owner', { group: 'footrest', option: 'two-piece' });
-		setVariant(db, buildId, 'owner', { group: 'seat', option: 'bucket-seat' });
-		setVariant(db, buildId, 'owner', { group: 'headrest', option: 'none' });
-		setVariant(db, buildId, 'owner', { group: 'rear-caster', option: 'mcmaster' });
-		const v = loadBuildView(db, buildId, 'owner')!;
+	it('follows the chosen options and filters step parts to active ones', async () => {
+		await setVariant(db, buildId, 'owner', { group: 'footrest', option: 'two-piece' });
+		await setVariant(db, buildId, 'owner', { group: 'seat', option: 'bucket-seat' });
+		await setVariant(db, buildId, 'owner', { group: 'headrest', option: 'none' });
+		await setVariant(db, buildId, 'owner', { group: 'rear-caster', option: 'mcmaster' });
+		const v = (await loadBuildView(db, buildId, 'owner'))!;
 		const k = v.assembly.steps.map((s) => s.key);
 		expect(k).toContain('frame.footrest-two');
 		expect(k).not.toContain('frame.footrest-one');
@@ -165,17 +163,17 @@ describe('variant filtering', () => {
 });
 
 describe('setAssemblyItem', () => {
-	const view = () => loadBuildView(db, buildId, 'owner')!;
+	const view = async () => (await loadBuildView(db, buildId, 'owner'))!;
 
-	it('ticks a step, a check and a hardware item, with who and when', () => {
-		const step = view().assembly.steps.find((s) => s.key === 'frame.rear-casters')!;
+	it('ticks a step, a check and a hardware item, with who and when', async () => {
+		const step = (await view()).assembly.steps.find((s) => s.key === 'frame.rear-casters')!;
 		const events = onBuildEvents(buildId);
-		setAssemblyItem(db, buildId, 'editor', step.key, { done: true });
-		setAssemblyItem(db, buildId, 'editor', checkItemKey(step.key, step.checks[0].key), {
+		await setAssemblyItem(db, buildId, 'editor', step.key, { done: true });
+		await setAssemblyItem(db, buildId, 'editor', checkItemKey(step.key, step.checks[0].key), {
 			done: true
 		});
-		setAssemblyItem(db, buildId, 'owner', hwItemKey(step.key, 'Casters'), { done: true });
-		const v = view();
+		await setAssemblyItem(db, buildId, 'owner', hwItemKey(step.key, 'Casters'), { done: true });
+		const v = await view();
 		expect(v.assembly.items[step.key]).toMatchObject({
 			done: true,
 			doneBy: 'editor',
@@ -185,12 +183,9 @@ describe('setAssemblyItem', () => {
 		expect(v.assembly.items[checkItemKey(step.key, step.checks[0].key)].done).toBe(true);
 		expect(v.assembly.items[hwItemKey(step.key, 'Casters')].doneBy).toBe('owner');
 		expect(events.map((e) => e.type)).toEqual(['changed', 'changed', 'changed']);
-		const rows = db
-			.select()
-			.from(activity)
-			.where(eq(activity.buildId, buildId))
-			.all()
-			.filter((a) => a.kind === 'assembly.item');
+		const rows = (await db.select().from(activity).where(eq(activity.buildId, buildId))).filter(
+			(a) => a.kind === 'assembly.item'
+		);
 		expect(rows).toHaveLength(3);
 		const names = { parts: v.parts, filaments: v.filaments, members: v.members, runs: v.runs };
 		const sentence = describeActivity(
@@ -220,15 +215,15 @@ describe('setAssemblyItem', () => {
 		).toContain('ticked');
 	});
 
-	it('unticking clears who and when; a note alone keeps the tick', () => {
-		setAssemblyItem(db, buildId, 'editor', 'frame.handle', { done: true, note: 'tight fit' });
-		setAssemblyItem(db, buildId, 'editor', 'frame.handle', { note: 'tight fit, sanded' });
-		expect(view().assembly.items['frame.handle']).toMatchObject({
+	it('unticking clears who and when; a note alone keeps the tick', async () => {
+		await setAssemblyItem(db, buildId, 'editor', 'frame.handle', { done: true, note: 'tight fit' });
+		await setAssemblyItem(db, buildId, 'editor', 'frame.handle', { note: 'tight fit, sanded' });
+		expect((await view()).assembly.items['frame.handle']).toMatchObject({
 			done: true,
 			note: 'tight fit, sanded'
 		});
-		setAssemblyItem(db, buildId, 'owner', 'frame.handle', { done: false });
-		const it = view().assembly.items['frame.handle'];
+		await setAssemblyItem(db, buildId, 'owner', 'frame.handle', { done: false });
+		const it = (await view()).assembly.items['frame.handle'];
 		expect(it).toMatchObject({
 			done: false,
 			doneBy: null,
@@ -237,7 +232,7 @@ describe('setAssemblyItem', () => {
 		});
 	});
 
-	it('rejects viewers (403), outsiders (404) and unknown or inactive items (400)', () => {
+	it('rejects viewers (403), outsiders (404) and unknown or inactive items (400)', async () => {
 		const code = (fn: () => void) => {
 			try {
 				fn();
@@ -246,30 +241,46 @@ describe('setAssemblyItem', () => {
 			}
 			return 0;
 		};
-		expect(code(() => setAssemblyItem(db, buildId, 'viewer', 'frame.handle', { done: true }))).toBe(
-			403
-		);
 		expect(
-			code(() => setAssemblyItem(db, buildId, 'outsider', 'frame.handle', { done: true }))
+			await code(
+				async () => await setAssemblyItem(db, buildId, 'viewer', 'frame.handle', { done: true })
+			)
+		).toBe(403);
+		expect(
+			await code(
+				async () => await setAssemblyItem(db, buildId, 'outsider', 'frame.handle', { done: true })
+			)
 		).toBe(404);
-		expect(code(() => setAssemblyItem(db, buildId, 'owner', 'nope', { done: true }))).toBe(400);
 		expect(
-			code(() => setAssemblyItem(db, buildId, 'owner', 'frame.handle:check:nope', { done: true }))
+			await code(async () => await setAssemblyItem(db, buildId, 'owner', 'nope', { done: true }))
 		).toBe(400);
 		expect(
-			code(() => setAssemblyItem(db, buildId, 'owner', 'frame.footrest-two', { done: true }))
+			await code(
+				async () =>
+					await setAssemblyItem(db, buildId, 'owner', 'frame.handle:check:nope', { done: true })
+			)
 		).toBe(400);
-		expect(code(() => setAssemblyItem(db, buildId, 'owner', 'frame.handle', {}))).toBe(400);
-		expect(code(() => setAssemblyItem(db, buildId, 'owner', 'frame.handle', { done: 'yes' }))).toBe(
-			400
-		);
-		expect(view().assembly.items).toEqual({});
+		expect(
+			await code(
+				async () =>
+					await setAssemblyItem(db, buildId, 'owner', 'frame.footrest-two', { done: true })
+			)
+		).toBe(400);
+		expect(
+			await code(async () => await setAssemblyItem(db, buildId, 'owner', 'frame.handle', {}))
+		).toBe(400);
+		expect(
+			await code(
+				async () => await setAssemblyItem(db, buildId, 'owner', 'frame.handle', { done: 'yes' })
+			)
+		).toBe(400);
+		expect((await view()).assembly.items).toEqual({});
 	});
 });
 
 describe('resolveItem and readiness', () => {
-	it('resolves step, check and hardware keys', () => {
-		const steps = loadBuildView(db, buildId, 'owner')!.assembly.steps;
+	it('resolves step, check and hardware keys', async () => {
+		const steps = (await loadBuildView(db, buildId, 'owner'))!.assembly.steps;
 		expect(resolveItem(steps, 'frame.handle')?.kind).toBe('step');
 		expect(resolveItem(steps, 'frame.handle:check:flat')?.kind).toBe('check');
 		expect(resolveItem(steps, 'frame.rear-casters:hw:Casters')?.kind).toBe('hw');
@@ -277,78 +288,81 @@ describe('resolveItem and readiness', () => {
 		expect(resolveItem(steps, 'frame.handle:bogus:flat')).toBeNull();
 	});
 
-	it('is ready only when every active part is printed', () => {
-		let v = loadBuildView(db, buildId, 'owner')!;
+	it('is ready only when every active part is printed', async () => {
+		let v = (await loadBuildView(db, buildId, 'owner'))!;
 		expect(readyToAssemble(v).ready).toBe(false);
-		for (const p of v.parts) setPartStatus(db, buildId, 'owner', p.slug, { status: 'Printed' });
-		v = loadBuildView(db, buildId, 'owner')!;
+		for (const p of v.parts)
+			await setPartStatus(db, buildId, 'owner', p.slug, { status: 'Printed' });
+		v = (await loadBuildView(db, buildId, 'owner'))!;
 		expect(readyToAssemble(v)).toMatchObject({ ready: true, missing: [] });
 	});
 });
 
 describe('handoff', () => {
-	it('saves the form (editors only) and marks the build done', () => {
-		expect(() => updateHandoff(db, buildId, 'viewer', { notes: 'x' })).toThrow(ApiError);
-		updateHandoff(db, buildId, 'editor', {
+	it('saves the form (editors only) and marks the build done', async () => {
+		await expect(updateHandoff(db, buildId, 'viewer', { notes: 'x' })).rejects.toThrow(
+			ApiError
+		);
+		await updateHandoff(db, buildId, 'editor', {
 			recipientName: 'Sam',
 			organization: 'City Clinic',
 			contact: 'sam@example.test',
 			safetyChecked: true
 		});
-		let v = loadBuildView(db, buildId, 'owner')!;
+		let v = (await loadBuildView(db, buildId, 'owner'))!;
 		expect(v.handoff).toMatchObject({
 			recipientName: 'Sam',
 			contact: 'sam@example.test',
 			safetyChecked: true
 		});
 		expect(v.build.phase).not.toBe('done');
-		markHandedOff(db, buildId, 'editor', { handedOffOn: '2026-11-03' });
-		v = loadBuildView(db, buildId, 'owner')!;
+		await markHandedOff(db, buildId, 'editor', { handedOffOn: '2026-11-03' });
+		v = (await loadBuildView(db, buildId, 'owner'))!;
 		expect(v.build.phase).toBe('done');
 		expect(v.handoff?.handedOffOn).toBe('2026-11-03');
 		expect(v.handoff?.organization).toBe('City Clinic');
-		const kinds = db
-			.select()
-			.from(activity)
-			.where(eq(activity.buildId, buildId))
-			.all()
-			.map((a) => a.kind);
+		const kinds = (await db.select().from(activity).where(eq(activity.buildId, buildId))).map(
+			(a) => a.kind
+		);
 		expect(kinds).toContain('build.handoff');
-		const a = db.select().from(activity).where(eq(activity.kind, 'build.handoff')).get()!;
+		const a = (await first(db.select().from(activity).where(eq(activity.kind, 'build.handoff'))))!;
 		expect(
 			describeActivity(
 				{ id: 'z', userId: 'editor', userName: 'Eddie', kind: a.kind, payload: a.payload, at: '' },
 				v
 			)
 		).toBe('Eddie marked the chair as handed off to City Clinic');
-		expect(db.select({ p: builds.phase }).from(builds).where(eq(builds.id, buildId)).get()!.p).toBe(
-			'done'
-		);
+		expect(
+			(await first(db.select({ p: builds.phase }).from(builds).where(eq(builds.id, buildId))))!.p
+		).toBe('done');
 	});
 
-	it('hides the recipient contact from viewers everywhere it is serialized', () => {
-		updateHandoff(db, buildId, 'editor', { recipientName: 'Sam', contact: 'secret-contact-123' });
+	it('hides the recipient contact from viewers everywhere it is serialized', async () => {
+		await updateHandoff(db, buildId, 'editor', {
+			recipientName: 'Sam',
+			contact: 'secret-contact-123'
+		});
 		for (const who of ['owner', 'editor'])
-			expect(loadBuildView(db, buildId, who)!.handoff?.contact).toBe('secret-contact-123');
-		const v = loadBuildView(db, buildId, 'viewer')!;
+			expect((await loadBuildView(db, buildId, who))!.handoff?.contact).toBe('secret-contact-123');
+		const v = (await loadBuildView(db, buildId, 'viewer'))!;
 		expect(v.handoff).toMatchObject({ recipientName: 'Sam', contact: null });
 		expect(JSON.stringify(v)).not.toContain('secret-contact-123');
-		markHandedOff(db, buildId, 'editor', { contact: 'secret-contact-123' });
-		const acts = db.select().from(activity).where(eq(activity.buildId, buildId)).all();
+		await markHandedOff(db, buildId, 'editor', { contact: 'secret-contact-123' });
+		const acts = await db.select().from(activity).where(eq(activity.buildId, buildId));
 		expect(JSON.stringify(acts)).not.toContain('secret-contact-123');
-		expect(JSON.stringify(loadBuildView(db, buildId, 'viewer'))).not.toContain(
+		expect(JSON.stringify(await loadBuildView(db, buildId, 'viewer'))).not.toContain(
 			'secret-contact-123'
 		);
 	});
 
-	it('rejects bad input and defaults the date to today', () => {
-		expect(() => updateHandoff(db, buildId, 'owner', { handedOffOn: '03/11/2026' })).toThrow(
-			ApiError
-		);
-		expect(() => updateHandoff(db, buildId, 'owner', {})).toThrow(ApiError);
-		expect(() => markHandedOff(db, buildId, 'outsider', {})).toThrow(ApiError);
-		markHandedOff(db, buildId, 'owner', {});
-		expect(loadBuildView(db, buildId, 'owner')!.handoff?.handedOffOn).toMatch(
+	it('rejects bad input and defaults the date to today', async () => {
+		(
+			await expect(await updateHandoff(db, buildId, 'owner', { handedOffOn: '03/11/2026' }))
+		).rejects.toThrow(ApiError);
+		await expect(updateHandoff(db, buildId, 'owner', {})).rejects.toThrow(ApiError);
+		await expect(markHandedOff(db, buildId, 'outsider', {})).rejects.toThrow(ApiError);
+		await markHandedOff(db, buildId, 'owner', {});
+		expect((await loadBuildView(db, buildId, 'owner'))!.handoff?.handedOffOn).toMatch(
 			/^\d{4}-\d{2}-\d{2}$/
 		);
 	});
