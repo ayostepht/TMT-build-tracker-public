@@ -1,16 +1,14 @@
 name: public-ci
 
-# CI for the public hosted-site branch (Postgres). Separate from `docker` and `promote`, which
-# serve the self-hosted line and are not triggered by this branch's pull requests unless they
-# target their own branches. Pull requests never publish: the read-only token is the default and
-# only the `publish` job (push to the branch, after every test job) gets `packages: write`. It
-# pushes the tags `public` and `public-sha-<short sha>` and nothing else; `latest`, `edge`,
-# version tags and plain `sha-*` belong to docker.yml.
+# CI for the hosted TMT Build Tracker (Postgres). Pull requests never publish: the read-only token
+# is the default and only the `publish` job (a push to main, after every test job) gets
+# `packages: write`. It pushes ghcr.io/ayostepht/tmt-build-tracker-public with the tags `latest`
+# and `sha-<short sha>`.
 on:
   push:
-    branches: [public-site/main]
+    branches: [main]
   pull_request:
-    branches: [public-site/main]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -124,7 +122,7 @@ jobs:
   publish:
     name: publish image (public tag)
     # Never on pull requests; only a push to the hosted-site branch.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/public-site/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [test, e2e, image]
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -156,8 +154,8 @@ jobs:
           pull: true
           push: true
           tags: |
-            ghcr.io/ayostepht/tmt-build-tracker:public
-            ghcr.io/ayostepht/tmt-build-tracker:public-sha-${{ steps.sha.outputs.short }}
+            ghcr.io/ayostepht/tmt-build-tracker-public:latest
+            ghcr.io/ayostepht/tmt-build-tracker-public:sha-${{ steps.sha.outputs.short }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

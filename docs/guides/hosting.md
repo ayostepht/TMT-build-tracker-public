@@ -218,10 +218,10 @@ A tunnel makes your server connect **out** to Cloudflare, so you open no port on
 
 Without Compose: create two containers by hand on the same Docker network, the app image with a volume or folder at `/data` (writable by uid `1000`) and `cloudflare/cloudflared` with `tunnel --no-autoupdate run` and the `TUNNEL_TOKEN` variable.
 
-**On Unraid (published image).** CI publishes `ghcr.io/ayostepht/tmt-build-tracker:public` (and `public-sha-<short sha>`) from every green push to the hosted-site branch.
+**On Unraid (published image).** CI publishes `ghcr.io/ayostepht/tmt-build-tracker-public:latest` (and `sha-<short sha>`) from every green push to `main`.
 
 1. In a terminal: `docker network create tmt` (a custom network lets the containers reach each other by name).
-2. Create the app container from `ghcr.io/ayostepht/tmt-build-tracker:public`: name `tmt-build-tracker-public`, network `tmt`, **no port mapping**. Add a path `/mnt/user/appdata/tmt-build-tracker-public` to `/data` and run `chown -R 1000:1000 /mnt/user/appdata/tmt-build-tracker-public` once. Variables: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `PUBLIC_URL=https://tmt.example.com`, `ADMIN_EMAILS`, the sign-in provider ID/secret pairs from step 2, `TRUST_CLOUDFLARE=1`, and optionally the `ANALYTICS_*` settings from section 7.
+2. Create the app container from `ghcr.io/ayostepht/tmt-build-tracker-public:latest`: name `tmt-build-tracker-public`, network `tmt`, **no port mapping**. Add a path `/mnt/user/appdata/tmt-build-tracker-public` to `/data` and run `chown -R 1000:1000 /mnt/user/appdata/tmt-build-tracker-public` once. Variables: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `PUBLIC_URL=https://tmt.example.com`, `ADMIN_EMAILS`, the sign-in provider ID/secret pairs from step 2, `TRUST_CLOUDFLARE=1`, and optionally the `ANALYTICS_*` settings from section 7.
 3. Create a second container from `cloudflare/cloudflared:latest`: name `cloudflared-tmt`, network `tmt`, post arguments `tunnel --no-autoupdate run`, variable `TUNNEL_TOKEN`.
 4. In the tunnel's public hostname, set the service to `http://tmt-build-tracker-public:3000`.
 5. Running the self-hosted edition on the same server too? The `-public` names keep the two apart: never share the `/data` folder, and keep the self-hosted container off the `tmt` network.
