@@ -31,6 +31,14 @@ container. Three parts:
 | Analytics/cookies | Cookieless analytics (Plausible, Umami or Cloudflare Web Analytics, picked by env var, off when unset). The only cookie is the sign-in session (plus the demo session cookie), so there is a short cookie notice in the footer and privacy page, not a consent banner.                                                            |
 | Visual language   | Warm and workshop-like rather than generic SaaS: paper and ink neutrals, one warm accent, the existing Barlow Condensed / IBM Plex type, real chair imagery (the 3D model, plate diagrams), no gradient blobs, no emoji feature grids, no "trusted by" logos, plain sentences in the maker's voice. Light and dark. Mobile-first. |
 
+### More decisions (2026-11-19, before the overnight run)
+
+- Name stays **TMT Build Tracker**. Groups are called **teams** everywhere (not "chapters").
+- Kit admin (shared templates/kits) is limited to site admins (`SITE_ADMIN_EMAILS`).
+- Self-service account deletion: an Account page button deletes the user, their personal workspace and any team they solely own, after a typed confirmation.
+- Per-account limits, all env-configurable: 10 teams per user, 50 active builds per team, 95 MB per 3MF, 1 GB uploads per team.
+- **Shared design gallery**: a team can share a color design to a site-wide gallery that any signed-in user can browse and copy into their own team (copies keep provenance). Built in wave 3 (`design-studio-ui` + server access checks), schema columns in the wave 1 baseline.
+
 ## Waves
 
 Each wave's agents own disjoint files. Parallel agents in wave 1 get their own worktrees.
