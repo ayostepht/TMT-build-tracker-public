@@ -45,10 +45,4 @@ Tags: `latest` is the newest release; `0.9.0` and `0.9` are specific releases (r
 
 ## Forgotten passwords
 
-The app sends no email, so there is no "forgot password" mail and no email verification. Whoever runs the server creates a one-time reset link on the command line and passes it on:
-
-```bash
-docker exec tmt-build-tracker node scripts/reset-password-link.mjs maker@example.com --url https://tmt.example.com
-```
-
-`--url` is the address people open the app at (an origin only); it can be left out when `PUBLIC_URL` is set. The link works once and expires after one hour; creating it signs that account out everywhere. Accounts that sign in with SSO are not affected (the command refuses them), and public mode has no passwords. Details: [docs/password-reset.md](../password-reset.md).
+The hosted site signs in through an SSO provider (Google, GitHub or Discord), so there is no app password to reset: recover the account at the provider. The command-line reset link was removed.

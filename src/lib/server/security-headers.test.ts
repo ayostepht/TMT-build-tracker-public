@@ -31,7 +31,7 @@ describe('securityHeaders', () => {
 	});
 
 	it('sends no Referer from URLs that carry a bearer id or token', () => {
-		for (const p of ['/invite/abc', '/reset-password', '/reset-password/tok'])
+		for (const p of ['/invite', '/invite/abc'])
 			expect(ctx({ pathname: p })['referrer-policy']).toBe('no-referrer');
 		expect(ctx({ pathname: '/invitees' })['referrer-policy']).toBe(
 			'strict-origin-when-cross-origin'

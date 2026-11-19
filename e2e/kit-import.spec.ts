@@ -1,11 +1,10 @@
 import { expect, newClientContext, test } from './fixtures';
 import { signInAsAdmin, signUp, startBuild, uniqueEmail } from './helpers';
-import Database from 'better-sqlite3';
 import { strToU8, zipSync } from 'fflate';
 import { makeProjectThreeMf } from '../src/lib/server/threemf/fixtures';
+import { insertable, withE2eDb } from './db';
 
 // Synthetic files only (no MakeGood data): a cube STEP, boxes in a 3MF, a 3-page PDF.
-const DB = 'data/e2e/tmt.db';
 const WING_LEFT = '3DTMT C1 WING LEFT REV B.STEP';
 const SEAT_CENTER = '3DTMT H SEAT CENTER REV A.STEP';
 
@@ -202,20 +201,13 @@ test.afterEach(async ({ page }) => {
 
 test.afterAll(async () => {
 	if (!templateId) return;
-	const db = new Database(DB);
-	try {
+	await withE2eDb(async (sql) => {
 		for (const t of TABLES) {
-			db.prepare(`delete from ${t} where template_id = ?`).run(templateId);
-			for (const row of snapshot[t] ?? []) {
-				const cols = Object.keys(row as object);
-				db.prepare(
-					`insert into ${t} (${cols.join(',')}) values (${cols.map((c) => '@' + c).join(',')})`
-				).run(row as object);
-			}
+			await sql`delete from ${sql(t)} where template_id = ${templateId}`;
+			for (const row of snapshot[t] ?? [])
+				await sql`insert into ${sql(t)} ${sql(insertable(sql, row as Record<string, unknown>))}`;
 		}
-	} finally {
-		db.close();
-	}
+	});
 });
 
 test('add MakeGood files together: plan, one run, retry, checklist, guide mapping', async ({
@@ -226,13 +218,10 @@ test('add MakeGood files together: plan, one run, retry, checklist, guide mappin
 	await page.waitForLoadState('networkidle');
 	const href = (await page.locator('a[href^="/admin/templates/"]').first().getAttribute('href'))!;
 	templateId = href.split('/').pop()!;
-	const db = new Database(DB, { readonly: true });
-	try {
+	await withE2eDb(async (sql) => {
 		for (const t of TABLES)
-			snapshot[t] = db.prepare(`select * from ${t} where template_id = ?`).all(templateId);
-	} finally {
-		db.close();
-	}
+			snapshot[t] = [...(await sql`select * from ${sql(t)} where template_id = ${templateId}`)];
+	});
 	// The one drop zone for the built-in kit: a build's Files tab, Print settings.
 	await page.goto('/workspace');
 	await page.waitForLoadState('networkidle');
@@ -339,9 +328,9 @@ test('a member who is not an admin can read the checklist but gets no import rig
 	browser
 }) => {
 	await signInAsAdmin(page); // makes sure the admin account exists first, so the member is not "first user"
-	const db = new Database(DB, { readonly: true });
-	const id = (db.prepare('select id from templates limit 1').get() as { id: string }).id;
-	db.close();
+	const [{ id }] = await withE2eDb(
+		(sql) => sql<{ id: string }[]>`select id from templates limit 1`
+	);
 	const context = await newClientContext(browser);
 	try {
 		const member = await context.newPage();

@@ -19,7 +19,7 @@ test('stage 4b shell screenshots', async ({ page, browser }) => {
 	const paths: [string, string][] = [];
 
 	// signed-out screens first
-	const signedOut = ['login', 'signup', 'reset-password', 'no-such-page'];
+	const signedOut = ['login', 'signup', 'no-such-page'];
 
 	const { buildId, chapterUrl } = await ownerWithBuild(page, 's4b');
 	const link = await (async () => {

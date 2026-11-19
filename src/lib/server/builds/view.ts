@@ -174,6 +174,8 @@ export async function loadBuildView(
 				.select()
 				.from(templateFilamentRoles)
 				.where(eq(templateFilamentRoles.templateId, tpl.id))
+				// SQLite returned these in primary-key (key) order; keep that slot order.
+				.orderBy(asc(templateFilamentRoles.key))
 		).map((r) => [r.key, r])
 	);
 	const filaments = (

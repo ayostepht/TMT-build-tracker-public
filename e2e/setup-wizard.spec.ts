@@ -103,7 +103,7 @@ test('new build walks the setup wizard: template, options, colors, files, export
 
 	// Step 5: export. Synthetic geometry stands in for the MakeGood print files.
 	await expect(heading(page, 'Export').first()).toBeVisible();
-	registerSyntheticGeometry();
+	await registerSyntheticGeometry();
 	const re = await page.request.post(`/api/builds/${id}/plates/arrange`, {
 		data: { convertRuns: true }
 	});

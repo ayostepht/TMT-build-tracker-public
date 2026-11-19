@@ -274,10 +274,11 @@ async function chapterQuota(
 	db: DbOrTx,
 	key: ChapterQuotaKey,
 	countFn: () => Promise<number>,
-	userId: string
+	userId: string,
+	scope?: string
 ): Promise<void> {
 	try {
-		await assertUnder(db, key, countFn, { userId });
+		await assertUnder(db, key, countFn, { userId, scope });
 	} catch (e) {
 		if (e instanceof QuotaError) throw new QuotaError(CHAPTER_SENTENCES[key](quotaLimit(key) ?? 0));
 		throw e;
@@ -306,10 +307,16 @@ export async function assertCanJoinChapter(
 
 /** The chapter's own size cap (`membersPerChapter`). */
 export async function assertCanAddMember(db: DbOrTx, userId: string, orgId: string): Promise<void> {
-	await chapterQuota(db, 'membersPerChapter', () => countChapterMembers(db, orgId), userId);
+	await chapterQuota(db, 'membersPerChapter', () => countChapterMembers(db, orgId), userId, orgId);
 }
 
 /** Throws `QuotaError` when the chapter already has its limit of open invitations. */
 export async function assertCanInvite(db: DbOrTx, userId: string, orgId: string): Promise<void> {
-	await chapterQuota(db, 'pendingInvitesPerChapter', () => countPendingInvites(db, orgId), userId);
+	await chapterQuota(
+		db,
+		'pendingInvitesPerChapter',
+		() => countPendingInvites(db, orgId),
+		userId,
+		orgId
+	);
 }

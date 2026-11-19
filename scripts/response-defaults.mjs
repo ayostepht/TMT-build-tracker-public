@@ -29,7 +29,7 @@ const HTML_FALLBACK_CSP = "frame-ancestors 'none'";
 // PWA files that must be revalidated on every load: a browser re-checks the service worker script
 // itself, but proxies and the HTTP cache must not pin a stale worker, manifest or offline page.
 const REVALIDATE_PATHS = new Set(['/service-worker.js', '/manifest.webmanifest', '/offline.html']);
-const PRIVATE_URL_PATHS = /^\/(invite|reset-password)(\/|$)/;
+const PRIVATE_URL_PATHS = /^\/invite(\/|$)/;
 
 /**
  * Header name to value for a response. A CSP is only added to HTML, errors and `/api/`: a successful

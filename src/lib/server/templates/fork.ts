@@ -156,7 +156,10 @@ export async function forkTemplate(
 		// Count and insert in this one transaction under a per-workspace lock, so two requests
 		// cannot both pass the limit.
 		await advisoryLock(tx, `quota:kitCopies:${orgId}`);
-		await assertUnder(tx, 'kitCopiesPerWorkspace', () => countKitCopies(tx, orgId), { userId });
+		await assertUnder(tx, 'kitCopiesPerWorkspace', () => countKitCopies(tx, orgId), {
+			userId,
+			scope: orgId
+		});
 		const base = await first(tx.select().from(templates).where(eq(templates.id, baseTemplateId)));
 		if (!base) throw new ApiError(404, 'Template not found');
 		// Fork the original kit, not a fork of it.

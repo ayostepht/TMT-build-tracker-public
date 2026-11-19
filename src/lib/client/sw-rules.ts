@@ -34,7 +34,7 @@ export function isCacheableResponse(res: { type: string; status: number }): bool
 }
 
 /** Paths the worker never handles, whatever else matches (data, auth, streams, downloads). */
-const NEVER = /^\/(api|invite|reset-password)(\/|$)/;
+const NEVER = /^\/(api|invite)(\/|$)/;
 
 /** A page load that failed offline gets the offline page; API and download paths are left alone. */
 export function isOfflineFallbackRequest(mode: string, pathname: string): boolean {

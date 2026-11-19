@@ -114,7 +114,7 @@ describe('remapRoleKey', () => {
 		await db
 			.insert(buildPlates)
 			.values({ buildId: id, number: 90, name: 'P', filamentGrams: { primary: 5 } });
-		db.transaction(async (tx) => {
+		await db.transaction(async (tx) => {
 			await remapRoleKey(tx, id, 'primary', 'primary');
 			await remapRoleKey(tx, id, 'gone', 'primary');
 		});

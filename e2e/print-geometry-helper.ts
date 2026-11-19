@@ -2,10 +2,9 @@
 // in the e2e database and uploads directory, the same rows and files the kit admin import writes.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
 import { encodeMesh } from '../src/lib/server/print-geometry/mesh-format';
+import { insertable, withE2eDb } from './db';
 
-const DB = 'data/e2e/tmt.db';
 const UPLOADS = 'data/e2e/uploads';
 
 export const SYNTHETIC: Record<string, [number, number, number]> = {
@@ -56,24 +55,17 @@ function box(w: number, d: number, h: number) {
 const replaced: Record<string, unknown>[] = [];
 
 /** Returns the template id the geometry was registered for. */
-export function registerSyntheticGeometry(): string {
-	const db = new Database(DB);
-	try {
-		const tpl = db.prepare('select id from templates limit 1').get() as { id: string };
+export async function registerSyntheticGeometry(): Promise<string> {
+	return withE2eDb(async (sql) => {
+		const [tpl] = await sql<{ id: string }[]>`select id from templates limit 1`;
 		const dir = join(UPLOADS, 'print', tpl.id);
 		mkdirSync(dir, { recursive: true });
-		const existing = db.prepare(
-			`select * from template_print_geometry where template_id = ? and slug = ? and source_note != 'synthetic-e2e.3mf'`
-		);
 		for (const slug of Object.keys(SYNTHETIC)) {
-			const row = existing.get(tpl.id, slug) as Record<string, unknown> | undefined;
+			const [row] = await sql<Record<string, unknown>[]>`
+				select * from template_print_geometry
+				where template_id = ${tpl.id} and slug = ${slug} and source_note != 'synthetic-e2e.3mf'`;
 			if (row) replaced.push(row);
 		}
-		const upsert = db.prepare(
-			`insert or replace into template_print_geometry
-			 (template_id, slug, footprint, hull, height, tris, settings, mesh_path, source_note, updated_at)
-			 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-		);
 		for (const [slug, [w, d, h]] of Object.entries(SYNTHETIC)) {
 			const file = `${slug}.bin`;
 			writeFileSync(join(dir, file), encodeMesh(box(w, d, h)));
@@ -89,23 +81,27 @@ export function registerSyntheticGeometry(): string {
 				unitsPerPlate: 1,
 				pieces: [{ name: slug, w, d, h, copies: 1, hull, tris: 12, mesh: file, settings }]
 			};
-			upsert.run(
-				tpl.id,
+			const row = insertable(sql, {
+				template_id: tpl.id,
 				slug,
-				JSON.stringify(footprint),
-				JSON.stringify(hull),
-				h,
-				12,
-				JSON.stringify(settings),
-				`print/${tpl.id}/${file}`,
-				'synthetic-e2e.3mf',
-				Date.now()
-			);
+				footprint,
+				hull,
+				height: h,
+				tris: 12,
+				settings,
+				mesh_path: `print/${tpl.id}/${file}`,
+				source_note: 'synthetic-e2e.3mf',
+				updated_at: new Date()
+			});
+			await sql`
+				insert into template_print_geometry ${sql(row)}
+				on conflict (template_id, slug) do update set
+					footprint = excluded.footprint, hull = excluded.hull, height = excluded.height,
+					tris = excluded.tris, settings = excluded.settings, mesh_path = excluded.mesh_path,
+					source_note = excluded.source_note, updated_at = excluded.updated_at`;
 		}
 		return tpl.id;
-	} finally {
-		db.close();
-	}
+	});
 }
 
 /**
@@ -113,17 +109,16 @@ export function registerSyntheticGeometry(): string {
  * and the seed footprints live in the same table (other specs, e.g. printer-arrange, rely on the
  * real wing size not fitting a 256 mm bed), so deleting isn't enough: restore the originals.
  */
-export function removeSyntheticGeometry(): void {
-	const db = new Database(DB);
-	try {
-		db.prepare(`delete from template_print_geometry where source_note = 'synthetic-e2e.3mf'`).run();
-		const insert = db.prepare(
-			`insert or replace into template_print_geometry
-			 (template_id, slug, footprint, hull, height, tris, settings, mesh_path, source_note, updated_at)
-			 values (@template_id, @slug, @footprint, @hull, @height, @tris, @settings, @mesh_path, @source_note, @updated_at)`
-		);
-		for (const row of replaced.splice(0)) insert.run(row);
-	} finally {
-		db.close();
-	}
+export async function removeSyntheticGeometry(): Promise<void> {
+	await withE2eDb(async (sql) => {
+		await sql`delete from template_print_geometry where source_note = 'synthetic-e2e.3mf'`;
+		for (const row of replaced.splice(0)) {
+			await sql`
+				insert into template_print_geometry ${sql(insertable(sql, row))}
+				on conflict (template_id, slug) do update set
+					footprint = excluded.footprint, hull = excluded.hull, height = excluded.height,
+					tris = excluded.tris, settings = excluded.settings, mesh_path = excluded.mesh_path,
+					source_note = excluded.source_note, updated_at = excluded.updated_at`;
+		}
+	});
 }

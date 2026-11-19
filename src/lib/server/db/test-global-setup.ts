@@ -14,6 +14,42 @@ declare module 'vitest' {
 	}
 }
 
+type Admin = ReturnType<typeof postgres>;
+
+/**
+ * Transient while another backend is connected: `42501` when `WITH (FORCE)` may not terminate it
+ * (an autovacuum worker or another role's session; `tmt` is not a superuser), `55006` when a
+ * database (or a CREATE … TEMPLATE source) is in use. Both clear within moments.
+ */
+function isBusy(e: unknown): boolean {
+	const code = (e as { code?: string }).code;
+	return code === '42501' || code === '55006';
+}
+
+async function retryBusy(what: () => Promise<unknown>, attempts = 8): Promise<void> {
+	for (let i = 1; ; i++) {
+		try {
+			await what();
+			return;
+		} catch (e) {
+			if (!isBusy(e) || i >= attempts) throw e;
+			await new Promise((r) => setTimeout(r, 50 * 2 ** Math.min(i, 5)));
+		}
+	}
+}
+
+/** `CREATE DATABASE`, retried while the template is briefly in use (autovacuum). */
+export async function createDatabase(admin: Admin, name: string, template?: string): Promise<void> {
+	await retryBusy(() =>
+		admin.unsafe(`create database "${name}"${template ? ` template "${template}"` : ''}`)
+	);
+}
+
+/** `DROP DATABASE … WITH (FORCE)`, retried while a backend it may not terminate is connected. */
+export async function dropDatabase(admin: Admin, name: string): Promise<void> {
+	await retryBusy(() => admin.unsafe(`drop database if exists "${name}" with (force)`));
+}
+
 function withDatabase(url: string, name: string): string {
 	const u = new URL(url);
 	u.pathname = `/${name}`;
@@ -57,7 +93,10 @@ export default async function setup(project: TestProject) {
 			select datname from pg_database
 			where datname = ${template} or datname like ${prefix.replace(/_/g, '\\_') + '%'}`;
 		for (const { datname } of rows) {
-			await admin.unsafe(`drop database if exists "${datname}" with (force)`);
+			// A database left behind is harmless (scripts/dev-postgres.sh clean): never fail the run.
+			await dropDatabase(admin, datname).catch((e: Error) =>
+				console.warn(`[test db] could not drop ${datname}: ${e.message}`)
+			);
 		}
 		await admin.end({ timeout: 5 });
 	};

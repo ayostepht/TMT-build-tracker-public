@@ -115,7 +115,8 @@ export async function createCustomFilament(
 		const dup = await findDuplicate(tx, orgId, input);
 		if (dup) throw new DuplicateFilamentError(dup.id);
 		await assertUnder(tx, 'customFilamentsPerWorkspace', () => countCustomFilaments(tx, orgId), {
-			userId
+			userId,
+			scope: orgId
 		});
 		return one(
 			tx

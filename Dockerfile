@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
-# Build tools are only needed here, in case better-sqlite3 has no prebuilt binary for the platform.
+# Build tools are only needed here, in case a native dependency has no prebuilt binary for the platform.
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json .npmrc ./
@@ -33,7 +33,7 @@ ENV NODE_ENV=production \
     BODY_SIZE_LIMIT=1100M \
     PORT=3000 \
     HOST=0.0.0.0 \
-    DATABASE_URL=/data/tmt.db \
+    DATA_DIR=/data \
     KITPACK_DIR=/app/kitpacks
 # PUBLIC_URL is intentionally unset: the origin is then taken from each request
 # (http by default, https when a proxy sends X-Forwarded-Proto). See the README.
@@ -43,7 +43,7 @@ COPY --from=builder --chown=node:node /app/build ./build
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/package.json ./package.json
 COPY --from=builder --chown=node:node /app/drizzle ./drizzle
-COPY --from=builder --chown=node:node /app/scripts/proxy-origin.mjs /app/scripts/response-defaults.mjs /app/scripts/import-print-geometry.mjs /app/scripts/build-kit-pack.mjs /app/scripts/reset-password-link.mjs ./scripts/
+COPY --from=builder --chown=node:node /app/scripts/proxy-origin.mjs /app/scripts/response-defaults.mjs /app/scripts/import-print-geometry.mjs /app/scripts/build-kit-pack.mjs ./scripts/
 COPY --from=kitpack --chown=node:node /kitpacks ./kitpacks
 USER node
 VOLUME /data

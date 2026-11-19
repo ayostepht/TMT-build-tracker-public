@@ -1,8 +1,6 @@
-import Database from 'better-sqlite3';
 import { expect, test } from './fixtures';
 import { PASSWORD, uniqueEmail } from './helpers';
-
-const DB = 'data/e2e/tmt.db';
+import { withE2eDb } from './db';
 
 test.describe('origin handling over plain http', () => {
 	test('a cross-site form post is rejected', async ({ request }) => {
@@ -56,20 +54,15 @@ test.describe('sessions and rate limits', () => {
 		});
 		expect(inn.ok(), `sign-in ${inn.status()} ${await inn.text()}`).toBe(true);
 
-		const db = new Database(DB, { readonly: true });
-		try {
-			const rows = db
-				.prepare(
-					'select s.ip_address as ip, s.user_agent as ua from session s join user u on u.id = s.user_id where u.email = ?'
-				)
-				.all(email) as { ip: string | null; ua: string | null }[];
-			expect(rows.length).toBeGreaterThan(0);
-			for (const r of rows) {
-				expect(r.ip ?? '').toBe('');
-				expect(r.ua ?? '').not.toBe('');
-			}
-		} finally {
-			db.close();
+		const rows = await withE2eDb(
+			(sql) => sql<{ ip: string | null; ua: string | null }[]>`
+				select s.ip_address as ip, s.user_agent as ua
+				from "session" s join "user" u on u.id = s.user_id where u.email = ${email}`
+		);
+		expect(rows.length).toBeGreaterThan(0);
+		for (const r of rows) {
+			expect(r.ip ?? '').toBe('');
+			expect(r.ua ?? '').not.toBe('');
 		}
 	});
 

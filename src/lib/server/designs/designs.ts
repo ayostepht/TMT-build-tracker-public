@@ -279,6 +279,7 @@ export async function templateRoleKeys(db: DbOrTx, templateId: string): Promise<
 			.select({ k: templateFilamentRoles.key })
 			.from(templateFilamentRoles)
 			.where(eq(templateFilamentRoles.templateId, templateId))
+			.orderBy(asc(templateFilamentRoles.key))
 	).map((r) => r.k);
 }
 

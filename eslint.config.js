@@ -34,6 +34,21 @@ export default defineConfig(
 		}
 	},
 	{
+		// Every DB call is async (Postgres): a missing `await` on an access check is a Promise,
+		// which is always truthy. Typed rules catch unawaited and misused promises.
+		files: [
+			'src/lib/server/**/*.ts',
+			'src/routes/**/+*.server.ts',
+			'src/routes/**/+server.ts',
+			'src/hooks.server.ts'
+		],
+		languageOptions: { parserOptions: { projectService: true } },
+		rules: {
+			'@typescript-eslint/no-floating-promises': 'error',
+			'@typescript-eslint/no-misused-promises': 'error'
+		}
+	},
+	{
 		// Override or add rule settings here, such as:
 		// 'svelte/button-has-type': 'error'
 		rules: {}

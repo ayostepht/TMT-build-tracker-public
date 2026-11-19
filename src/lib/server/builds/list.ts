@@ -159,7 +159,9 @@ export async function draftRows(db: DbOrTx, orgIds: string[]): Promise<DraftRow[
 				templateFilamentRoles.templateId,
 				rows.map((r) => r.templateId)
 			)
-		);
+		)
+		// SQLite returned these in primary-key (key) order; keep that slot order.
+		.orderBy(asc(templateFilamentRoles.key));
 	for (const t of roles)
 		roleOrder.set(t.templateId, [...(roleOrder.get(t.templateId) ?? []), t.key]);
 	const slotRank = (templateId: string, key: string) => {

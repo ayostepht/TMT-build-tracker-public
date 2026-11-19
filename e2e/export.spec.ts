@@ -40,7 +40,7 @@ test('export for a slicer: no geometry, then a project 3MF per color and a plain
 	expect(noGeo.status()).toBe(409);
 
 	// Register synthetic geometry for a few parts and re-arrange so the plates use their sizes.
-	registerSyntheticGeometry();
+	await registerSyntheticGeometry();
 	const re = await page.request.post(`/api/builds/${buildId}/plates/arrange`, {
 		data: { convertRuns: true }
 	});

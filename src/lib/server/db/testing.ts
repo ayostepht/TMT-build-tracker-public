@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import postgres from 'postgres';
 import { inject } from 'vitest';
 import { closeDb, openDb, type Db } from './index';
+import { createDatabase, dropDatabase } from './test-global-setup';
 
 const names = new WeakMap<Db, string>();
 let admin: ReturnType<typeof postgres> | undefined;
@@ -26,7 +27,7 @@ export async function createTestDb(opts: { max?: number } = {}): Promise<Db> {
 		throw new Error('Test database template missing: run through vitest (see vitest.config.ts).');
 	admin ??= postgres(ctx.adminUrl, { max: 1, prepare: false, onnotice: () => {} });
 	const name = `${ctx.prefix}${randomBytes(4).toString('hex')}`;
-	await admin.unsafe(`create database ${name} template ${ctx.template}`);
+	await createDatabase(admin, name, ctx.template);
 	const db = openDb(withDatabase(ctx.adminUrl, name), { max: opts.max ?? 4 });
 	names.set(db, name);
 	return db;
@@ -39,7 +40,7 @@ export async function createEmptyTestDb(opts: { max?: number } = {}): Promise<Db
 		throw new Error('Test database template missing: run through vitest (see vitest.config.ts).');
 	admin ??= postgres(ctx.adminUrl, { max: 1, prepare: false, onnotice: () => {} });
 	const name = `${ctx.prefix}${randomBytes(4).toString('hex')}`;
-	await admin.unsafe(`create database ${name}`);
+	await createDatabase(admin, name);
 	const db = openDb(withDatabase(ctx.adminUrl, name), { max: opts.max ?? 4 });
 	names.set(db, name);
 	return db;
@@ -49,6 +50,7 @@ export async function createEmptyTestDb(opts: { max?: number } = {}): Promise<Db
 export async function dropTestDb(db: Db): Promise<void> {
 	const name = names.get(db);
 	await closeDb(db);
-	if (name && admin) await admin.unsafe(`drop database if exists "${name}" with (force)`);
+	// Best effort: the run's teardown drops whatever is left (a busy database is retried there too).
+	if (name && admin) await dropDatabase(admin, name).catch(() => {});
 	names.delete(db);
 }

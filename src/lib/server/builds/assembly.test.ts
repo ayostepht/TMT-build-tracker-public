@@ -235,7 +235,7 @@ describe('setAssemblyItem', () => {
 	});
 
 	it('rejects viewers (403), outsiders (404) and unknown or inactive items (400)', async () => {
-		const code = async (fn: () => void) => {
+		const code = async (fn: () => unknown) => {
 			try {
 				await fn();
 			} catch (e) {

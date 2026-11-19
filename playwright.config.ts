@@ -1,11 +1,13 @@
 import { defineConfig, devices } from '@playwright/test';
+import { E2E_DATABASE_URL } from './e2e/db';
 
 const PORT = Number(process.env.E2E_PORT ?? 4173);
 const DB_DIR = 'data/e2e';
 // E2E_BASE_URL points the suite at an already running instance (for example the Docker image).
 const EXTERNAL = process.env.E2E_BASE_URL;
 
-// The app runs in production mode against a fresh SQLite file per run, over plain
+// The app runs in production mode against a fresh Postgres database per run (`tmt_e2e` on the local
+// dev Postgres, or E2E_DATABASE_URL; reset by e2e/reset-db.mjs), files under data/e2e, over plain
 // http on 127.0.0.1 with PUBLIC_URL unset, which is the "open it by LAN IP" case.
 export default defineConfig({
 	testDir: 'e2e',
@@ -24,7 +26,7 @@ export default defineConfig({
 	webServer: EXTERNAL
 		? undefined
 		: {
-				command: `rm -rf ${DB_DIR} && mkdir -p ${DB_DIR} && npm run build && npm start`,
+				command: `rm -rf ${DB_DIR} && mkdir -p ${DB_DIR} && node e2e/reset-db.mjs && npm run build && npm start`,
 				url: `http://127.0.0.1:${PORT}/api/health`,
 				timeout: 240_000,
 				reuseExistingServer: false,
@@ -34,7 +36,8 @@ export default defineConfig({
 					NODE_ENV: 'production',
 					HOST: '127.0.0.1',
 					PORT: String(PORT),
-					DATABASE_URL: `${DB_DIR}/tmt.db`,
+					DATABASE_URL: E2E_DATABASE_URL,
+					DATA_DIR: DB_DIR,
 					BETTER_AUTH_SECRET: 'e2e-secret-not-for-production-0123456789abcdef',
 					BODY_SIZE_LIMIT: '1100M',
 					// Behave like an install behind one trusted reverse proxy: the client address

@@ -14,7 +14,11 @@ interface StartMessage {
 	parts: MatchPart[];
 }
 
-process.on('message', async (msg: StartMessage) => {
+process.on('message', (msg: StartMessage) => {
+	void handle(msg);
+});
+
+async function handle(msg: StartMessage) {
 	if (msg?.type !== 'start') return;
 	try {
 		const result = await convertStepZipToGlb({
@@ -29,4 +33,4 @@ process.on('message', async (msg: StartMessage) => {
 			process.exit(1)
 		);
 	}
-});
+}

@@ -35,7 +35,7 @@ export const API_CSP = `${LOCKDOWN_CSP}; sandbox`;
 const HTML_FALLBACK_CSP = "frame-ancestors 'none'";
 
 /** Paths whose URL carries a bearer id or token: never sent as a Referer, even same-origin. */
-const PRIVATE_URL_PATHS = /^\/(invite|reset-password)(\/|$)/;
+const PRIVATE_URL_PATHS = /^\/invite(\/|$)/;
 
 export interface HeaderContext {
 	pathname: string;

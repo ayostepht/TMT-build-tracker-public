@@ -52,7 +52,7 @@ const mkDraft = async (name = 'Draft 1') =>
 	);
 const mkBuild = async (name = 'Build A') =>
 	await createBuild(db, { organizationId: orgId, templateId, designId: null, name }, 'owner');
-const rejected = async (fn: () => void) => {
+const rejected = async (fn: () => unknown) => {
 	try {
 		await fn();
 	} catch (e) {
