@@ -8,9 +8,9 @@ name: public-ci
 # version tags and plain `sha-*` belong to docker.yml.
 on:
   push:
-    branches: [claude/elegant-fermi-ea7mci]
+    branches: [public-site]
   pull_request:
-    branches: [claude/elegant-fermi-ea7mci]
+    branches: [public-site]
   workflow_dispatch:
 
 permissions:
@@ -124,7 +124,7 @@ jobs:
   publish:
     name: publish image (public tag)
     # Never on pull requests; only a push to the hosted-site branch.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/claude/elegant-fermi-ea7mci'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/public-site'
     needs: [test, e2e, image]
     runs-on: ubuntu-latest
     timeout-minutes: 45

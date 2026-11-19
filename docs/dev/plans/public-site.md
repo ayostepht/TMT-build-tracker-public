@@ -1,6 +1,6 @@
 # Public hosted site: plan and progress
 
-Track: branch `claude/elegant-fermi-ea7mci` (started 2026-11-19). Separate from the self-hosted
+Track: branch `public-site` (started 2026-11-19 as `claude/elegant-fermi-ea7mci`). Separate from the self-hosted
 0.9.x line on `edge`/`main`, which this work never touches. This file is the handoff for this
 track: rewrite the "Progress" section in place as work lands.
 
