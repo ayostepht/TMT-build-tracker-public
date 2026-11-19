@@ -52,11 +52,6 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - Team slugs (`teams.ts` `uniqueSlug`) have the same check-then-insert race the design slugs
   had; give it the same advisory lock.
 
-- `preview:demo` (`scripts/preview-demo.mjs`, `scripts/preview/seed.mjs`) still signs up
-  with email/password and runs with self-hosted settings; sign-up no longer exists, so the
-  local preview needs porting (seed through the test sign-in or the demo) [app-shell].
-- `startup.ts` header comment still says helpers are "synchronous until the async port
-  lands"; they are async now [kit-and-startup].
 - README screenshots predate the new visual language, and the Integrations screenshot shows
   LAN options; the screenshot script was removed with the mock LAN printer [release-pwa].
 - No e2e seam for link printers: the live-mock printer specs were removed; logic is covered

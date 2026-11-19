@@ -53,7 +53,7 @@ and `docker exec tmt-postgres createdb -U tmt tmt_test`.
 | `tmt_dev`                    | `npm run dev`                             | `DATABASE_URL` (`postgres://tmt:tmt@localhost:5432/tmt_dev`) |
 | `tmt_test` + per-file clones | Vitest (`createTestDb()`)                 | `TEST_DATABASE_URL` (`…/tmt_test`)                           |
 | `tmt_e2e`                    | Playwright, dropped and recreated per run | `E2E_DATABASE_URL` (`…/tmt_e2e`; must end in `_e2e`)         |
-| `tmt_preview`                | `npm run preview:demo` (see below)        | derived from `DATABASE_URL`                                  |
+| `tmt_preview_test`           | `npm run preview:demo` (see below)        | derived from `DATABASE_URL`                                  |
 
 ## Environment for development
 
@@ -112,11 +112,14 @@ one task = one branch = one worktree = one pull request into `main`.
 ## Local preview
 
 `npm run preview:demo` (`scripts/preview-demo.mjs`) builds the working tree into
-`data/preview/build`, serves it on `0.0.0.0:5200` against its own `tmt_preview` database and
-seeds invented sample data through the HTTP API, for review on the Mac and a phone on the
-same Wi-Fi. **Not ported yet:** it still seeds by email/password sign-up with self-hosted
-settings, which this edition removed (STATUS open item). Until it is fixed, review UI from
-the agents' screenshots or `npm run dev` with the demo.
+`data/preview/build`, serves it on port 5200 against its own `tmt_preview_test` database and
+seeds invented sample data (an owner and an editor in a demo team, two builds, a draft, a saved
+design, a manual printer). It runs with `NODE_ENV=test` and `E2E_AUTH=1`, so it signs in through
+the guarded test sign-in (the database name must end in `_test`; the guard in `auth-e2e.ts` is
+unchanged). There is no password: open `http://localhost:5201/` (port + 1) to be signed in as
+the owner, or `http://localhost:5201/?as=editor` as the editor. That helper listens on
+127.0.0.1 only, because it signs in whoever reaches it; to try a phone, use an SSH tunnel to
+port 5201. `--fresh` drops and recreates the preview database.
 
 ## Docker in a cloud session
 

@@ -15,23 +15,26 @@ _Updated 2026-11-19. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## State
 
-- `main` 8eb3f1e: live. `public-ci` green, image published, running on the maintainer's server
-  behind a Cloudflare Tunnel against Supabase; Google sign-in, home page and demo verified;
-  Supabase lockdown verified on the real project.
-- Pull request #1 `docs/hosted-repo`: rewrites the repository docs, agent files and package
-  metadata for the hosted edition (this file included), plus the first-deploy record.
-- Pull request #2 `fix/repo-links`: site links point at this repository, accurate comments,
-  `preview:demo` works again on the guarded test sign-in.
-- Both wait for the maintainer's review; merging either republishes the image.
+- `main`: live. #1 (docs for the hosted edition) and #2 (repository links, accurate comments,
+  working `preview:demo`) merged 2026-11-19; each publishes a new `:latest`.
+- Pull request #3 `fix/team-slugs-and-index`: migration `0001` drops the duplicate
+  `organization.slug` index; team creation retries on a slug conflict. Maintainer approved
+  merging once `public-ci` is green (no real data on the live site yet).
+- Sibling repository: the resource-limit back-port is open there as a pull request into `edge`
+  (`fix/resource-limits`); merging and releasing are the maintainer's call.
+- Google Safe Browsing flagged the new domain (false positive, likely because it is new and its
+  main buttons are third-party sign-in); the maintainer requested a review in Search Console
+  and filed a false-positive report. Don't share the site widely until it clears.
 
 ## Next step
 
-1. After #1 merges: one line in `docs/dev/dev-environments.md` for the new preview sign-in
-   (port + 1 helper on 127.0.0.1, database `tmt_preview_test`), from #2.
-2. STATUS open items: duplicate `organization.slug` index (new migration), team slug race
-   (advisory lock like design slugs), `printers.host` placeholder column (decide; any change
-   is a new migration now).
-3. With the maintainer: analytics provider, backup schedule, repository settings.
+1. Merge #3 when green; then the maintainer updates the container once (it runs migration
+   `0001` on start) and checks the logs.
+2. STATUS open items: `printers.host` placeholder (needs a printers-side change before a
+   migration can drop it), Turnstile on `/demo`, the gallery "Allow sharing again" button,
+   `maxlength` on build text fields.
+3. With the maintainer: analytics provider, backup schedule (script given in the session:
+   nightly `pg_dump` through a `postgres:17` container), repository settings.
 
 ## Questions waiting for the maintainer
 
