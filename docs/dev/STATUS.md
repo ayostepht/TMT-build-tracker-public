@@ -28,8 +28,7 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   security advisor shows only that informational notice.
 - **Migrations:** one baseline, `drizzle/0000_baseline.sql`, applied to the live database on
   2026-11-19. **Frozen from now on:** schema changes add new migrations; never edit or
-  regenerate the baseline. `0001_drop_duplicate_org_slug_index` merged 2026-11-19 (#3); it runs
-  on the next container start. Team creation now retries on a slug conflict.
+  regenerate the baseline. `0001_drop_duplicate_org_slug_index` merged and applied 2026-11-19 (#3). Team creation now retries on a slug conflict.
 
 ## Waiting on the maintainer
 

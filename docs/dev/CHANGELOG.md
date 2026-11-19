@@ -14,6 +14,9 @@ repository was split off on 2026-11-19) is in the sibling repository,
 
 ## 2026-11
 
+- **2026-11-19, second deploy.** Image from `main` aeab2bc (includes #1 docs, #2 repository
+  links and working preview, #3 team slug retry). Migration: `0001_drop_duplicate_org_slug_index`
+  applied on start; Supabase advisor confirms the duplicate index is gone. Nothing to watch.
 - **2026-11-19, first deploy.** Image `sha-8eb3f1e` (`main` 8eb3f1e) on the maintainer's
   server behind a Cloudflare Tunnel, Supabase Postgres. Empty database: baseline migration,
   Supabase lockdown, seed and kit pack ran on first start; Google sign-in verified. Migration:
