@@ -163,7 +163,7 @@ export async function deleteOwnedTemplates(
 		if (!fallback)
 			throw new ApiError(
 				409,
-				'Other chapters still use this kit copy and there is no built-in kit to move them to, so nothing was deleted.'
+				'Other teams still use this kit copy and there is no built-in kit to move them to, so nothing was deleted.'
 			);
 		await tx
 			.update(builds)

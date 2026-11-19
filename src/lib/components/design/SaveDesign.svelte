@@ -8,10 +8,9 @@
 
 	const ctx = getBuildCtx();
 	let name = $state('');
-	let isPublic = $state(false);
 	let busy = $state(false);
 	let error = $state<string | null>(null);
-	let saved = $state<{ slug: string; name: string; isPublic: boolean } | null>(null);
+	let saved = $state<{ slug: string; name: string } | null>(null);
 	let copied = $state(false);
 
 	const url = $derived(saved ? `${page.url.origin}/designs/${saved.slug}` : '');
@@ -24,8 +23,8 @@
 		}
 		busy = true;
 		try {
-			const d = await createDesign({ buildId: ctx.id, name: name.trim(), isPublic });
-			saved = { slug: d.slug, name: name.trim(), isPublic };
+			const d = await createDesign({ buildId: ctx.id, name: name.trim() });
+			saved = { slug: d.slug, name: name.trim() };
 			if (snapshot) {
 				try {
 					await uploadDesignSnapshot(d.id, await snapshot());
@@ -55,7 +54,7 @@
 <section class="save" aria-label="Share or save as design">
 	<p class="muted">
 		Your changes to this build are already saved. Save a copy of the colors as a design to reuse on
-		another build, or share its link with other makers.
+		another build, or share it to the gallery from its page.
 	</p>
 	{#if ctx.canEdit}
 		<form
@@ -69,10 +68,6 @@
 				Design name
 				<input bind:value={name} maxlength="100" placeholder="e.g. Ocean blues" />
 			</label>
-			<label class="check">
-				<input type="checkbox" bind:checked={isPublic} />
-				Share publicly (anyone signed in to this server can find it in Designs)
-			</label>
 			{#if error}<div class="error" role="alert">{error}</div>{/if}
 			<button class="btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save design'}</button>
 		</form>
@@ -82,9 +77,7 @@
 	{#if saved}
 		<div class="done" role="status" data-testid="design-saved">
 			<b>Saved "{saved.name}".</b>
-			{saved.isPublic
-				? 'It is public.'
-				: 'Only you and people in your chapters can open this link.'}
+			Only you and people in your teams can open this link. Share it to the gallery from the design page.
 			<div class="link">
 				<input
 					readonly
@@ -102,12 +95,6 @@
 </section>
 
 <style>
-	.check {
-		display: flex;
-		gap: var(--sp-4);
-		align-items: flex-start;
-		font-size: var(--fs-md);
-	}
 	.save {
 		display: grid;
 		gap: var(--sp-6);

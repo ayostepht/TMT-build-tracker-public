@@ -294,7 +294,7 @@ test('the Printers view: empty state with a way to Integrations; viewers are tol
 	const link = await invite(page, viewerEmail, 'viewer');
 	const { context, page: v } = await joinViaInvite(browser, link, 'Vera', viewerEmail);
 	await v.goto(`${new URL(chapterUrl).pathname}/printers`);
-	await expect(v.getByTestId('printers-empty')).toContainText('Ask a chapter owner or editor');
+	await expect(v.getByTestId('printers-empty')).toContainText('Ask a team owner or editor');
 	await expect(v.getByTestId('printers-manage')).toHaveCount(0);
 	await context.close();
 });

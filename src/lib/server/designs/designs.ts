@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { effectivePartRoles } from '#lib/domain/design.ts';
 import { ApiError } from '../access';
 import { diskHasRoom } from '../config';
@@ -21,7 +21,8 @@ import {
 	snapshotWorkspace
 } from '../quota';
 import { listTeams } from '../teams';
-import { canSeeDesign, canSeeDesignWith, coworkerIds, type DesignRow } from './access';
+import { canSeeDesign, coworkerIds, type DesignRow } from './access';
+import { publicSharerName } from './gallery';
 import {
 	hasSnapshot,
 	isPng,
@@ -33,6 +34,9 @@ import {
 import type { DesignRole } from './mutate';
 import { isObj } from '#lib/domain/guards.ts';
 
+/** Most designs one list call returns. */
+const LIST_LIMIT = 500;
+
 export interface DesignSummary {
 	id: string;
 	slug: string;
@@ -41,7 +45,6 @@ export interface DesignSummary {
 	templateName: string;
 	authorUserId: string | null;
 	authorName: string | null;
-	isPublic: boolean;
 	/** Listed in the shared gallery. */
 	shared: boolean;
 	/** The gallery design this was copied from, when it was. */
@@ -140,6 +143,9 @@ async function summarize(db: DbOrTx, rows: DesignRow[], userId: string): Promise
 				).map((u) => [u.id, u.name])
 			: []
 	);
+	const coworkers = await coworkerIds(db, userId);
+	const close = (d: DesignRow) =>
+		!d.authorUserId || d.authorUserId === userId || coworkers.has(d.authorUserId);
 	return Promise.all(
 		rows.map(async (d) => {
 			const counts: Record<string, number> = {};
@@ -153,9 +159,13 @@ async function summarize(db: DbOrTx, rows: DesignRow[], userId: string): Promise
 				name: d.name,
 				templateId: d.templateId,
 				templateName: tplNames.get(d.templateId) ?? '',
-				authorUserId: d.authorUserId,
-				authorName: d.authorUserId ? (authors.get(d.authorUserId) ?? null) : null,
-				isPublic: d.isPublic,
+				// Strangers (viewing a shared design) get the public sharer name, never the user id.
+				authorUserId: close(d) ? d.authorUserId : null,
+				authorName: close(d)
+					? d.authorUserId
+						? (authors.get(d.authorUserId) ?? null)
+						: null
+					: publicSharerName(d.authorUserId ? authors.get(d.authorUserId) : null),
 				shared: d.sharedAt !== null,
 				copiedFromId: d.copiedFromDesignId,
 				mine: d.authorUserId === userId,
@@ -168,22 +178,28 @@ async function summarize(db: DbOrTx, rows: DesignRow[], userId: string): Promise
 	);
 }
 
-/** Designs the user may see (public, their own, their co-members'), newest first. */
+/** Designs the user may see (their own, their co-members', and the seeded examples), newest first. */
 export async function listDesigns(
 	db: DbOrTx,
 	userId: string,
 	opts: { templateId?: string } = {}
 ): Promise<DesignSummary[]> {
-	const all = await db
+	const coworkers = await coworkerIds(db, userId);
+	// Own, co-members' and seeded designs only, filtered in SQL.
+	const rows = await db
 		.select()
 		.from(colorDesigns)
-		.orderBy(desc(colorDesigns.createdAt), asc(colorDesigns.name));
-	const coworkers = await coworkerIds(db, userId);
-	const rows = all.filter(
-		(d) =>
-			(!opts.templateId || d.templateId === opts.templateId) &&
-			canSeeDesignWith(d, userId, coworkers)
-	);
+		.where(
+			and(
+				opts.templateId ? eq(colorDesigns.templateId, opts.templateId) : undefined,
+				or(
+					isNull(colorDesigns.authorUserId),
+					inArray(colorDesigns.authorUserId, [userId, ...coworkers])
+				)
+			)
+		)
+		.orderBy(desc(colorDesigns.createdAt), asc(colorDesigns.name))
+		.limit(LIST_LIMIT);
 	return summarize(db, rows, userId);
 }
 
@@ -218,8 +234,6 @@ export async function createDesign(
 	if (!isObj(body)) bad('Invalid body');
 	if (typeof body.buildId !== 'string') bad('buildId is required');
 	const name = designName(body.name);
-	if (body.isPublic !== undefined && typeof body.isPublic !== 'boolean')
-		bad('isPublic must be true or false');
 	const view = await loadBuildView(db, body.buildId, userId);
 	if (!view) throw new ApiError(404, 'Not found');
 	if (!view.canEdit) throw new ApiError(403, 'Your role cannot edit');
@@ -242,15 +256,14 @@ export async function createDesign(
 					name,
 					authorUserId: userId,
 					roles,
-					partRoles: effectivePartRoles(view),
-					isPublic: body.isPublic === true
+					partRoles: effectivePartRoles(view)
 				})
 				.returning({ id: colorDesigns.id, slug: colorDesigns.slug })
 		);
 	});
 }
 
-/** Rename or publish/unpublish. Author only. */
+/** Rename. Author only. (Sharing to the gallery has its own functions in gallery.ts.) */
 export async function updateDesignMeta(
 	db: DbOrTx,
 	key: string,
@@ -262,10 +275,6 @@ export async function updateDesignMeta(
 	requireAuthor(d, userId);
 	const set: Partial<typeof colorDesigns.$inferInsert> = {};
 	if (body.name !== undefined) set.name = designName(body.name);
-	if (body.isPublic !== undefined) {
-		if (typeof body.isPublic !== 'boolean') bad('isPublic must be true or false');
-		set.isPublic = body.isPublic;
-	}
 	if (!Object.keys(set).length) bad('Nothing to update');
 	await db.update(colorDesigns).set(set).where(eq(colorDesigns.id, d.id));
 }

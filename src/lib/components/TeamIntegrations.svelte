@@ -87,7 +87,7 @@
 				slicer grams and the printer's print time. Off: you get a "Confirm print log" prompt
 				instead.
 			</p>
-			{#if !canEdit}<p class="muted">Only chapter owners and editors can change this.</p>{/if}
+			{#if !canEdit}<p class="muted">Only team owners and editors can change this.</p>{/if}
 		{/if}
 		<div role="status" class="ti-msg">{msg}</div>
 		{#if err}<div class="error" role="alert">{err}</div>{/if}

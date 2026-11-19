@@ -20,9 +20,9 @@
 <svelte:head><title>{data.team.name} · TMT Build Tracker</title></svelte:head>
 
 <section class="stack">
-	<div class="kicker">{data.team.personal ? 'Just you' : `Chapter (${data.role})`}</div>
+	<div class="kicker">{data.team.personal ? 'Just you' : `Team (${data.role})`}</div>
 	<h1>{data.team.name}</h1>
-	<nav class="tabs" aria-label="Chapter sections">
+	<nav class="tabs" aria-label="Team sections">
 		{#each tabs as t (t.href)}
 			<a href={t.href} aria-current={page.url.pathname === t.href ? 'page' : undefined}>{t.label}</a
 			>

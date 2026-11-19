@@ -52,7 +52,7 @@ export async function requireEditor(db: DbOrTx, orgId: string, userId: string): 
 
 export async function requireOwner(db: DbOrTx, orgId: string, userId: string): Promise<TeamRole> {
 	const role = await requireMember(db, orgId, userId);
-	if (role !== 'owner') throw new ApiError(403, 'Only chapter owners can do this');
+	if (role !== 'owner') throw new ApiError(403, 'Only team owners can do this');
 	return role;
 }
 

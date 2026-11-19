@@ -69,7 +69,7 @@ export const actions: Actions = {
 		const { org, role } = await teamFor(params.slug, locals.user!.id);
 		if (role !== 'owner') return fail(403, { error: 'Only owners can invite' });
 		if (isPersonalMetadata(org.metadata))
-			return fail(400, { error: 'Create a chapter to invite people' });
+			return fail(400, { error: 'Create a team to invite people' });
 		const f = await request.formData();
 		const email = String(f.get('email') ?? '')
 			.trim()

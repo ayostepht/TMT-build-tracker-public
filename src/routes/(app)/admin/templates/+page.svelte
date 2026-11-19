@@ -34,7 +34,7 @@
 					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 					<a href={resolve('/(app)/admin/templates/[id]', { id: t.id }) + from}>{t.name}</a>
 				</h3>
-				<div class="muted">{t.version}{t.owned ? ' · chapter copy' : ''}</div>
+				<div class="muted">{t.version}{t.owned ? ' · team copy' : ''}</div>
 				<div class="counts">
 					<span class="ds-badge ds-badge--sm">{t.parts} parts</span>
 					<span class="ds-badge ds-badge--sm">{t.plates} plates</span>

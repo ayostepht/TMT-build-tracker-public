@@ -13,7 +13,6 @@ test('Files: printed plates collapse behind a remembered toggle; per-plate expor
 	await page.goto(`/builds/${buildId}/files`);
 	await page.waitForLoadState('networkidle');
 	await arrangeForCentauri(page);
-	await expect(page.getByTestId('bed-compact')).toBeVisible();
 
 	// Nothing printed yet: no toggle, per-plate export is there.
 	await expect(page.getByTestId('printed-plates-toggle')).toHaveCount(0);

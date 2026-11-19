@@ -17,7 +17,7 @@
 		<p class="muted">
 			Version <span data-testid="app-version">{version}</span>. A self-hosted, open-source app for
 			makers who 3D-print MakeGood's toddler mobility trainer: plan, print, assemble and hand off
-			each chair with your chapter.
+			each chair with your team.
 		</p>
 	</header>
 

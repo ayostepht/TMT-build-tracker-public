@@ -12,7 +12,7 @@ import { and, asc, count, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle
 import { colorFamily, type FamilyId } from '#lib/domain/swatch-picker.ts';
 import { ApiError, requireNotDemoId, requireSiteAdmin, type SiteAdminCandidate } from '../access';
 import { advisoryLock, first, one, type DbOrTx } from '../db';
-import { colorDesigns, templates, user } from '../db/schema';
+import { colorDesigns, designShareEvents, templates, user } from '../db/schema';
 import { assertUnder, countSavedDesigns } from '../quota';
 import { type DesignRow } from './access';
 import { findDesign, uniqueSlug } from './designs';
@@ -21,7 +21,7 @@ import type { DesignRole } from './mutate';
 
 export const GALLERY_PAGE_SIZE = 24;
 export const GALLERY_MAX_PAGE_SIZE = 48;
-/** Shares one person may start in 24 hours (a design shared again counts again). */
+/** Share actions one person may do in 24 hours (sharing the same design again counts again). */
 export const SHARES_PER_DAY = 20;
 const FAMILY_IDS = new Set<string>([
 	'red',
@@ -39,7 +39,10 @@ export interface GalleryItem {
 	id: string;
 	slug: string;
 	name: string;
+	templateId: string;
 	templateName: string;
+	/** Part slug to slot key, so the card can draw the design on the chair when it has no saved picture. */
+	partRoles: Record<string, string>;
 	/** Display name of the person who shared it (never an email). */
 	sharerName: string;
 	sharedAt: string;
@@ -143,7 +146,9 @@ async function toItems(db: DbOrTx, rows: DesignRow[], userId: string): Promise<G
 			id: d.id,
 			slug: d.slug,
 			name: d.name,
+			templateId: d.templateId,
 			templateName: tplNames.get(d.templateId) ?? '',
+			partRoles: d.partRoles,
 			sharerName: names.get(d.sharedBy ?? d.authorUserId ?? '') ?? 'A maker',
 			sharedAt: (d.sharedAt ?? d.createdAt).toISOString(),
 			roles: d.roles,
@@ -154,7 +159,7 @@ async function toItems(db: DbOrTx, rows: DesignRow[], userId: string): Promise<G
 	);
 }
 
-/** Shared designs, newest first. `q` matches the name; `family` keeps designs with a color in that family. */
+/** Shared designs, newest first-shared first (sharing again doesn't move a design up). `q` matches the name; `family` keeps designs with a color in that family. */
 export async function listGallery(
 	db: DbOrTx,
 	userId: string,
@@ -170,7 +175,11 @@ export async function listGallery(
 		isNotNull(colorDesigns.sharedAt),
 		q ? sql`${colorDesigns.name} ilike ${'%' + likeEscape(q) + '%'} escape '\\'` : undefined
 	);
-	const order = [desc(colorDesigns.sharedAt), asc(colorDesigns.id)] as const;
+	const order = [
+		desc(colorDesigns.firstSharedAt),
+		desc(colorDesigns.sharedAt),
+		asc(colorDesigns.id)
+	] as const;
 	let rows: DesignRow[];
 	let total: number;
 	let page = Math.max(1, Math.floor(opts.page ?? 1) || 1);
@@ -243,6 +252,16 @@ export async function shareDesign(db: DbOrTx, key: string, userId: string): Prom
 	const d = await findDesign(db, key, userId);
 	if (d.authorUserId !== userId) throw new ApiError(403, 'Only the author can share a design');
 	if (d.sharedAt) return;
+	if (d.hiddenFromGalleryAt)
+		throw new ApiError(403, 'A site admin removed this design from the gallery.');
+	const tpl = await first(
+		db.select({ owner: templates.ownerOrgId }).from(templates).where(eq(templates.id, d.templateId))
+	);
+	if (tpl?.owner)
+		throw new ApiError(
+			400,
+			"Designs on your team's own kit copy can't be shared to the gallery. Save it on the standard MakeGood kit first."
+		);
 	await db.transaction(async (tx) => {
 		await advisoryLock(tx, `gallery:share:${userId}`);
 		const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -250,15 +269,21 @@ export async function shareDesign(db: DbOrTx, key: string, userId: string): Prom
 			await one(
 				tx
 					.select({ n: count() })
-					.from(colorDesigns)
-					.where(and(eq(colorDesigns.sharedBy, userId), gte(colorDesigns.sharedAt, since)))
+					.from(designShareEvents)
+					.where(and(eq(designShareEvents.userId, userId), gte(designShareEvents.createdAt, since)))
 			)
 		).n;
 		if (recent >= SHARES_PER_DAY)
 			throw new ApiError(429, `You can share ${SHARES_PER_DAY} designs a day. Try again tomorrow.`);
+		const now = new Date();
+		await tx.insert(designShareEvents).values({ userId, designId: d.id, createdAt: now });
 		await tx
 			.update(colorDesigns)
-			.set({ sharedAt: new Date(), sharedBy: userId })
+			.set({
+				sharedAt: d.firstSharedAt ?? now,
+				firstSharedAt: d.firstSharedAt ?? now,
+				sharedBy: userId
+			})
 			.where(eq(colorDesigns.id, d.id));
 	});
 }
@@ -281,10 +306,26 @@ export async function unshareDesign(
 	await requireSiteAdmin(db, actor);
 	await db
 		.update(colorDesigns)
-		.set({ sharedAt: null, sharedBy: null })
+		.set({ sharedAt: null, sharedBy: null, hiddenFromGalleryAt: new Date(), hiddenBy: actor.id })
 		.where(eq(colorDesigns.id, d.id));
 	console.warn(`[gallery] design ${d.id} hidden from the gallery by site admin ${actor.id}`);
 	return { hiddenByAdmin: true };
+}
+
+/** A site admin lifts a gallery hide, so the author may share the design again (it stays unshared). */
+export async function liftGalleryHide(
+	db: DbOrTx,
+	designId: string,
+	actor: SiteAdminCandidate
+): Promise<void> {
+	await requireSiteAdmin(db, actor);
+	const d = await first(db.select().from(colorDesigns).where(eq(colorDesigns.id, designId)));
+	if (!d) throw new ApiError(404, 'Not found');
+	await db
+		.update(colorDesigns)
+		.set({ hiddenFromGalleryAt: null, hiddenBy: null })
+		.where(eq(colorDesigns.id, d.id));
+	console.warn(`[gallery] gallery hide on design ${d.id} lifted by site admin ${actor.id}`);
 }
 
 /**

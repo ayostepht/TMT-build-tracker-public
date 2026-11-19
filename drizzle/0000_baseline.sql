@@ -221,6 +221,9 @@ CREATE TABLE "color_designs" (
 	"is_public" boolean DEFAULT false NOT NULL,
 	"shared_at" timestamp with time zone,
 	"shared_by" text,
+	"first_shared_at" timestamp with time zone,
+	"hidden_from_gallery_at" timestamp with time zone,
+	"hidden_by" text,
 	"copied_from_design_id" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "color_designs_slug_unique" UNIQUE("slug")
@@ -240,6 +243,13 @@ CREATE TABLE "custom_filaments" (
 	"created_by" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone
+);
+--> statement-breakpoint
+CREATE TABLE "design_share_events" (
+	"id" text PRIMARY KEY NOT NULL,
+	"user_id" text NOT NULL,
+	"design_id" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "organization_settings" (
@@ -481,9 +491,11 @@ ALTER TABLE "builds" ADD CONSTRAINT "builds_created_by_user_id_fk" FOREIGN KEY (
 ALTER TABLE "color_designs" ADD CONSTRAINT "color_designs_template_id_templates_id_fk" FOREIGN KEY ("template_id") REFERENCES "public"."templates"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "color_designs" ADD CONSTRAINT "color_designs_author_user_id_user_id_fk" FOREIGN KEY ("author_user_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "color_designs" ADD CONSTRAINT "color_designs_shared_by_user_id_fk" FOREIGN KEY ("shared_by") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "color_designs" ADD CONSTRAINT "color_designs_hidden_by_user_id_fk" FOREIGN KEY ("hidden_by") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "color_designs" ADD CONSTRAINT "color_designs_copied_from_design_id_color_designs_id_fk" FOREIGN KEY ("copied_from_design_id") REFERENCES "public"."color_designs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "custom_filaments" ADD CONSTRAINT "custom_filaments_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "custom_filaments" ADD CONSTRAINT "custom_filaments_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "design_share_events" ADD CONSTRAINT "design_share_events_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "organization_settings" ADD CONSTRAINT "organization_settings_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "print_runs" ADD CONSTRAINT "print_runs_build_id_builds_id_fk" FOREIGN KEY ("build_id") REFERENCES "public"."builds"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "print_runs" ADD CONSTRAINT "print_runs_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
@@ -525,6 +537,7 @@ CREATE INDEX "builds_template_idx" ON "builds" USING btree ("template_id");--> s
 CREATE INDEX "color_designs_template_idx" ON "color_designs" USING btree ("template_id");--> statement-breakpoint
 CREATE INDEX "color_designs_shared_at_idx" ON "color_designs" USING btree ("shared_at");--> statement-breakpoint
 CREATE INDEX "custom_filaments_org_idx" ON "custom_filaments" USING btree ("organization_id");--> statement-breakpoint
+CREATE INDEX "design_share_events_user_idx" ON "design_share_events" USING btree ("user_id","created_at");--> statement-breakpoint
 CREATE INDEX "print_runs_build_idx" ON "print_runs" USING btree ("build_id");--> statement-breakpoint
 CREATE INDEX "printer_jobs_printer_idx" ON "printer_jobs" USING btree ("printer_id","started_at");--> statement-breakpoint
 CREATE INDEX "printers_org_idx" ON "printers" USING btree ("organization_id");--> statement-breakpoint

@@ -119,7 +119,7 @@
 				<input bind:value={form.organization} oninput={touch} disabled={!ctx.canEdit} /></label
 			>
 			<label class="field"
-				>Contact (chapter members only)
+				>Contact (team members only)
 				<input
 					bind:value={form.contact}
 					oninput={touch}

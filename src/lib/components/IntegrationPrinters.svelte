@@ -227,7 +227,7 @@
 					<li class="ig-none muted" data-testid="printers-none">
 						No printers yet.{canEdit
 							? ' Use “Add a printer” to set one up.'
-							: ' Ask a chapter owner or editor to add one.'}
+							: ' Ask a team owner or editor to add one.'}
 					</li>
 				{/if}
 			{/each}

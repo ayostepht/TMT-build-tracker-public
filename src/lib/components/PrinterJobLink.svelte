@@ -65,7 +65,7 @@
 			</select>
 		</label>
 	{:else if !exp && builds.length === 0}
-		<span class="muted">No build to link to in this chapter.</span>
+		<span class="muted">No build to link to in this team.</span>
 	{/if}
 	{#if loading}<span class="muted">Loading…</span>{/if}
 	{#if ctx}

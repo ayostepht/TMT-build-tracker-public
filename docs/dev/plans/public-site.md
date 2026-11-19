@@ -80,7 +80,16 @@ verifier close each wave.
   - Printers through OctoEverywhere links only; LAN connections, discovery, custom camera URLs, the SDCP camera-on command and all Spoolman removed. Live-mock printer e2e specs were removed (logic stays covered by unit tests); a safe e2e seam is a follow-up.
   - Public home at `/` (`(site)` group), warm paper/ink visual language with a brick accent (AA-checked by `design-tokens.test.ts`), signed-in root at `/workspace`.
 - Wave 2 merged (`83a330c`): every DB call is async Postgres (six area agents + one integration pass). Check, lint (typed `no-floating-promises`/`no-misused-promises` on server code), 1824 unit tests and build green; e2e runs on a Postgres `tmt_e2e` database reset by the webServer command (smoke specs green). Check-then-insert paths use advisory locks (per-build mutation lock, quota locks per scope, personal workspace, site admins, printer caps, org settings). Password reset (CLI and page) removed. Template filament roles now `ORDER BY key` (SQLite returned index order).
-- Wave 3a running in three worktrees: SSO (Google/GitHub/Discord) + demo sandbox + account (`app-shell`), shared design gallery (`design-studio-ui`), Dockerfile/deploy/CI/analytics/hosting guide (`release-pwa`). Then 3b: carry the visual language through the signed-in app. Then wave 4: full e2e, verifier, security review.
+- Wave 3a merged: deploy (Dockerfile on Postgres, `deploy/` for Fly.io, Railway and Docker + Cloudflare Tunnel, `TRUST_CLOUDFLARE` client IP, cookieless analytics with an exact-origin CSP extension, `public-ci.yml`, `docs/guides/hosting.md`); shared design gallery (`/gallery`); SSO-only sign-in (Google, GitHub, Discord; verified-email linking only, no trusted providers) and the demo sandbox (`/demo`, server-created `isDemo` users, 24 h, per-IP/global/live caps, cleanup job, server-side `requireNotDemo` guards). Integration pass: quota defaults (10 teams per user, 50 builds per team, 1 GB uploads per team, 95 MB 3MF), self-host guides replaced by the hosting guide, full e2e green.
+- Wave 3b merged: tracking-first home with the real MakeGood chair (lazy three.js, still images first, CC0 credit), "team" wording everywhere, gallery cards render the design on the chair, the per-design public flag retired (sharing = the gallery).
+- Security review (2026-11-20): auth, access, linking, test sign-in seam, SSRF guard, CSP and secrets sound. Fixes on this branch: gallery (no sharing from a team's own kit copy, public author names only, sticky admin hide, share-event cap, scoped design list). Further hardening is held back until it can be coordinated with the self-hosted line (maintainer decision pending).
+
+### Waiting on the maintainer
+
+- Coordinated release of the held hardening (see the private note in the session).
+- Real accounts: Supabase project, Google/GitHub/Discord OAuth apps, Cloudflare, Fly.io/Railway or self-host + Tunnel, analytics provider (all steps in `docs/guides/hosting.md`).
+- Review the screenshots and the demo.
+- Small UI choice: an "Allow sharing again" admin button for designs hidden from the gallery (API exists).
 
 ### Follow-ups noted
 

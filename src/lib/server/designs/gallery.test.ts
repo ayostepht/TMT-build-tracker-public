@@ -7,11 +7,13 @@ import { colorDesigns, member, organization, siteAdmin, templates, user } from '
 import { templateSeeds } from '../seed';
 import { seedTemplates } from '../seed/run';
 import { findDesign, getDesignDetail, listDesigns } from './designs';
+import { canViewTemplate } from '../templates/fork';
 import {
 	copiedFromCredit,
 	copyGalleryDesign,
 	findSharedDesign,
 	getGalleryItem,
+	liftGalleryHide,
 	listGallery,
 	publicSharerName,
 	shareDesign,
@@ -109,8 +111,9 @@ describe('share and unshare', () => {
 	it('only the author shares; sharing twice is harmless', async () => {
 		const d = await addDesign('alice');
 		expect(await status(() => shareDesign(db, d.id, 'bob'))).toBe(404);
+		// the retired isPublic column grants nothing: sharing has one meaning, the gallery
 		await db.update(colorDesigns).set({ isPublic: true }).where(eq(colorDesigns.id, d.id));
-		expect(await status(() => shareDesign(db, d.id, 'bob'))).toBe(403);
+		expect(await status(() => shareDesign(db, d.id, 'bob'))).toBe(404);
 		await shareDesign(db, d.id, 'alice');
 		const at = (await findSharedDesign(db, d.id)).sharedAt;
 		await shareDesign(db, d.id, 'alice');
@@ -164,6 +167,94 @@ describe('share and unshare', () => {
 		for (let i = 0; i <= SHARES_PER_DAY; i++) rows.push(await addDesign('alice', `D${i}`));
 		for (const r of rows.slice(0, SHARES_PER_DAY)) await shareDesign(db, r.id, 'alice');
 		expect(await status(() => shareDesign(db, rows[SHARES_PER_DAY].id, 'alice'))).toBe(429);
+	});
+
+	it('a design on a team-owned kit copy cannot be shared and does not open the copy', async () => {
+		const [copy] = await db
+			.insert(templates)
+			.values({
+				...(await first(db.select().from(templates)))!,
+				id: 'tpl-copy',
+				slug: 'tpl-copy',
+				name: 'Private chair',
+				ownerOrgId: 'o1'
+			})
+			.returning();
+		const d = await addDesign('alice');
+		await db.update(colorDesigns).set({ templateId: copy.id }).where(eq(colorDesigns.id, d.id));
+		expect(await status(() => shareDesign(db, d.id, 'alice'))).toBe(400);
+		expect((await listGallery(db, 'bob')).total).toBe(0);
+		// Even if a row were shared anyway, it never widens access to the copy.
+		await db.update(colorDesigns).set({ sharedAt: new Date() }).where(eq(colorDesigns.id, d.id));
+		expect(await canViewTemplate(db, cand('bob'), copy.id)).toBe(false);
+		expect(await canViewTemplate(db, cand('alice'), copy.id)).toBe(true);
+	});
+
+	it('strangers see the public sharer name and no author id on a shared design', async () => {
+		const d = await addDesign('alice');
+		await shareDesign(db, d.id, 'alice');
+		const asBob = await getDesignDetail(db, d.id, 'bob');
+		expect(asBob.authorUserId).toBeNull();
+		expect(asBob.authorName).toBe('Alice Maker');
+		const e = await addDesign('bob');
+		await shareDesign(db, e.id, 'bob');
+		const asAlice = await getDesignDetail(db, e.id, 'alice');
+		expect(asAlice.authorUserId).toBeNull();
+		expect(asAlice.authorName).toBe('bob');
+		const asCarol = await getDesignDetail(db, e.id, 'carol');
+		expect(asCarol.authorUserId).toBe('bob');
+		expect((await getDesignDetail(db, d.id, 'alice')).authorUserId).toBe('alice');
+	});
+
+	it('an admin hide sticks until a site admin lifts it', async () => {
+		const d = await addDesign('alice');
+		await shareDesign(db, d.id, 'alice');
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		await unshareDesign(db, d.id, cand('admin'));
+		const row = (await first(db.select().from(colorDesigns).where(eq(colorDesigns.id, d.id))))!;
+		expect(row.hiddenFromGalleryAt).not.toBeNull();
+		expect(row.hiddenBy).toBe('admin');
+		expect(row.sharedAt).toBeNull();
+		expect(await status(() => shareDesign(db, d.id, 'alice'))).toBe(403);
+		expect(await status(() => liftGalleryHide(db, d.id, cand('bob')))).toBe(404);
+		await liftGalleryHide(db, d.id, cand('admin'));
+		warn.mockRestore();
+		await shareDesign(db, d.id, 'alice');
+		expect((await listGallery(db, 'bob')).total).toBe(1);
+	});
+
+	it('share and unshare loops still hit the daily limit and do not bump the design', async () => {
+		const d = await addDesign('alice', 'Old');
+		const e = await addDesign('alice', 'Newer');
+		await shareDesign(db, d.id, 'alice');
+		await new Promise((r) => setTimeout(r, 5));
+		await shareDesign(db, e.id, 'alice');
+		await unshareDesign(db, d.id, cand('alice'));
+		await shareDesign(db, d.id, 'alice');
+		expect((await listGallery(db, 'bob')).items.map((i) => i.name)).toEqual(['Newer', 'Old']);
+		let hit = 0;
+		for (let i = 0; i < SHARES_PER_DAY && !hit; i++) {
+			hit = await status(async () => {
+				await unshareDesign(db, d.id, cand('alice'));
+				await shareDesign(db, d.id, 'alice');
+			});
+		}
+		expect(hit).toBe(429);
+	});
+
+	it('listDesigns returns only own, co-members and seeded designs', async () => {
+		const a = await addDesign('alice', 'A');
+		await addDesign('bob', 'B');
+		const c = await addDesign('carol', 'C');
+		await db.update(colorDesigns).set({ authorUserId: null }).where(eq(colorDesigns.id, c.id));
+		const mine = async (u: string) =>
+			(await listDesigns(db, u))
+				.map((x) => x.name)
+				.filter((n) => n.length === 1)
+				.sort();
+		expect(await mine('alice')).toEqual(['A', 'C']);
+		expect(await mine('carol')).toEqual(['B', 'C']);
+		expect(a.id).toBeTruthy();
 	});
 
 	it('deleting a shared design removes it from the gallery and keeps copies', async () => {

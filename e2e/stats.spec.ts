@@ -370,7 +370,7 @@ test('Stats navigation: main nav link and the build and chapter section bars', a
 	await expect(page.getByTestId('nav-stats')).toHaveAttribute('aria-current', 'page');
 
 	// The chapter's section bar has a Stats link too.
-	const chapterNav = page.getByRole('navigation', { name: 'Chapter sections' });
+	const chapterNav = page.getByRole('navigation', { name: 'Team sections' });
 	await expect(chapterNav.getByRole('link', { name: 'Stats' })).toHaveAttribute(
 		'aria-current',
 		'page'

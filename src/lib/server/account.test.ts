@@ -78,7 +78,7 @@ describe('organization quotas through the plugin endpoints', () => {
 		const b = await post('/organization/create', u.cookie, { name: 'Two', slug: 'two' });
 		expect(b.status).toBe(409);
 		const body = (await b.json()) as { message: string; code: string };
-		expect(body.message).toContain('You already created 1 chapter');
+		expect(body.message).toContain('You already created 1 team');
 		expect(body.code).toBe('QUOTA');
 		expect(
 			await first(db.select().from(organization).where(eq(organization.slug, 'two')))
@@ -110,7 +110,7 @@ describe('organization quotas through the plugin endpoints', () => {
 		const acc = await post('/organization/accept-invitation', guest.cookie, { invitationId: id });
 		expect(acc.status).toBeGreaterThanOrEqual(400);
 		expect(((await acc.json()) as { message: string }).message).toContain(
-			'already belong to 1 chapter'
+			'already belong to 1 team'
 		);
 		expect(await db.select().from(member).where(eq(member.organizationId, org.id))).toHaveLength(1);
 		const c2 = await post('/organization/create', guest.cookie, { name: 'G2', slug: 'g2' });

@@ -1,15 +1,22 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { onMount } from 'svelte';
 	import Swatch from '#lib/components/Swatch.svelte';
+	import { designThumb } from '#lib/client/gallery-thumbs.ts';
 	import { sortRoles } from '#lib/domain/labels.ts';
+	import type { TemplateModelInfo } from '#lib/domain/types.ts';
 
 	let {
-		item
+		item,
+		model = null
 	}: {
+		/** The chair this design is drawn on when it has no saved picture. */
+		model?: TemplateModelInfo | null;
 		item: {
 			id: string;
 			slug: string;
 			name: string;
+			partRoles: Record<string, string>;
 			templateName: string;
 			sharerName: string;
 			roles: { key: string; name: string; hex: string }[];
@@ -19,12 +26,37 @@
 		};
 	} = $props();
 	const href = $derived(resolve('/(app)/gallery/[slug]', { slug: item.slug }));
+
+	// No saved picture: draw the design on the real chair once the card is near the screen.
+	let thumbHost = $state<HTMLAnchorElement>();
+	let drawn = $state<string | null>(null);
+	onMount(() => {
+		if (item.hasSnapshot || !model || !thumbHost || !('IntersectionObserver' in window)) return;
+		let gone = false;
+		const io = new IntersectionObserver(
+			(entries) => {
+				if (!entries.some((e) => e.isIntersecting)) return;
+				io.disconnect();
+				void designThumb(item.id, model, item.partRoles, item.roles).then((url) => {
+					if (!gone) drawn = url;
+				});
+			},
+			{ rootMargin: '200px' }
+		);
+		io.observe(thumbHost);
+		return () => {
+			gone = true;
+			io.disconnect();
+		};
+	});
 </script>
 
 <li class="ds-card gal-card" data-gallery-design={item.slug}>
-	<a class="gal-thumb" {href} tabindex="-1" aria-hidden="true">
+	<a class="gal-thumb" {href} tabindex="-1" aria-hidden="true" bind:this={thumbHost}>
 		{#if item.hasSnapshot}
 			<img src="/api/designs/{item.id}/snapshot.png" alt="" loading="lazy" />
+		{:else if drawn}
+			<img class="gal-drawn" src={drawn} alt="" />
 		{:else}
 			<span class="gal-strip">
 				{#each sortRoles(item.roles, (r) => r.key) as r (r.key)}
@@ -86,6 +118,11 @@
 		height: 100%;
 		object-fit: cover;
 		display: block;
+	}
+	/* a chair drawn on a transparent card, not a photo: show all of it */
+	.gal-thumb img.gal-drawn {
+		object-fit: contain;
+		transform: scale(1.2);
 	}
 	.gal-strip {
 		display: flex;

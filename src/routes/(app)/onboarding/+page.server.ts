@@ -39,7 +39,7 @@ export const actions: Actions = {
 			throw e;
 		}
 		const name = String((await request.formData()).get('name') ?? '').trim();
-		if (!name) return fail(400, { error: 'Give your chapter a name' });
+		if (!name) return fail(400, { error: 'Give your team a name' });
 		const db = getDb();
 		let slug = slugify(name);
 		if (
@@ -54,7 +54,7 @@ export const actions: Actions = {
 				headers: request.headers
 			});
 		} catch (e) {
-			return fail(400, { error: (e as Error).message || 'Could not create chapter' });
+			return fail(400, { error: (e as Error).message || 'Could not create team' });
 		}
 		redirect(303, `/teams/${slug}`);
 	}

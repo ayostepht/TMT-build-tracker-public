@@ -57,7 +57,7 @@
 		buildId?: string;
 		name?: string;
 		printerName?: string;
-		/** Chapter or My builds whose printers are offered first in the bed picker. */
+		/** Team or My builds whose printers are offered first in the bed picker. */
 		orgId?: string;
 		disabled?: boolean;
 		/** A live printer job blocks changing the plates: the reason (shown by the parent); locks every control. */

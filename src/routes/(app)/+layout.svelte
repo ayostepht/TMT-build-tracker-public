@@ -187,17 +187,17 @@
 		<div class="chapter-slot">
 			{#if showSwitcher}
 				<label class="chapter">
-					<span class="sr-only">Chapter</span>
-					<select value={data.activeTeamId ?? ''} onchange={switchTeam} aria-label="Chapter">
+					<span class="sr-only">Team</span>
+					<select value={data.activeTeamId ?? ''} onchange={switchTeam} aria-label="Team">
 						{#each data.teams as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
-						<option value="__create">Create a chapter…</option>
+						<option value="__create">Create a team…</option>
 						{#if data.invitationCount > 0}
 							<option value="__invites">Invitations ({data.invitationCount})</option>
 						{/if}
 					</select>
 				</label>
 			{:else if !data.isDemo}
-				<a class="btn sm create-chapter" href={resolve('/(app)/onboarding')}>Create a chapter</a>
+				<a class="btn sm create-chapter" href={resolve('/(app)/onboarding')}>Create a team</a>
 			{/if}
 		</div>
 		<button
@@ -327,8 +327,10 @@
 						data-menu="settings"
 						data-testid="workspace-settings-menu"
 						onclick={() => toggle('settings')}
-						><span class="ws-long">{workspace.personal ? 'My builds' : 'Chapter'} settings</span
-						><span class="ws-short" aria-hidden="true">Settings</span>
+						><span class="ws-long">{workspace.personal ? 'My builds' : 'Team'} settings</span><span
+							class="ws-short"
+							aria-hidden="true">Settings</span
+						>
 						<span aria-hidden="true">▾</span></button
 					>
 					{#if open === 'settings'}
@@ -358,7 +360,7 @@
 					<div class="menu account" id="menu-account">
 						{#if data.user}<div class="menu-h">{data.user.email}</div>{/if}
 						{#if !showSwitcher && !data.isDemo}
-							<a class="phone-only" href={resolve('/(app)/onboarding')}>Create a chapter</a>
+							<a class="phone-only" href={resolve('/(app)/onboarding')}>Create a team</a>
 						{/if}
 						{#if data.siteAdmin}
 							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->

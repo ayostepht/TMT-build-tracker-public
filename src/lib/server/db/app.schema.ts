@@ -297,6 +297,11 @@ export const colorDesigns = pgTable(
 		/** Shared to the site-wide gallery at this time; null = not shared. */
 		sharedAt: timestamp('shared_at', TS),
 		sharedBy: text('shared_by').references(() => user.id, { onDelete: 'set null' }),
+		/** The first time it was ever shared; the gallery orders by it so sharing again doesn't bump it. */
+		firstSharedAt: timestamp('first_shared_at', TS),
+		/** A site admin removed it from the gallery; while set it cannot be shared again. */
+		hiddenFromGalleryAt: timestamp('hidden_from_gallery_at', TS),
+		hiddenBy: text('hidden_by').references(() => user.id, { onDelete: 'set null' }),
 		/** Provenance when this design was copied from the gallery (or another team's design). */
 		copiedFromDesignId: text('copied_from_design_id').references(
 			(): AnyPgColumn => colorDesigns.id,
@@ -308,6 +313,20 @@ export const colorDesigns = pgTable(
 		index('color_designs_template_idx').on(t.templateId),
 		index('color_designs_shared_at_idx').on(t.sharedAt)
 	]
+);
+
+/** One row per share action, so the daily share limit can't be dodged by unsharing. */
+export const designShareEvents = pgTable(
+	'design_share_events',
+	{
+		id: id(),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		designId: text('design_id'),
+		createdAt: createdAt()
+	},
+	(t) => [index('design_share_events_user_idx').on(t.userId, t.createdAt)]
 );
 
 // ---- Builds

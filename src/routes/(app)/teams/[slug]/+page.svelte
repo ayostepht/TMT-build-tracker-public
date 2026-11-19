@@ -11,7 +11,7 @@
 	<div class="card stack" data-testid="landing-empty">
 		<h2>Plan, print and hand off a chair</h2>
 		<p>
-			TMT Build Tracker helps {data.team.personal ? 'you' : 'your chapter'} build a MakeGood 3D TMT chair:
+			TMT Build Tracker helps {data.team.personal ? 'you' : 'your team'} build a MakeGood 3D TMT chair:
 			pick colors, print the plates, assemble it and hand it over. Once a build is under way, this page
 			shows what is printing and what to print next.
 		</p>
@@ -22,7 +22,7 @@
 				>
 			</div>
 		{:else}
-			<p class="muted">Ask a chapter owner for editor access to start a build.</p>
+			<p class="muted">Ask a team owner for editor access to start a build.</p>
 		{/if}
 	</div>
 {:else}
@@ -59,10 +59,10 @@
 	<div class="card stack landing-others">
 		<h2>Want to build with others?</h2>
 		<p class="muted">
-			Create a chapter and invite people, then move builds into it from the build's settings.
+			Create a team and invite people, then move builds into it from the build's settings.
 		</p>
 		<div>
-			<a class="btn primary" href={resolve('/(app)/onboarding')}>Create a chapter</a>
+			<a class="btn primary" href={resolve('/(app)/onboarding')}>Create a team</a>
 		</div>
 	</div>
 {/if}

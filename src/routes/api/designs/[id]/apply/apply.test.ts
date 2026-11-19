@@ -56,7 +56,7 @@ beforeAll(async () => {
 		createdAt: new Date()
 	});
 	const src = await mkBuild();
-	designId = (await createDesign(db, 'owner', { buildId: src, name: 'Source', isPublic: true })).id;
+	designId = (await createDesign(db, 'owner', { buildId: src, name: 'Source' })).id;
 });
 
 afterAll(() => dropTestDb(getDb()));

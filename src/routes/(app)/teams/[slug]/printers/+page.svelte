@@ -35,9 +35,8 @@
 		{/if}
 	</div>
 	<p class="muted">
-		Live progress of the printers your chapter prints on, and the prints they ran. Status is
-		read-only: this app never starts, stops or moves a printer. Printers are set up on the
-		Integrations page.
+		Live progress of the printers your team prints on, and the prints they ran. Status is read-only:
+		this app never starts, stops or moves a printer. Printers are set up on the Integrations page.
 	</p>
 	{#if store.error}<div class="error" role="alert">{store.error}</div>{/if}
 
@@ -52,7 +51,7 @@
 					>Add or manage printers</a
 				>
 			{:else}
-				<p class="muted">Ask a chapter owner or editor to add printers.</p>
+				<p class="muted">Ask a team owner or editor to add printers.</p>
 			{/if}
 		</div>
 	{/if}

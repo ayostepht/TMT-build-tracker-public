@@ -5,14 +5,14 @@ import { colorDesigns, member } from '../db/schema';
 export type DesignRow = typeof colorDesigns.$inferSelect;
 
 /**
- * Who may see a design: it is public, it is shared to the gallery (any signed-in user), or the
- * viewer wrote it, or the viewer is in a workspace (team) together with its author. Personal workspaces have a
- * single member, so they never widen access. Seeded designs have no author and
- * are public.
+ * Who may see a design: it is shared to the gallery (any signed-in user), or the viewer wrote it,
+ * or the viewer is in a workspace (team) together with its author. Personal workspaces have a
+ * single member, so they never widen access. Seeded example designs have no author and are open
+ * to every signed-in user. The old `isPublic` column is no longer read: sharing has one meaning,
+ * the gallery.
  */
 export async function canSeeDesign(db: DbOrTx, d: DesignRow, userId: string): Promise<boolean> {
-	if (d.isPublic || d.sharedAt !== null || d.authorUserId === userId) return true;
-	if (!d.authorUserId) return false;
+	if (!d.authorUserId || d.sharedAt !== null || d.authorUserId === userId) return true;
 	return (await coworkerIds(db, userId)).has(d.authorUserId);
 }
 
@@ -21,8 +21,8 @@ export async function canSeeDesign(db: DbOrTx, d: DesignRow, userId: string): Pr
  * Gallery-shared designs are deliberately not listed here: the gallery lists them.
  */
 export function canSeeDesignWith(d: DesignRow, userId: string, coworkers: Set<string>): boolean {
-	if (d.isPublic || d.authorUserId === userId) return true;
-	return !!d.authorUserId && coworkers.has(d.authorUserId);
+	if (!d.authorUserId || d.authorUserId === userId) return true;
+	return coworkers.has(d.authorUserId);
 }
 
 /** Users who share at least one workspace with `userId` (not including themselves). */

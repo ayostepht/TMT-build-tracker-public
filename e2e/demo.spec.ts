@@ -55,7 +55,7 @@ test('the demo page says what you get and starts a demo with tracking first', as
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await openNav(page);
 	await expect(page.getByTestId('nav-gallery')).toHaveAttribute('href', '/gallery');
-	await expect(page.getByRole('link', { name: 'Create a chapter' })).toHaveCount(0);
+	await expect(page.getByRole('link', { name: 'Create a team' })).toHaveCount(0);
 
 	// everything else works: mark a part
 	const res = await page.request.get(`/api/builds/${buildId}/photos`);

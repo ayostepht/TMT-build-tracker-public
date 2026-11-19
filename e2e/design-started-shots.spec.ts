@@ -88,8 +88,7 @@ test('applying a design to a started build asks first', async ({ page }) => {
 	});
 	const made = await api(page, 'POST', '/api/designs', {
 		buildId: src,
-		name: 'Shots design',
-		isPublic: false
+		name: 'Shots design'
 	});
 	expect(made.status).toBe(200);
 
