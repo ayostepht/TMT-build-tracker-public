@@ -86,8 +86,8 @@
 
 	<p class="muted">
 		How your data is handled and the rules of use:
-		<a href={resolve('/privacy')} data-testid="privacy-link">Privacy</a> and
-		<a href={resolve('/terms')} data-testid="terms-link">Terms</a>.
+		<a href={resolve('/(site)/privacy')} data-testid="privacy-link">Privacy</a> and
+		<a href={resolve('/(site)/terms')} data-testid="terms-link">Terms</a>.
 	</p>
 </article>
 

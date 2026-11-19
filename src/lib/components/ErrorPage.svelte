@@ -51,7 +51,9 @@
 		<h1>{copy.title}</h1>
 		<p class="muted">{copy.body}</p>
 		<div class="err-actions">
-			<a class="btn primary" href={resolve('/(app)')} data-testid="error-home">Back to builds</a>
+			<a class="btn primary" href={resolve('/(app)/workspace')} data-testid="error-home"
+				>Back to builds</a
+			>
 			{#if signedIn !== true}
 				<a class="btn" href={resolve('/login')} data-testid="error-login">Sign in</a>
 			{/if}

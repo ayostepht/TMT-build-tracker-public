@@ -234,7 +234,7 @@ test('add MakeGood files together: plan, one run, retry, checklist, guide mappin
 		db.close();
 	}
 	// The one drop zone for the built-in kit: a build's Files tab, Print settings.
-	await page.goto('/');
+	await page.goto('/workspace');
 	await page.waitForLoadState('networkidle');
 	const buildId = await startBuild(page, 'Kit files build');
 	await page.waitForLoadState('networkidle');
@@ -366,7 +366,7 @@ test('a sliced 3MF in the kit drop zone is offered to the build plates', async (
 	test.setTimeout(120_000);
 	const shots = process.env.SHOTS_DIR;
 	await signInAsAdmin(page);
-	await page.goto('/');
+	await page.goto('/workspace');
 	await page.waitForLoadState('networkidle');
 	const buildId = await startBuild(page, 'Sliced hand-off');
 	await page.waitForLoadState('networkidle');

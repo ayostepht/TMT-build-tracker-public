@@ -7,7 +7,7 @@ import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = ({ locals, url }) => {
 	const to = safeRedirect(url.searchParams.get('redirect'));
-	if (locals.user) redirect(303, to ?? '/');
+	if (locals.user) redirect(303, to ?? '/workspace');
 	const publicMode = appMode() === 'public';
 	const oidc = publicMode ? null : oidcConfig();
 	const social = socialProviders();

@@ -84,6 +84,6 @@ export const actions: Actions = {
 		} catch (e) {
 			return fail(400, { error: (e as Error).message || 'Could not decline invitation' });
 		}
-		redirect(303, '/');
+		redirect(303, '/workspace');
 	}
 };

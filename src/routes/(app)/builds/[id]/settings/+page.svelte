@@ -49,7 +49,7 @@
 	let trigger = $state<HTMLButtonElement>();
 	async function remove() {
 		if (confirmText !== b.name) return;
-		if (await ctx.act(() => deleteBuild(ctx.id))) await goto(resolve('/(app)'));
+		if (await ctx.act(() => deleteBuild(ctx.id))) await goto(resolve('/(app)/workspace'));
 	}
 </script>
 

@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
 	<style>
-		.bg { fill: #2b3f9e; }
+		.bg { fill: #a1420f; }
 		.fg { fill: #fff; }
-		.hi { fill: #8ea0ff; }
+		.hi { fill: #f08d57; }
 		@media (prefers-color-scheme: dark) {
-			.bg { fill: #8ea0ff; }
-			.fg { fill: #0f1220; }
-			.hi { fill: #2b3f9e; }
+			.bg { fill: #f08d57; }
+			.fg { fill: #171410; }
+			.hi { fill: #a1420f; }
 		}
 	</style>
 	<rect class="bg" width="64" height="64" rx="14" />
