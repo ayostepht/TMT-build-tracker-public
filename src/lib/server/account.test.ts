@@ -133,13 +133,13 @@ describe('organization quotas through the plugin endpoints', () => {
 				role: 'viewer',
 				organizationId: org.id
 			});
-		const first = await invite('guest@example.test');
-		expect(first.status).toBe(200);
+		const firstInv = await invite('guest@example.test');
+		expect(firstInv.status).toBe(200);
 		const second = await invite('other@example.test');
 		expect(second.status).toBe(409);
 		expect(((await second.json()) as { message: string }).message).toContain('open invitation');
 		vi.stubEnv('QUOTA_MEMBERS_PER_CHAPTER', '1');
-		const { id } = (await first.json()) as { id: string };
+		const { id } = (await firstInv.json()) as { id: string };
 		const acc = await post('/organization/accept-invitation', guest.cookie, { invitationId: id });
 		expect(acc.status).toBeGreaterThanOrEqual(400);
 		expect(((await acc.json()) as { message: string }).message).toContain('already has 1 member');
@@ -148,7 +148,7 @@ describe('organization quotas through the plugin endpoints', () => {
 	it('disables organization/update (it could clear the personal flag)', async () => {
 		await signUp('Admin', 'admin@example.test');
 		const u = await signUp('Pat', 'pat@example.test');
-		const personal = findPersonalWorkspace(db, u.id)!;
+		const personal = (await findPersonalWorkspace(db, u.id))!;
 		for (const path of [
 			'/organization/update',
 			'/organization/leave',
@@ -169,7 +169,7 @@ describe('account caps', () => {
 		await signUp('First', 'first@example.test');
 		vi.stubEnv('QUOTA_ACCOUNTS_TOTAL', '1');
 		const cfg = { publicMode: false, signup: 'open' as const };
-		const d = decideNewUser(db, { email: 'new@example.test' }, cfg);
+		const d = await decideNewUser(db, { email: 'new@example.test' }, cfg);
 		expect(d).toMatchObject({ ok: false, code: 'signups_paused' });
 		expect(d.ok ? '' : d.message).toBe('This server is not taking new accounts right now.');
 		await expect(
@@ -184,29 +184,37 @@ describe('account caps', () => {
 			})
 		).resolves.toBeTruthy();
 		vi.stubEnv('ADMIN_EMAILS', 'boss@example.test');
-		expect(decideNewUser(db, { email: 'boss@example.test' }, cfg).ok).toBe(true);
+		expect((await decideNewUser(db, { email: 'boss@example.test' }, cfg)).ok).toBe(true);
 	});
 
 	it('signupsPerDay counts only the last 24 hours', async () => {
 		await signUp('First', 'first@example.test');
 		vi.stubEnv('QUOTA_SIGNUPS_PER_DAY', '1');
 		const cfg = { publicMode: false, signup: 'open' as const };
-		expect(decideNewUser(db, { email: 'n@example.test' }, cfg).ok).toBe(false);
+		expect((await decideNewUser(db, { email: 'n@example.test' }, cfg)).ok).toBe(false);
 		expect(
-			decideNewUser(db, { email: 'n@example.test' }, cfg, new Date(Date.now() + 25 * 3600 * 1000))
-				.ok
+			(
+				await decideNewUser(
+					db,
+					{ email: 'n@example.test' },
+					cfg,
+					new Date(Date.now() + 25 * 3600 * 1000)
+				)
+			).ok
 		).toBe(true);
 	});
 
-	it('public mode keeps requiring verified emails, caps apply after', () => {
+	it('public mode keeps requiring verified emails, caps apply after', async () => {
 		vi.stubEnv('QUOTA_ACCOUNTS_TOTAL', '0');
 		const cfg = { publicMode: true, signup: 'open' as const };
-		expect(decideNewUser(db, { email: 'a@example.test', emailVerified: false }, cfg)).toMatchObject(
-			{
-				code: 'email_not_verified'
-			}
-		);
-		expect(decideNewUser(db, { email: 'a@example.test', emailVerified: true }, cfg)).toMatchObject({
+		expect(
+			await decideNewUser(db, { email: 'a@example.test', emailVerified: false }, cfg)
+		).toMatchObject({
+			code: 'email_not_verified'
+		});
+		expect(
+			await decideNewUser(db, { email: 'a@example.test', emailVerified: true }, cfg)
+		).toMatchObject({
 			code: 'signups_paused'
 		});
 	});
@@ -221,31 +229,29 @@ function writeUpload(rel: string) {
 	return p;
 }
 
-function addChapter(id: string, members: [string, string][]) {
+async function addChapter(id: string, members: [string, string][]) {
 	await db
 		.insert(organization)
 		.values({ id, name: `Chapter ${id}`, slug: id, createdAt: new Date() });
-	members.forEach(
-		([userId, role], i) =>
-			await db.insert(member).values({
-				id: `m-${id}-${userId}`,
-				organizationId: id,
-				userId,
-				role,
-				createdAt: new Date(1000 + i)
-			})
-	);
+	for (const [i, [userId, role]] of members.entries())
+		await db.insert(member).values({
+			id: `m-${id}-${userId}`,
+			organizationId: id,
+			userId,
+			role,
+			createdAt: new Date(1000 + i)
+		});
 }
 
-function addBuild(orgId: string, userId: string, kind: 'build' | 'draft' = 'build') {
-	return createBuild(
+async function addBuild(orgId: string, userId: string, kind: 'build' | 'draft' = 'build') {
+	return await createBuild(
 		db,
 		{ organizationId: orgId, templateId, designId: null, name: 'B', kind },
 		userId
 	);
 }
 
-function addPhotoRow(buildId: string, userId: string) {
+async function addPhotoRow(buildId: string, userId: string) {
 	const rel = `photos/${buildId}/p.webp`;
 	const abs = writeUpload(rel);
 	await db.insert(buildPhotos).values({ buildId, kind: 'progress', path: rel, createdBy: userId });
@@ -257,17 +263,17 @@ describe('deleteAccount', () => {
 		await signUp('Admin', 'admin@example.test');
 		const pat = await signUp('Pat', 'pat@example.test');
 		const lee = await signUp('Lee', 'lee@example.test');
-		const personal = findPersonalWorkspace(db, pat.id)!;
-		const mine = addBuild(personal.id, pat.id);
-		const myDraft = addBuild(personal.id, pat.id, 'draft');
-		const photo = addPhotoRow(mine, pat.id);
-		addChapter('c1', [
+		const personal = (await findPersonalWorkspace(db, pat.id))!;
+		const mine = await addBuild(personal.id, pat.id);
+		const myDraft = await addBuild(personal.id, pat.id, 'draft');
+		const photo = await addPhotoRow(mine, pat.id);
+		await addChapter('c1', [
 			[lee.id, 'owner'],
 			[pat.id, 'editor']
 		]);
-		const shared = addBuild('c1', pat.id);
-		const sharedPhoto = addPhotoRow(shared, pat.id);
-		const chapterDraft = addBuild('c1', pat.id, 'draft');
+		const shared = await addBuild('c1', pat.id);
+		const sharedPhoto = await addPhotoRow(shared, pat.id);
+		const chapterDraft = await addBuild('c1', pat.id, 'draft');
 		// a design with a preview
 		const [dsg] = await db
 			.insert(colorDesigns)
@@ -324,7 +330,7 @@ describe('deleteAccount', () => {
 		).toHaveLength(0);
 		// others untouched
 		expect(await first(db.select().from(user).where(eq(user.id, lee.id)))).toBeTruthy();
-		expect(findPersonalWorkspace(db, lee.id)).toBeTruthy();
+		expect(await findPersonalWorkspace(db, lee.id)).toBeTruthy();
 		// the activity left in the chapter no longer names anyone
 		for (const a of await db.select().from(activity).where(eq(activity.buildId, shared)))
 			expect(a.userId).toBeNull();
@@ -334,7 +340,7 @@ describe('deleteAccount', () => {
 		await signUp('Admin', 'admin@example.test');
 		const pat = await signUp('Pat', 'pat@example.test');
 		const lee = await signUp('Lee', 'lee@example.test');
-		addChapter('c1', [
+		await addChapter('c1', [
 			[pat.id, 'owner'],
 			[lee.id, 'viewer']
 		]);
@@ -343,7 +349,9 @@ describe('deleteAccount', () => {
 			'Make someone else an owner of Chapter c1 first'
 		);
 		expect(await db.select().from(user)).toHaveLength(before);
-		expect(planAccountDeletion(db, pat.id).find((f) => f.orgId === 'c1')?.fate).toBe('blocked');
+		expect((await planAccountDeletion(db, pat.id)).find((f) => f.orgId === 'c1')?.fate).toBe(
+			'blocked'
+		);
 		// once someone else owns it, it goes through
 		await db
 			.update(member)
@@ -355,9 +363,9 @@ describe('deleteAccount', () => {
 	it('deletes a chapter where the user is the only member, with its files', async () => {
 		await signUp('Admin', 'admin@example.test');
 		const pat = await signUp('Pat', 'pat@example.test');
-		addChapter('solo', [[pat.id, 'owner']]);
-		const b = addBuild('solo', pat.id);
-		const photo = addPhotoRow(b, pat.id);
+		await addChapter('solo', [[pat.id, 'owner']]);
+		const b = await addBuild('solo', pat.id);
+		const photo = await addPhotoRow(b, pat.id);
 		const res = await deleteAccount(db, pat.id);
 		expect(res.deletedWorkspaces).toContain('Chapter solo');
 		expect(
@@ -373,7 +381,7 @@ describe('deleteAccount', () => {
 });
 
 describe('kit copies used from another workspace', () => {
-	function copyFor(orgId: string) {
+	async function copyFor(orgId: string) {
 		const id = `copy-${orgId}`;
 		await db.insert(templates).values({
 			id,
@@ -390,13 +398,13 @@ describe('kit copies used from another workspace', () => {
 		await signUp('Admin', 'admin@example.test');
 		const pat = await signUp('Pat', 'pat@example.test');
 		const lee = await signUp('Lee', 'lee@example.test');
-		const personal = findPersonalWorkspace(db, pat.id)!;
-		addChapter('c1', [
+		const personal = (await findPersonalWorkspace(db, pat.id))!;
+		await addChapter('c1', [
 			[pat.id, 'owner'],
 			[lee.id, 'owner']
 		]);
-		const copy = copyFor(personal.id);
-		const b = addBuild('c1', pat.id);
+		const copy = await copyFor(personal.id);
+		const b = await addBuild('c1', pat.id);
 		await db.update(builds).set({ templateId: copy }).where(eq(builds.id, b));
 		await expect(deleteAccount(db, pat.id)).resolves.toBeTruthy();
 		const row = (await first(db.select().from(builds).where(eq(builds.id, b))))!;
@@ -409,9 +417,9 @@ describe('kit copies used from another workspace', () => {
 		const owner = await signUp('Owner', 'owner@example.test');
 		const r = await post('/organization/create', owner.cookie, { name: 'Gone', slug: 'gone' });
 		const org = (await r.json()) as { id: string };
-		const copy = copyFor(org.id);
-		const personal = findPersonalWorkspace(db, owner.id)!;
-		const b = addBuild(personal.id, owner.id);
+		const copy = await copyFor(org.id);
+		const personal = (await findPersonalWorkspace(db, owner.id))!;
+		const b = await addBuild(personal.id, owner.id);
 		await db.update(builds).set({ templateId: copy }).where(eq(builds.id, b));
 		const del = await post('/organization/delete', owner.cookie, { organizationId: org.id });
 		expect(del.status).toBe(200);
@@ -422,7 +430,7 @@ describe('kit copies used from another workspace', () => {
 });
 
 describe('deleteOwnedTemplates scope', () => {
-	function copy(orgId: string, base: string | null) {
+	async function copy(orgId: string, base: string | null) {
 		const id = `c-${orgId}`;
 		await db.insert(templates).values({
 			id,
@@ -438,9 +446,9 @@ describe('deleteOwnedTemplates scope', () => {
 	it("deletes the doomed workspace's own build on its copy with the workspace", async () => {
 		await signUp('Admin', 'admin@example.test');
 		const pat = await signUp('Pat', 'pat@example.test');
-		const personal = findPersonalWorkspace(db, pat.id)!;
-		const c = copy(personal.id, templateId);
-		const b = addBuild(personal.id, pat.id);
+		const personal = (await findPersonalWorkspace(db, pat.id))!;
+		const c = await copy(personal.id, templateId);
+		const b = await addBuild(personal.id, pat.id);
 		await db.update(builds).set({ templateId: c }).where(eq(builds.id, b));
 		await expect(deleteAccount(db, pat.id)).resolves.toBeTruthy();
 		expect(await first(db.select().from(builds).where(eq(builds.id, b)))).toBeUndefined();
@@ -451,13 +459,13 @@ describe('deleteOwnedTemplates scope', () => {
 		await signUp('Admin', 'admin@example.test');
 		const pat = await signUp('Pat', 'pat@example.test');
 		const lee = await signUp('Lee', 'lee@example.test');
-		const personal = findPersonalWorkspace(db, pat.id)!;
-		addChapter('c1', [
+		const personal = (await findPersonalWorkspace(db, pat.id))!;
+		await addChapter('c1', [
 			[pat.id, 'owner'],
 			[lee.id, 'owner']
 		]);
-		const c = copy(personal.id, null);
-		const b = addBuild('c1', lee.id);
+		const c = await copy(personal.id, null);
+		const b = await addBuild('c1', lee.id);
 		await db.update(builds).set({ templateId: c }).where(eq(builds.id, b));
 		await expect(deleteAccount(db, pat.id)).resolves.toBeTruthy();
 		expect((await first(db.select().from(builds).where(eq(builds.id, b))))!.templateId).toBe(
@@ -470,13 +478,13 @@ describe('deleteOwnedTemplates scope', () => {
 		await signUp('Admin', 'admin@example.test');
 		const pat = await signUp('Pat', 'pat@example.test');
 		const lee = await signUp('Lee', 'lee@example.test');
-		const personal = findPersonalWorkspace(db, pat.id)!;
-		addChapter('c1', [
+		const personal = (await findPersonalWorkspace(db, pat.id))!;
+		await addChapter('c1', [
 			[pat.id, 'owner'],
 			[lee.id, 'owner']
 		]);
-		const c = copy(personal.id, null);
-		const b = addBuild('c1', lee.id);
+		const c = await copy(personal.id, null);
+		const b = await addBuild('c1', lee.id);
 		await db.update(builds).set({ templateId: c }).where(eq(builds.id, b));
 		// Make every other template a copy so none is global.
 		await db.update(templates).set({ ownerOrgId: 'c1' }).where(eq(templates.id, templateId));
@@ -493,7 +501,7 @@ describe('pruneOldInvitations', () => {
 		await post('/organization/create', owner.cookie, { name: 'C1', slug: 'c1' });
 		const org = (await first(db.select().from(organization).where(eq(organization.slug, 'c1'))))!;
 		const far = new Date(Date.now() + 86_400_000);
-		const mk = (i: number, status: string) =>
+		const mk = async (i: number, status: string) =>
 			await db.insert(invitation).values({
 				id: `inv-${status}-${i}`,
 				organizationId: org.id,
@@ -504,9 +512,9 @@ describe('pruneOldInvitations', () => {
 				createdAt: new Date(1000 + i),
 				inviterId: owner.id
 			});
-		for (let i = 0; i < 60; i++) mk(i, 'canceled');
-		mk(100, 'accepted');
-		mk(101, 'pending');
+		for (let i = 0; i < 60; i++) await mk(i, 'canceled');
+		await mk(100, 'accepted');
+		await mk(101, 'pending');
 		const r = await post('/organization/invite-member', owner.cookie, {
 			email: 'new@example.test',
 			role: 'viewer',
@@ -528,8 +536,8 @@ describe('chapter deletion removes files (plugin endpoint)', () => {
 		const owner = await signUp('Owner', 'owner@example.test');
 		const r = await post('/organization/create', owner.cookie, { name: 'Gone', slug: 'gone' });
 		const org = (await r.json()) as { id: string };
-		const b = addBuild(org.id, owner.id);
-		const photo = addPhotoRow(b, owner.id);
+		const b = await addBuild(org.id, owner.id);
+		const photo = await addPhotoRow(b, owner.id);
 		const del = await post('/organization/delete', owner.cookie, { organizationId: org.id });
 		expect(del.status).toBe(200);
 		expect(await first(db.select().from(builds).where(eq(builds.id, b)))).toBeUndefined();
@@ -541,12 +549,12 @@ describe('exportAccountData', () => {
 	it('has profile, memberships and personal builds, photos by name only', async () => {
 		await signUp('Admin', 'admin@example.test');
 		const pat = await signUp('Pat', 'pat@example.test');
-		const personal = findPersonalWorkspace(db, pat.id)!;
-		const b = addBuild(personal.id, pat.id);
-		addPhotoRow(b, pat.id);
-		addChapter('c1', [[pat.id, 'editor']]);
-		addBuild('c1', pat.id);
-		const data = JSON.parse(exportAccountData(db, pat.id)) as {
+		const personal = (await findPersonalWorkspace(db, pat.id))!;
+		const b = await addBuild(personal.id, pat.id);
+		await addPhotoRow(b, pat.id);
+		await addChapter('c1', [[pat.id, 'editor']]);
+		await addBuild('c1', pat.id);
+		const data = JSON.parse(await exportAccountData(db, pat.id)) as {
 			profile: { email: string };
 			memberships: { name: string; personal: boolean; role: string }[];
 			builds: { build: { id: string }; photos: { fileName: string }[] }[];
@@ -586,13 +594,13 @@ describe('last site admin', () => {
 	it('public mode: an unverified listed email is not an admin, so it is not the last one', async () => {
 		vi.stubEnv('TMT_MODE', 'public');
 		vi.stubEnv('ADMIN_EMAILS', 'boss@example.test, real@example.test');
-		const mk = (id: string, verified: boolean) =>
+		const mk = async (id: string, verified: boolean) =>
 			await db
 				.insert(user)
 				.values({ id, name: id, email: `${id}@example.test`, emailVerified: verified });
-		mk('boss', false);
-		mk('real', true);
-		mk('pat', true);
+		await mk('boss', false);
+		await mk('real', true);
+		await mk('pat', true);
 		// real is the only verified admin: refused
 		await expect(deleteAccount(db, 'real')).rejects.toMatchObject({ code: 'last_admin' });
 		// boss is listed but unverified: not an admin, deletable

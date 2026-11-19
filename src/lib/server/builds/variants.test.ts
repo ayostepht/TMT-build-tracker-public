@@ -81,39 +81,42 @@ describe('seed reconcile', () => {
 	}
 
 	it('adds new parts, groups and placements to an already seeded DB without touching builds', async () => {
-		const old = openDb(':memory:');
-		runMigrations(old);
+		const old = await createTestDb();
 		await seedTemplates(old, [oldSeed()]);
-		const tid = old.select({ id: templates.id }).from(templates).get()!.id;
-		old
+		const tid = (await first(old.select({ id: templates.id }).from(templates)))!.id;
+		await old
 			.insert(organization)
-			.values({ id: orgId, name: 'C', slug: 'c', createdAt: new Date() })
-			.run();
-		old.insert(user).values({ id: 'o', name: 'O', email: 'o@x.test' }).run();
-		old
-			.insert(member)
-			.values({ id: 'm', organizationId: orgId, userId: 'o', role: 'owner', createdAt: new Date() })
-			.run();
+			.values({ id: orgId, name: 'C', slug: 'c', createdAt: new Date() });
+		await old.insert(user).values({ id: 'o', name: 'O', email: 'o@x.test' });
+		await old.insert(member).values({
+			id: 'm',
+			organizationId: orgId,
+			userId: 'o',
+			role: 'owner',
+			createdAt: new Date()
+		});
 		const bid = await createBuild(
 			old,
 			{ organizationId: orgId, templateId: tid, designId: null, name: 'B' },
 			'o'
 		);
 		await setPartStatus(old, bid, 'o', 'cushion-top', { status: 'Printed' });
-		const buildsBefore = JSON.stringify(old.select().from(builds).all());
-		const rowsBefore = old.select({ n: count() }).from(buildParts).get()!.n;
+		const buildsBefore = JSON.stringify(await old.select().from(builds));
+		const rowsBefore = (await first(old.select({ n: count() }).from(buildParts)))!.n;
 		expect(rowsBefore).toBe(33);
 
-		const first = await seedTemplates(old, templateSeeds);
-		expect(first).toEqual({ inserted: [], updated: [tmt.slug] });
-		expect(old.select({ n: count() }).from(templateParts).get()!.n).toBe(tmt.parts.length);
-		expect(old.select({ n: count() }).from(templatePartPlacements).get()!.n).toBe(tmt.parts.length);
-		expect(old.select().from(templates).get()!.variantGroups).toHaveLength(
+		const firstRun = await seedTemplates(old, templateSeeds);
+		expect(firstRun).toEqual({ inserted: [], updated: [tmt.slug] });
+		expect((await first(old.select({ n: count() }).from(templateParts)))!.n).toBe(tmt.parts.length);
+		expect((await first(old.select({ n: count() }).from(templatePartPlacements)))!.n).toBe(
+			tmt.parts.length
+		);
+		expect((await first(old.select().from(templates)))!.variantGroups).toHaveLength(
 			tmt.variantGroups!.length
 		);
 		// builds untouched by the seed
-		expect(JSON.stringify(old.select().from(builds).all())).toBe(buildsBefore);
-		expect(old.select({ n: count() }).from(buildParts).get()!.n).toBe(rowsBefore);
+		expect(JSON.stringify(await old.select().from(builds))).toBe(buildsBefore);
+		expect((await first(old.select({ n: count() }).from(buildParts)))!.n).toBe(rowsBefore);
 
 		// idempotent
 		expect(await seedTemplates(old, templateSeeds)).toEqual({ inserted: [], updated: [] });
@@ -236,31 +239,29 @@ describe('variants in the build view', () => {
 		await expect(setVariant(db, id, 'outsider', body)).rejects.toThrowError(
 			expect.objectContaining({ status: 404 })
 		);
-		(
-			await expect(await setVariant(db, id, 'owner', { group: 'nope', option: 'x' }))
-		).rejects.toThrow(ApiError);
-		(
-			await expect(await setVariant(db, id, 'owner', { group: 'seat', option: 'nope' }))
-		).rejects.toThrow(ApiError);
+		await expect(setVariant(db, id, 'owner', { group: 'nope', option: 'x' })).rejects.toThrow(
+			ApiError
+		);
+		await expect(setVariant(db, id, 'owner', { group: 'seat', option: 'nope' })).rejects.toThrow(
+			ApiError
+		);
 		await expect(setVariant(db, id, 'owner', { group: 'seat' })).rejects.toThrow(ApiError);
 		expect(
 			(await first(
 				db.select({ n: count() }).from(activity).where(eq(activity.kind, 'build.variant'))
 			))!.n
 		).toBe(0);
-		(
-			await expect(
-				await createBuild(
-					db,
-					{
-						organizationId: orgId,
-						templateId,
-						designId: null,
-						name: 'x',
-						variantChoices: { seat: 'zzz' }
-					},
-					'owner'
-				)
+		await expect(
+			createBuild(
+				db,
+				{
+					organizationId: orgId,
+					templateId,
+					designId: null,
+					name: 'x',
+					variantChoices: { seat: 'zzz' }
+				},
+				'owner'
 			)
 		).rejects.toThrow(ApiError);
 	});
@@ -283,24 +284,20 @@ describe('variants in the build view', () => {
 
 describe('site admin', () => {
 	it('is the earliest user, or anyone in ADMIN_EMAILS (case-insensitive)', async () => {
-		const empty = openDb(':memory:');
-		runMigrations(empty);
-		const add = (id: string, email: string, t: number) =>
-			empty
-				.insert(user)
-				.values({ id, name: id, email, createdAt: new Date(t) })
-				.run();
-		add('second', 'second@x.test', 2000);
-		add('first', 'first@x.test', 1000);
-		add('third', 'Third@X.test', 3000);
+		const empty = await createTestDb();
+		const add = async (id: string, email: string, t: number) =>
+			await empty.insert(user).values({ id, name: id, email, createdAt: new Date(t) });
+		await add('second', 'second@x.test', 2000);
+		await add('first', 'first@x.test', 1000);
+		await add('third', 'Third@X.test', 3000);
 		const prev = process.env.ADMIN_EMAILS;
 		try {
 			delete process.env.ADMIN_EMAILS;
 			expect(await isSiteAdmin(empty, { id: 'first', email: 'first@x.test' })).toBe(true);
 			expect(await isSiteAdmin(empty, { id: 'second', email: 'second@x.test' })).toBe(false);
-			expect(() => requireSiteAdmin(empty, { id: 'second', email: 'second@x.test' })).toThrow(
-				ApiError
-			);
+			await expect(
+				requireSiteAdmin(empty, { id: 'second', email: 'second@x.test' })
+			).rejects.toThrow(ApiError);
 			process.env.ADMIN_EMAILS = ' THIRD@x.test , other@x.test';
 			expect(await isSiteAdmin(empty, { id: 'third', email: 'Third@X.test' })).toBe(true);
 			expect(await isSiteAdmin(empty, { id: 'second', email: 'second@x.test' })).toBe(false);

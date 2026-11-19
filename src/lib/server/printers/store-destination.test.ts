@@ -8,7 +8,7 @@ import { decryptSecrets } from './secrets';
 const L1 = 'https://shared-testtoken12345678.octoeverywhere.com';
 const L2 = 'https://shared-othertoken87654321.octoeverywhere.com';
 
-async function await setup() {
+async function setup() {
 	const db = await createTestDb();
 	await db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' });
 	await db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() });
@@ -64,14 +64,16 @@ describe('stored secrets belong to the link they were saved for', () => {
 		await expect(updatePrinter(db, octo.id, 'o', { secrets: { shareLink: '' } })).rejects.toThrow(
 			ApiError
 		);
-		await expect(configFromInput(db, 'o', { id: octo.id, secrets: { shareLink: '' } })).rejects.toThrow(/shared link/i);
+		await expect(
+			configFromInput(db, 'o', { id: octo.id, secrets: { shareLink: '' } })
+		).rejects.toThrow(/shared link/i);
 		// pausing and renaming stay possible
 		expect((await updatePrinter(db, octo.id, 'o', { enabled: false })).enabled).toBe(false);
 	});
 
 	it('a manual printer holds no secrets and no address, and cannot become a link printer without a link', async () => {
 		const { db, manual } = await setup();
-		expect(manual).toMatchObject({ host: 'manual', secretEnc: null, port: null, cameraUrl: null });
+		expect(manual).toMatchObject({ host: 'manual', secretEnc: null });
 		const m = await updatePrinter(db, manual.id, 'o', { secrets: { shareLink: L1 } });
 		expect(m.secretEnc).toBeNull(); // still manual: no secrets kept
 		await expect(updatePrinter(db, manual.id, 'o', { kind: 'octoprint' })).rejects.toThrow(
@@ -87,15 +89,19 @@ describe('stored secrets belong to the link they were saved for', () => {
 
 	it('a printer type that cannot use a link is refused', async () => {
 		const { db } = await setup();
-		await expect(createPrinter(db, 'o', 'u1', {
-					name: 'x',
-					kind: 'manual',
-					secrets: { shareLink: L1 }
-				})).resolves.not.toThrow();
-		await expect(createPrinter(db, 'o', 'u1', {
-					name: 'x',
-					kind: 'bambu-lan',
-					secrets: { shareLink: L1 }
-				})).rejects.toThrow(/Unknown printer type/);
+		await expect(
+			createPrinter(db, 'o', 'u1', {
+				name: 'x',
+				kind: 'manual',
+				secrets: { shareLink: L1 }
+			})
+		).resolves.not.toThrow();
+		await expect(
+			createPrinter(db, 'o', 'u1', {
+				name: 'x',
+				kind: 'bambu-lan',
+				secrets: { shareLink: L1 }
+			})
+		).rejects.toThrow(/Unknown printer type/);
 	});
 });

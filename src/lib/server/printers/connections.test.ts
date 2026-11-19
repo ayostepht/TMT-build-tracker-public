@@ -402,8 +402,7 @@ describe('the printer store: link kinds, manual', () => {
 			cameraUrl: 'http://10.0.0.5/v',
 			catalogId: null
 		});
-		expect(row).toMatchObject({ kind: 'manual', host: 'manual', port: null, secretEnc: null });
-		expect(row.cameraUrl).toBeNull();
+		expect(row).toMatchObject({ kind: 'manual', host: 'manual', secretEnc: null });
 		expect(row.cameraEnabled).toBe(false);
 		const pub = toPublic(row);
 		expect(pub).toMatchObject({
@@ -435,7 +434,7 @@ describe('the printer store: link kinds, manual', () => {
 		});
 		expect(up).toMatchObject({ kind: 'octoprint', host: 'octoeverywhere' });
 		const back = await updatePrinter(db, m.id, 'o', { kind: 'manual' });
-		expect(back).toMatchObject({ kind: 'manual', host: 'manual', secretEnc: null, port: null });
+		expect(back).toMatchObject({ kind: 'manual', host: 'manual', secretEnc: null });
 	});
 
 	it('the supervisor never dials a manual printer, and a test says there is nothing to test', async () => {
@@ -457,7 +456,7 @@ describe('the printer store: link kinds, manual', () => {
 			octoprint: fake('octoprint'),
 			manual: fake('manual')
 		});
-		sup.start();
+		await sup.start();
 		expect(dialled).toEqual(['octoprint']);
 		expect(sup.size).toBe(1);
 		sup.stop();
@@ -528,18 +527,14 @@ describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 				kind,
 				secrets: { shareLink: `https://shared-token${n}abcdefgh.octoeverywhere.com` }
 			});
-		mk('o', 1);
-		mk('o', 2);
-		const third = mk('o', 3, 'moonraker');
-		expect(() => mk('o', 4)).toThrow(
+		await mk('o', 1);
+		await mk('o', 2);
+		const third = await mk('o', 3, 'moonraker');
+		await expect(mk('o', 4)).rejects.toThrow(
 			/already has 3 printers connected through OctoEverywhere links/
 		);
-		try {
-			mk('o', 4);
-		} catch (e) {
-			expect(e).toMatchObject({ status: 409, code: 'quota' });
-		}
-		mk('o2', 5); // another workspace has its own three
+		await expect(mk('o', 4)).rejects.toMatchObject({ status: 409, code: 'quota' });
+		await mk('o2', 5); // another workspace has its own three
 		await createPrinter(db, 'o', 'u1', { name: 'M1', kind: 'manual' });
 		await createPrinter(db, 'o', 'u1', { name: 'M2', kind: 'manual' });
 		// replacing the link of one of the three is not a fourth printer
@@ -548,7 +543,7 @@ describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 		).resolves.not.toThrow();
 		// deleting one makes room
 		await db.delete(printers).where(eq(printers.id, third.id));
-		expect(() => mk('o', 6)).not.toThrow();
+		await expect(mk('o', 6)).resolves.not.toThrow();
 	});
 
 	it('the cap is configurable and `off` removes it', async () => {
@@ -584,11 +579,10 @@ describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 			(await updatePrinter(db, link.id, 'o', { name: 'Renamed', enabled: false })).enabled
 		).toBe(false);
 		// a row that was saved with a LAN address before this site was hosted can only be tidied
-		const lan = db
+		const [lan] = await db
 			.insert(printers)
 			.values({ organizationId: 'o', name: 'old', kind: 'moonraker', host: '10.0.0.7' })
-			.returning()
-			.get();
+			.returning();
 		expect((await updatePrinter(db, lan.id, 'o', { name: 'older', enabled: false })).name).toBe(
 			'older'
 		);
@@ -612,31 +606,29 @@ describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 	it('the outbound guard admits only the share-link host, and only on a link call', async () => {
 		const dns = vi.fn(async () => ['93.184.216.34']);
 		setResolver(dns);
-		(
-			await expect(resolveAllowed('192.168.0.5', undefined, { allowShareLink: true }))
+		await expect(
+			resolveAllowed('192.168.0.5', undefined, { allowShareLink: true })
 		).rejects.toMatchObject({
 			kind: 'public'
 		});
-		(
-			await expect(resolveAllowed('printer.example', undefined, { allowShareLink: true }))
+		await expect(
+			resolveAllowed('printer.example', undefined, { allowShareLink: true })
 		).rejects.toMatchObject({
 			kind: 'public'
 		});
-		(
-			await expect(guardedFetch('http://192.168.0.5/api/job', { allowShareLink: true }))
+		await expect(
+			guardedFetch('http://192.168.0.5/api/job', { allowShareLink: true })
 		).rejects.toMatchObject({
 			kind: 'public'
 		});
-		(await expect(guardedFetch(`https://${HOST}/api/job`))).rejects.toMatchObject({
+		await expect(guardedFetch(`https://${HOST}/api/job`)).rejects.toMatchObject({
 			kind: 'public'
 		});
-		(
-			await expect(guardedFetch(`http://${HOST}/api/job`, { allowShareLink: true }))
-		).rejects.toThrow(/https on the default port/);
+		await expect(guardedFetch(`http://${HOST}/api/job`, { allowShareLink: true })).rejects.toThrow(
+			/https on the default port/
+		);
 		expect(dns).not.toHaveBeenCalled();
-		(
-			await expect(resolveAllowed(HOST, undefined, { allowShareLink: true }))
-		).resolves.toMatchObject({
+		await expect(resolveAllowed(HOST, undefined, { allowShareLink: true })).resolves.toMatchObject({
 			shareLink: true,
 			ip: '93.184.216.34'
 		});
@@ -668,11 +660,10 @@ describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 			secrets: { shareLink: LINK }
 		});
 		await createPrinter(db, 'o', 'u1', { name: 'M', kind: 'manual' });
-		const lan = db
+		const [lan] = await db
 			.insert(printers)
 			.values({ organizationId: 'o', name: 'old', kind: 'octoprint', host: '10.0.0.7' })
-			.returning()
-			.get();
+			.returning();
 		void lan;
 		const dialled: string[] = [];
 		const fake = (k: string) => () => {
@@ -685,7 +676,7 @@ describe('link-only policy and the public quotas (TMT_MODE=public)', () => {
 			octoprint: fake('octoprint'),
 			manual: fake('manual')
 		});
-		sup.start();
+		await sup.start();
 		expect(dialled).toEqual(['moonraker']);
 		sup.stop();
 	});

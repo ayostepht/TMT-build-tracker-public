@@ -129,7 +129,7 @@ describe(`${BIG_MB} MB sliced project`, () => {
 		'uploads (streamed to disk) within MAX_3MF_MB and refuses above it',
 		{ timeout: 300_000 },
 		async () => {
-			process.env.DATABASE_URL = resolve(dir, 'tmt.db');
+			process.env.DATA_DIR = dir;
 			const body = () => Readable.toWeb(createReadStream(big)) as ReadableStream<Uint8Array>;
 			const req = () =>
 				new Request('http://x/upload', {

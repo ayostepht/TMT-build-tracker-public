@@ -137,11 +137,11 @@ describe('the share-host exception is opt-in', () => {
 	it('resolveAllowed / guardedFetch refuse a share host without allowShareLink', async () => {
 		const dns = async () => [PUBLIC4];
 		setResolver(dns);
-		(await expect(resolveAllowed(HOST, dns))).rejects.toMatchObject({ kind: 'public' });
-		(await expect(resolveAllowed(HOST, dns))).rejects.toThrow(/shared link only/);
-		(await expect(resolveAllowed(HOST, dns, { allowShareLink: false }))).rejects.toThrow();
-		(await expect(guardedFetch(`https://${HOST}/video`))).rejects.toThrow();
-		(await expect(resolveAllowed(HOST, dns, { allowShareLink: true }))).resolves.toMatchObject({
+		await expect(resolveAllowed(HOST, dns)).rejects.toMatchObject({ kind: 'public' });
+		await expect(resolveAllowed(HOST, dns)).rejects.toThrow(/shared link only/);
+		await expect(resolveAllowed(HOST, dns, { allowShareLink: false })).rejects.toThrow();
+		await expect(guardedFetch(`https://${HOST}/video`)).rejects.toThrow();
+		await expect(resolveAllowed(HOST, dns, { allowShareLink: true })).resolves.toMatchObject({
 			shareLink: true
 		});
 		try {
@@ -167,8 +167,8 @@ describe('the share-host exception is opt-in', () => {
 			secrets: { shareLink: `https://${HOST}` }
 		});
 		expect(src).toMatchObject({ host: HOST, shareLink: true });
-		(
-			await expect(resolveAllowed(HOST, async () => [PUBLIC4], { allowShareLink: true }))
+		await expect(
+			resolveAllowed(HOST, async () => [PUBLIC4], { allowShareLink: true })
 		).resolves.toMatchObject({ ip: PUBLIC4 });
 	});
 });

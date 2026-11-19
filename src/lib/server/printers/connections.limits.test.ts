@@ -322,11 +322,11 @@ describe('caps (public quota defaults)', () => {
 		});
 		expect(await db.select().from(printers)).toHaveLength(3);
 		// moving an existing link printer to another link is not a new one
-		const first = (await first(
+		const firstPrinter = (await first(
 			db.select().from(printers).where(eq(printers.organizationId, 'o1'))
 		))!;
 		await expect(
-			updatePrinter(db, first.id, 'o1', {
+			updatePrinter(db, firstPrinter.id, 'o1', {
 				secrets: { shareLink: 'https://shared-tokenzzabcdefgh.octoeverywhere.com' }
 			})
 		).resolves.not.toThrow();
@@ -417,12 +417,8 @@ describe('test routes: rate limit and uniform hosted failures', () => {
 		]);
 		expect(new Set(msgs)).toEqual(new Set([HOSTED_LINK_FAILURE]));
 		// an address (not a link host) gives the same sentence too
-		(
-			await expect(
-				uniformHostedFailure(() =>
-					resolveAllowed('192.168.0.5', undefined, { allowShareLink: true })
-				)
-			)
+		await expect(
+			uniformHostedFailure(() => resolveAllowed('192.168.0.5', undefined, { allowShareLink: true }))
 		).rejects.toThrow(HOSTED_LINK_FAILURE);
 	});
 });

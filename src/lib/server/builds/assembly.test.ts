@@ -34,7 +34,7 @@ import { createBuild } from './create';
 import { onBuildEvents } from './test-helpers';
 import { loadBuildView } from './view';
 
-process.env.DATABASE_URL = join(mkdtempSync(join(tmpdir(), 'tmt-asm-')), 'unused.db');
+process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'tmt-asm-'));
 
 let db: Db;
 let templateId: string;
@@ -233,9 +233,9 @@ describe('setAssemblyItem', () => {
 	});
 
 	it('rejects viewers (403), outsiders (404) and unknown or inactive items (400)', async () => {
-		const code = (fn: () => void) => {
+		const code = async (fn: () => void) => {
 			try {
-				fn();
+				await fn();
 			} catch (e) {
 				return (e as ApiError).status;
 			}
@@ -354,8 +354,8 @@ describe('handoff', () => {
 	});
 
 	it('rejects bad input and defaults the date to today', async () => {
-		(
-			await expect(await updateHandoff(db, buildId, 'owner', { handedOffOn: '03/11/2026' }))
+		await expect(
+			updateHandoff(db, buildId, 'owner', { handedOffOn: '03/11/2026' })
 		).rejects.toThrow(ApiError);
 		await expect(updateHandoff(db, buildId, 'owner', {})).rejects.toThrow(ApiError);
 		await expect(markHandedOff(db, buildId, 'outsider', {})).rejects.toThrow(ApiError);

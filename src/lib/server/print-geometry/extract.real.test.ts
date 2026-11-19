@@ -70,25 +70,21 @@ describe.skipIf(!file || !existsSync(file))('extractPartGeometry (real H profile
 const zip = process.env.MAKEGOOD_HARNESS_ZIP;
 describe.skipIf(!zip || !existsSync(zip))('importPrintGeometry (real harness zip)', () => {
 	it('imports the harness and strap 3MFs', { timeout: 300_000 }, async () => {
-		const { mkdtempSync } = await import('node:fs');
-		const { tmpdir } = await import('node:os');
-		const { join } = await import('node:path');
-		process.env.DATABASE_URL = join(mkdtempSync(join(tmpdir(), 'tmt-real-')), 'u.db');
-		const { openDb, runMigrations } = await import('../db');
+		const { first } = await import('../db');
+		const { createTestDb } = await import('../db/testing');
 		const { templates } = await import('../db/schema');
 		const { templateSeeds } = await import('../seed');
 		const { seedTemplates } = await import('../seed/run');
 		const { importPrintGeometry } = await import('./import');
-		const db = openDb(':memory:');
-		runMigrations(db);
-		seedTemplates(db, templateSeeds);
-		const id = db.select({ id: templates.id }).from(templates).get()!.id;
+		const db = await createTestDb();
+		await seedTemplates(db, templateSeeds);
+		const id = (await first(db.select({ id: templates.id }).from(templates)))!.id;
 		const res = await importPrintGeometry(db, id, zip!, 'HARNESS.zip');
 		console.log('ZIP', JSON.stringify(res.report.map((r) => [r.file, r.parts, r.unmatched])));
 		const { listPrintGeometry } = await import('./import');
 		console.log(
 			'ZIPROWS',
-			JSON.stringify(listPrintGeometry(db, id).filter((r) => r.source !== 'seed'))
+			JSON.stringify((await listPrintGeometry(db, id)).filter((r) => r.source !== 'seed'))
 		);
 		expect(res.report.length).toBeGreaterThan(3);
 	});

@@ -1,4 +1,4 @@
-// Runs only when TMT_MG_DB names a scratch database (under the repo's gitignored data/); never in CI.
+// Runs only when TMT_MG_DB holds the connection URL of a scratch Postgres database; never in CI.
 // Installs the repo's kit pack (KITPACK_DIR=<repo>/kitpacks), arranges the TMT for the Centauri Carbon
 // with and without the layout optimiser, prints per plate min edge clearance before -> after and the
 // rotations that changed, runs the export guard on the real meshes and leaves the arranged plates in
@@ -15,9 +15,9 @@ const dbFile = process.env.TMT_MG_DB;
 
 describe.skipIf(!dbFile)('layout margins on the real kit geometry', () => {
 	it('arranges before/after and the export guard stays clean', { timeout: 900_000 }, async () => {
-		process.env.DATABASE_URL = resolve(dbFile!);
+		process.env.DATABASE_URL = dbFile!;
 		process.env.KITPACK_DIR = resolve('kitpacks');
-		const { openDb, runMigrations } = await import('../db');
+		const { first, openDb, runMigrations } = await import('../db');
 		const schema = await import('../db/schema');
 		const { seedTemplates } = await import('../seed/run');
 		const { templateSeeds } = await import('../seed');
@@ -27,38 +27,36 @@ describe.skipIf(!dbFile)('layout margins on the real kit geometry', () => {
 		const { planArrangement, loadFootprints } = await import('./arrange-plan');
 		const { arrangeForPrinter } = await import('./plates');
 		const { previewExport } = await import('../threemf-export/index');
-		const db = openDb(resolve(dbFile!));
-		runMigrations(db);
-		seedTemplates(db, templateSeeds);
+		const db = openDb(dbFile!);
+		await runMigrations(db);
+		await seedTemplates(db, templateSeeds);
 		console.log('INSTALL', JSON.stringify(await installKitPacks(db, { dir: resolve('kitpacks') })));
-		const tpl = db.select().from(schema.templates).get()!;
-		if (!db.select().from(schema.organization).get()) {
-			db.insert(schema.organization)
-				.values({ id: 'org-mg', name: 'Scratch', slug: 'scratch', createdAt: new Date() })
-				.run();
-			db.insert(schema.user)
-				.values({ id: 'u-mg', name: 'Scratch', email: 'mg@example.test', createdAt: new Date() })
-				.run();
-			db.insert(schema.member)
-				.values({
-					id: 'm-mg',
-					organizationId: 'org-mg',
-					userId: 'u-mg',
-					role: 'owner',
-					createdAt: new Date()
-				})
-				.run();
+		const tpl = (await first(db.select().from(schema.templates)))!;
+		if (!(await first(db.select().from(schema.organization)))) {
+			await db
+				.insert(schema.organization)
+				.values({ id: 'org-mg', name: 'Scratch', slug: 'scratch', createdAt: new Date() });
+			await db
+				.insert(schema.user)
+				.values({ id: 'u-mg', name: 'Scratch', email: 'mg@example.test', createdAt: new Date() });
+			await db.insert(schema.member).values({
+				id: 'm-mg',
+				organizationId: 'org-mg',
+				userId: 'u-mg',
+				role: 'owner',
+				createdAt: new Date()
+			});
 		}
-		const org = db.select().from(schema.organization).get()!;
-		const uid = db.select().from(schema.member).get()!.userId;
+		const org = (await first(db.select().from(schema.organization)))!;
+		const uid = (await first(db.select().from(schema.member)))!.userId;
 		const printer = printerFromCatalog(catalogPrinter('elegoo-centauri-carbon')!, 0);
-		const id = createBuild(
+		const id = await createBuild(
 			db,
 			{ organizationId: org.id, templateId: tpl.id, designId: null, name: 'Margins', printer },
 			uid
 		);
-		const view = loadBuildView(db, id, uid)!;
-		const fps = loadFootprints(db, view.build.templateId);
+		const view = (await loadBuildView(db, id, uid))!;
+		const fps = await loadFootprints(db, view.build.templateId);
 		const t0 = performance.now();
 		const before = planArrangement(view, fps, null, { optimize: false })!;
 		const t1 = performance.now();
@@ -191,8 +189,8 @@ describe.skipIf(!dbFile)('layout margins on the real kit geometry', () => {
 			'WARNINGS',
 			JSON.stringify(after.result.warnings.map((w) => `${w.code}: ${w.message}`))
 		);
-		arrangeForPrinter(db, id, uid, { convertRuns: true });
-		const pre = previewExport(db, id, uid, { flavor: 'orca' });
+		await arrangeForPrinter(db, id, uid, { convertRuns: true });
+		const pre = await previewExport(db, id, uid, { flavor: 'orca' });
 		const bad = pre.warnings.filter((w) => w.severity === 'error');
 		console.log(
 			'GUARD',

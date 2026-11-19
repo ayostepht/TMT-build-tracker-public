@@ -12,62 +12,58 @@ import { printerFromCatalog } from '#lib/printers/printer.ts';
 const dbFile = process.env.TMT_REAL_DB;
 const out = resolve(process.env.TMT_REAL_OUT ?? 'data/export-check');
 
-describe.skipIf(!dbFile || !existsSync(dbFile))('export of the real H profile geometry', () => {
+describe.skipIf(!dbFile)('export of the real H profile geometry', () => {
 	it(
 		'arranges, exports orca + bambu + plain, parses its own files',
 		{ timeout: 600_000 },
 		async () => {
-			process.env.DATABASE_URL = resolve(dbFile!);
-			const { openDb, runMigrations } = await import('../db');
+			process.env.DATABASE_URL = dbFile!;
+			const { first, openDb, runMigrations } = await import('../db');
 			const schema = await import('../db/schema');
 			const { createBuild } = await import('../builds/create');
 			const { arrangeForPrinter } = await import('../builds/plates');
 			const { exportBuild3mf, previewExport } = await import('./index');
 			const { parseThreeMfBytes } = await import('../threemf/index');
 			const { unzipSync } = await import('fflate');
-			const db = openDb(resolve(dbFile!));
-			runMigrations(db);
-			const tpl = db.select().from(schema.templates).get()!;
-			if (!db.select().from(schema.organization).get()) {
-				db.insert(schema.organization)
-					.values({ id: 'org-real', name: 'Scratch', slug: 'scratch', createdAt: new Date() })
-					.run();
-				db.insert(schema.user)
-					.values({
-						id: 'u-real',
-						name: 'Scratch',
-						email: 'scratch@example.test',
-						createdAt: new Date()
-					})
-					.run();
-				db.insert(schema.member)
-					.values({
-						id: 'm-real',
-						organizationId: 'org-real',
-						userId: 'u-real',
-						role: 'owner',
-						createdAt: new Date()
-					})
-					.run();
+			const db = openDb(dbFile!);
+			await runMigrations(db);
+			const tpl = (await first(db.select().from(schema.templates)))!;
+			if (!(await first(db.select().from(schema.organization)))) {
+				await db
+					.insert(schema.organization)
+					.values({ id: 'org-real', name: 'Scratch', slug: 'scratch', createdAt: new Date() });
+				await db.insert(schema.user).values({
+					id: 'u-real',
+					name: 'Scratch',
+					email: 'scratch@example.test',
+					createdAt: new Date()
+				});
+				await db.insert(schema.member).values({
+					id: 'm-real',
+					organizationId: 'org-real',
+					userId: 'u-real',
+					role: 'owner',
+					createdAt: new Date()
+				});
 			}
-			const org = db.select().from(schema.organization).get()!;
-			const uid = db.select().from(schema.member).get()!.userId;
+			const org = (await first(db.select().from(schema.organization)))!;
+			const uid = (await first(db.select().from(schema.member)))!.userId;
 			const printer = printerFromCatalog(catalogPrinter('elegoo-centauri-carbon')!, 0);
-			const id = createBuild(
+			const id = await createBuild(
 				db,
 				{ organizationId: org.id, templateId: tpl.id, designId: null, name: 'Real check', printer },
 				uid
 			);
-			const arr = arrangeForPrinter(db, id, uid, { convertRuns: true });
+			const arr = await arrangeForPrinter(db, id, uid, { convertRuns: true });
 			console.log('ARRANGED plates', arr.plates, 'warnings', arr.warnings.length);
 			mkdirSync(out, { recursive: true });
 			const stats: string[] = [];
 			for (const flavor of ['orca', 'bambu', 'plain'] as const) {
-				const pre = previewExport(db, id, uid, { flavor });
+				const pre = await previewExport(db, id, uid, { flavor });
 				const t0 = Date.now();
 				let peak = process.memoryUsage().rss;
 				const timer = setInterval(() => (peak = Math.max(peak, process.memoryUsage().rss)), 50);
-				const res = exportBuild3mf(db, id, uid, { flavor });
+				const res = await exportBuild3mf(db, id, uid, { flavor });
 				const file = join(out, res.filename);
 				await pipeline(Readable.fromWeb(res.stream as never), createWriteStream(file));
 				clearInterval(timer);

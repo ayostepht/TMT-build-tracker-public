@@ -48,7 +48,7 @@ const orgId = 'org1';
 
 beforeEach(async () => {
 	dir = mkdtempSync(join(tmpdir(), 'tmt-quota-'));
-	vi.stubEnv('DATABASE_URL', join(dir, 'tmt.db'));
+	vi.stubEnv('DATA_DIR', dir);
 	vi.stubEnv('TMT_MODE', 'public');
 	vi.stubEnv('PUBLIC_URL', 'https://example.test');
 	db = await createTestDb();
@@ -84,9 +84,9 @@ const mk = async (userId = 'u1', kind: 'build' | 'draft' = 'build', org = orgId)
 		userId
 	);
 
-const quota409 = (fn: () => unknown) => {
+const quota409 = async (fn: () => unknown) => {
 	try {
-		fn();
+		await fn();
 	} catch (e) {
 		expect(e).toBeInstanceOf(QuotaError);
 		expect((e as QuotaError).status).toBe(409);
@@ -145,8 +145,8 @@ describe('builds and drafts', () => {
 		await mk();
 		await mk();
 		const results = await Promise.allSettled([
-			Promise.resolve().then(() => await mk('u1')),
-			Promise.resolve().then(() => await mk('u2'))
+			Promise.resolve().then(() => mk('u1')),
+			Promise.resolve().then(() => mk('u2'))
 		]);
 		expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
 		expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
@@ -206,21 +206,21 @@ describe('photos and upload bytes', () => {
 		await addPhoto(db, buildId, 'u1', { kind: 'progress', file: jpeg(n) });
 	const files = (buildId: string) => {
 		const p = join(dir, 'uploads', 'photos', buildId);
-		return existsSync(p) ? readdirSyncasync(p) : [];
+		return existsSync(p) ? readdirSync(p) : [];
 	};
 
 	it('limits photos per build and writes nothing when refused', async () => {
 		vi.stubEnv('QUOTA_PHOTOS_PER_BUILD', '1');
 		const b = await mk();
 		await add(b);
-		await expect(await add(b)).rejects.toMatchObject({ status: 409, code: 'quota' });
+		await expect(add(b)).rejects.toMatchObject({ status: 409, code: 'quota' });
 		expect(files(b)).toHaveLength(1);
 	});
 
 	it('lets exactly one of two parallel uploads at limit-1 through, leaving no stray file', async () => {
 		vi.stubEnv('QUOTA_PHOTOS_PER_BUILD', '1');
 		const b = await mk();
-		const r = await Promise.allSettled([await add(b), await add(b)]);
+		const r = await Promise.allSettled([add(b), add(b)]);
 		expect(r.filter((x) => x.status === 'fulfilled')).toHaveLength(1);
 		expect(files(b)).toHaveLength(1);
 	});
@@ -229,7 +229,7 @@ describe('photos and upload bytes', () => {
 		vi.stubEnv('QUOTA_UPLOAD_MB_PER_WORKSPACE', '1');
 		const b = await mk();
 		await add(b, 600_000);
-		await expect(await add(b, 600_000)).rejects.toMatchObject({ status: 409, code: 'quota' });
+		await expect(add(b, 600_000)).rejects.toMatchObject({ status: 409, code: 'quota' });
 		expect(files(b)).toHaveLength(1);
 		await add(b, 300_000);
 	});
@@ -240,9 +240,9 @@ describe('photos and upload bytes', () => {
 		await add(b, 600_000);
 		const f = join(dir, 'streamed.bin');
 		writeFileSync(f, new Uint8Array(600_000));
-		(
-			await expect(await enforceStreamedUpload(db, orgId, f, { userId: 'u1' }))
-		).rejects.toBeInstanceOf(QuotaError);
+		await expect(enforceStreamedUpload(db, orgId, f, { userId: 'u1' })).rejects.toBeInstanceOf(
+			QuotaError
+		);
 		expect(existsSync(f)).toBe(false);
 		// "Already over?" pre-check with zero bytes passes while under.
 		await assertUploadRoom(db, orgId, 0, { userId: 'u1' });
@@ -359,7 +359,7 @@ describe('per-user bytes and the disk floor', () => {
 		vi.stubEnv('QUOTA_UPLOAD_MB_PER_WORKSPACE', 'off');
 		vi.stubEnv('QUOTA_UPLOAD_MB_PER_USER', '1');
 		await add(await mk('u1', 'build', orgId), 600_000);
-		await expect(await add(await mk('u1', 'build', 'org2'), 600_000)).rejects.toMatchObject({
+		await expect(add(await mk('u1', 'build', 'org2'), 600_000)).rejects.toMatchObject({
 			status: 409,
 			code: 'quota'
 		});
@@ -369,12 +369,12 @@ describe('per-user bytes and the disk floor', () => {
 	it('is unlimited when off', async () => {
 		vi.stubEnv('QUOTA_UPLOAD_MB_PER_USER', 'off');
 		await add(await mk(), 3_000_000);
-		await expect(await add(await mk(), 3_000_000)).resolves.toBeTruthy();
+		await expect(add(await mk(), 3_000_000)).resolves.toBeTruthy();
 	});
 
 	it('refuses photos and design previews with 507 below the disk floor', async () => {
 		vi.stubEnv('MIN_FREE_DISK_MB', '999999999999');
-		await expect(await add(await mk())).rejects.toMatchObject({ status: 507 });
+		await expect(add(await mk())).rejects.toMatchObject({ status: 507 });
 	});
 });
 
@@ -391,10 +391,8 @@ describe('row caps', () => {
 		}));
 		for (let i = 0; i < rows.length; i += 500)
 			await db.insert(printRuns).values(rows.slice(i, i + 500));
-		(
-			await expect(
-				await addRun(db, b, 'u1', { partSlug: slug, date: '2026-01-02', result: 'Success' })
-			)
+		await expect(
+			addRun(db, b, 'u1', { partSlug: slug, date: '2026-01-02', result: 'Success' })
 		).rejects.toThrow(/at most 2000 print logs/);
 	});
 
@@ -421,15 +419,9 @@ describe('row caps', () => {
 
 describe('kit copies stay in their workspace', () => {
 	it("refuses a build on another workspace's copy, allows the owner", async () => {
-		const copy = forkTemplate(db, orgId, templateId, 'Copy', 'u1');
-		(
-			await expect(
-				await createBuild(
-					db,
-					{ organizationId: 'org2', templateId: copy, designId: null, name: 'B' },
-					'u1'
-				)
-			)
+		const copy = await forkTemplate(db, orgId, templateId, 'Copy', 'u1');
+		await expect(
+			createBuild(db, { organizationId: 'org2', templateId: copy, designId: null, name: 'B' }, 'u1')
 		).rejects.toThrow(/Unknown template/);
 		expect(
 			await createBuild(
@@ -445,7 +437,7 @@ describe('kit copies stay in their workspace', () => {
 			.update(organization)
 			.set({ metadata: JSON.stringify({ personal: true, userId: 'u1' }) })
 			.where(eq(organization.id, 'org2'));
-		const copy = forkTemplate(db, 'org2', templateId, 'Mine', 'u1');
+		const copy = await forkTemplate(db, 'org2', templateId, 'Mine', 'u1');
 		const b = await createBuild(
 			db,
 			{ organizationId: 'org2', templateId: copy, designId: null, name: 'B' },
@@ -458,7 +450,7 @@ describe('kit copies stay in their workspace', () => {
 	});
 
 	it('repointBuildsOffTemplates moves only builds of other workspaces', async () => {
-		const copy = forkTemplate(db, orgId, templateId, 'Copy', 'u1');
+		const copy = await forkTemplate(db, orgId, templateId, 'Copy', 'u1');
 		const own = await createBuild(
 			db,
 			{ organizationId: orgId, templateId: copy, designId: null, name: 'own' },
@@ -467,13 +459,11 @@ describe('kit copies stay in their workspace', () => {
 		// A legacy foreign reference (what older data may hold).
 		const foreign = await mk('u1', 'build', 'org2');
 		await db.update(builds).set({ templateId: copy }).where(eq(builds.id, foreign));
-		expect(
-			db.transaction((tx) => await repointBuildsOffTemplates(tx as unknown as Db, [copy]))
-		).toBe(1);
-		const t = (id: string) =>
+		expect(await db.transaction((tx) => repointBuildsOffTemplates(tx, [copy]))).toBe(1);
+		const t = async (id: string) =>
 			(await first(db.select().from(builds).where(eq(builds.id, id))))!.templateId;
-		expect(t(foreign)).toBe(templateId);
-		expect(t(own)).toBe(copy);
+		expect(await t(foreign)).toBe(templateId);
+		expect(await t(own)).toBe(copy);
 	});
 });
 

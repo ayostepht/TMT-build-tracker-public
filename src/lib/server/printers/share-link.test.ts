@@ -210,15 +210,15 @@ describe('shared link storage', () => {
 			'u1',
 			body({ cameraUrl: 'http://10.0.0.5:3031/video', host: '10.0.0.5', port: 3030 })
 		);
-		expect(row.cameraUrl).toBeNull();
+		expect(row).not.toHaveProperty('cameraUrl');
 		expect(row.host).toBe('octoeverywhere');
-		expect(row.port).toBeNull();
+		expect(row).not.toHaveProperty('port');
 		const a = await updatePrinter(db, row.id, 'o', {
 			name: 'Renamed',
 			cameraUrl: 'http://10.0.0.5/x',
 			host: '10.0.0.5'
 		});
-		expect(a.cameraUrl).toBeNull();
+		expect(a).not.toHaveProperty('cameraUrl');
 		expect(a.host).toBe('octoeverywhere');
 		expect(decryptSecrets(a.secretEnc)).toEqual({ shareLink: LINK });
 		// a link printer cannot go back to an address: clearing the link is refused

@@ -1,8 +1,9 @@
 // Runs only when TMT_PACK_DIR points at a directory with a kit pack and its index.json (never in CI).
 // Installs the pack into a scratch database under data/, arranges the whole kit for the Elegoo
 // Centauri Carbon (256 x 256 with its keep-out) and writes a report to TMT_GROUPS_OUT:
-// plates, every multi-piece part's outcome, the export guard. TMT_GROUPS_DB keeps the database.
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+// plates, every multi-piece part's outcome, the export guard. TMT_GROUPS_DB (a Postgres URL) keeps
+// the database; without it a throwaway test database is used.
+import { existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -10,10 +11,8 @@ const dir = process.env.TMT_PACK_DIR;
 
 describe.skipIf(!dir || !existsSync(dir!))('rigid groups against the real kit pack', () => {
 	it('arranges the kit on a Centauri Carbon', { timeout: 900_000 }, async () => {
-		const work = resolve(process.env.TMT_GROUPS_DB ?? 'data/scratch/groups-real-' + process.pid);
-		mkdirSync(work, { recursive: true });
-		process.env.DATABASE_URL = resolve(work, 'tmt.db');
-		const { openDb, runMigrations } = await import('../db');
+		const { first, openDb, runMigrations } = await import('../db');
+		const { createTestDb } = await import('../db/testing');
 		const schema = await import('../db/schema');
 		const { templateSeeds } = await import('../seed');
 		const { seedTemplates } = await import('../seed/run');
@@ -24,36 +23,35 @@ describe.skipIf(!dir || !existsSync(dir!))('rigid groups against the real kit pa
 		const { catalogPrinter } = await import('#lib/printers/catalog.ts');
 		const { printerFromCatalog } = await import('#lib/printers/printer.ts');
 		const { loadFootprints } = await import('./arrange-plan');
-		const db = openDb(process.env.DATABASE_URL);
-		runMigrations(db);
-		seedTemplates(db, templateSeeds);
+		const keepUrl = process.env.TMT_GROUPS_DB;
+		const db = keepUrl ? openDb(keepUrl) : await createTestDb();
+		if (keepUrl) await runMigrations(db);
+		await seedTemplates(db, templateSeeds);
 		const out = await installKitPacks(db, { dir: dir!, download: false });
 		console.log('INSTALL', JSON.stringify(out));
-		const tpl = db.select().from(schema.templates).get()!;
-		db.insert(schema.organization)
-			.values({ id: 'org-r', name: 'Scratch', slug: 'scratch', createdAt: new Date() })
-			.run();
-		db.insert(schema.user)
-			.values({ id: 'u-r', name: 'S', email: 's@example.test', createdAt: new Date() })
-			.run();
-		db.insert(schema.member)
-			.values({
-				id: 'm-r',
-				organizationId: 'org-r',
-				userId: 'u-r',
-				role: 'owner',
-				createdAt: new Date()
-			})
-			.run();
+		const tpl = (await first(db.select().from(schema.templates)))!;
+		await db
+			.insert(schema.organization)
+			.values({ id: 'org-r', name: 'Scratch', slug: 'scratch', createdAt: new Date() });
+		await db
+			.insert(schema.user)
+			.values({ id: 'u-r', name: 'S', email: 's@example.test', createdAt: new Date() });
+		await db.insert(schema.member).values({
+			id: 'm-r',
+			organizationId: 'org-r',
+			userId: 'u-r',
+			role: 'owner',
+			createdAt: new Date()
+		});
 		const printer = printerFromCatalog(catalogPrinter('elegoo-centauri-carbon')!, 0);
-		const id = createBuild(
+		const id = await createBuild(
 			db,
 			{ organizationId: 'org-r', templateId: tpl.id, designId: null, name: 'Real', printer },
 			'u-r'
 		);
-		const arr = arrangeForPrinter(db, id, 'u-r', { convertRuns: true });
-		const info = buildArrangement(db, id, 'u-r');
-		const fps = loadFootprints(db, tpl.id);
+		const arr = await arrangeForPrinter(db, id, 'u-r', { convertRuns: true });
+		const info = await buildArrangement(db, id, 'u-r');
+		const fps = await loadFootprints(db, tpl.id);
 		const lines: string[] = [`plates: ${info.plates.length}`];
 		for (const p of info.plates)
 			lines.push(
@@ -103,7 +101,7 @@ describe.skipIf(!dir || !existsSync(dir!))('rigid groups against the real kit pa
 				expect(Math.abs(Math.max(out, -1) - Math.max(srcGap, -1))).toBeLessThan(0.3);
 			}
 		}
-		const pre = previewExport(db, id, 'u-r', { flavor: 'orca' });
+		const pre = await previewExport(db, id, 'u-r', { flavor: 'orca' });
 		lines.push(
 			'warnings: ' +
 				JSON.stringify(

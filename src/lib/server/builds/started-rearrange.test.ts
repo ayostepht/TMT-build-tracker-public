@@ -1,10 +1,11 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { catalogPrinter } from '#lib/printers/catalog.ts';
 import { printerFromCatalog } from '#lib/printers/printer.ts';
-import { openDb, runMigrations, type Db } from '../db';
+import { first, type Db } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import { member, organization, printerJobs, templates, user } from '../db/schema';
 import { templateSeeds } from '../seed';
 import { seedTemplates } from '../seed/run';
@@ -20,55 +21,53 @@ import { loadBuildView } from './view';
 let db: Db;
 let templateId: string;
 const orgId = 'org1';
-process.env.DATABASE_URL = join(mkdtempSync(join(tmpdir(), 'tmt-start-')), 'unused.db');
+afterEach(async () => dropTestDb(db));
+
 const cc = printerFromCatalog(catalogPrinter('elegoo-centauri-carbon')!, 0);
 
-beforeEach(() => {
-	db = openDb(':memory:');
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
-	templateId = db.select({ id: templates.id }).from(templates).get()!.id;
-	db.insert(organization)
-		.values({ id: orgId, name: 'Chapter', slug: 'chapter', createdAt: new Date() })
-		.run();
-	db.insert(user).values({ id: 'owner', name: 'Olive', email: 'o@example.test' }).run();
-	db.insert(member)
-		.values({
-			id: 'm1',
-			organizationId: orgId,
-			userId: 'owner',
-			role: 'owner',
-			createdAt: new Date()
-		})
-		.run();
+beforeEach(async () => {
+	db = await createTestDb();
+	await seedTemplates(db, templateSeeds);
+	templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
+	await db
+		.insert(organization)
+		.values({ id: orgId, name: 'Chapter', slug: 'chapter', createdAt: new Date() });
+	await db.insert(user).values({ id: 'owner', name: 'Olive', email: 'o@example.test' });
+	await db.insert(member).values({
+		id: 'm1',
+		organizationId: orgId,
+		userId: 'owner',
+		role: 'owner',
+		createdAt: new Date()
+	});
 });
 
-const mk = () =>
-	createBuild(
+const mk = async () =>
+	await createBuild(
 		db,
 		{ organizationId: orgId, templateId, designId: null, name: 'B', printer: cc },
 		'owner'
 	);
-const view = (id: string) => loadBuildView(db, id, 'owner')!;
-const plates = (id: string) => JSON.stringify(view(id).plates);
-const move = (id: string) =>
-	updateBuildDesign(db, id, 'owner', { partRoles: { 'wing-left': 'primary' } });
+const view = async (id: string) => (await loadBuildView(db, id, 'owner'))!;
+const plates = async (id: string) => JSON.stringify((await view(id)).plates);
+const move = async (id: string) =>
+	await updateBuildDesign(db, id, 'owner', { partRoles: { 'wing-left': 'primary' } });
 
 describe('design changes on a started build keep the plates', () => {
-	it('an unstarted arranged build still re-arranges automatically', () => {
-		const id = mk();
-		expect(view(id).started.started).toBe(false);
-		const before = plates(id);
-		move(id);
-		expect(plates(id)).not.toBe(before);
-		expect(buildArrangement(db, id, 'owner').stale).toBe(false);
+	it('an unstarted arranged build still re-arranges automatically', async () => {
+		const id = await mk();
+		expect((await view(id)).started.started).toBe(false);
+		const before = await plates(id);
+		await move(id);
+		expect(await plates(id)).not.toBe(before);
+		expect((await buildArrangement(db, id, 'owner')).stale).toBe(false);
 	});
 
-	const cases: [string, (id: string) => void][] = [
+	const cases: [string, (id: string) => Promise<unknown>][] = [
 		[
 			'a part logged on its own',
-			(id) =>
-				addRun(db, id, 'owner', {
+			async (id) =>
+				await addRun(db, id, 'owner', {
 					date: '2026-03-01',
 					result: 'Success',
 					partSlug: 'handle-left',
@@ -77,73 +76,77 @@ describe('design changes on a started build keep the plates', () => {
 		],
 		[
 			'a part that is Printing',
-			(id) => setPartStatus(db, id, 'owner', 'handle-left', { status: 'Printing' })
+			async (id) => await setPartStatus(db, id, 'owner', 'handle-left', { status: 'Printing' })
 		],
 		[
 			'a part that is Reprint',
-			(id) => setPartStatus(db, id, 'owner', 'handle-left', { status: 'Reprint' })
+			async (id) => await setPartStatus(db, id, 'owner', 'handle-left', { status: 'Reprint' })
 		],
 		[
 			'a live printer job',
-			(id) => {
-				const printerId = createPrinter(db, orgId, 'owner', {
-					name: 'Shop',
-					kind: 'elegoo-sdcp',
-					secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
-					catalogId: 'elegoo-centauri-carbon'
-				}).id;
-				db.insert(printerJobs)
-					.values({
-						printerId,
-						buildId: id,
-						plateNumber: 1,
-						partSlugs: view(id).plates[0].parts,
-						status: 'printing',
-						startedAt: new Date()
+			async (id) => {
+				const printerId = (
+					await createPrinter(db, orgId, 'owner', {
+						name: 'Shop',
+						kind: 'elegoo-sdcp',
+						secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
+						catalogId: 'elegoo-centauri-carbon'
 					})
-					.run();
+				).id;
+				await db.insert(printerJobs).values({
+					printerId,
+					buildId: id,
+					plateNumber: 1,
+					partSlugs: (await view(id)).plates[0].parts,
+					status: 'printing',
+					startedAt: new Date()
+				});
 			}
 		]
 	];
 	for (const [name, start] of cases)
-		it(`does not rewrite plates after ${name}, and the plates go stale`, () => {
-			const id = mk();
-			start(id);
-			expect(view(id).started.started).toBe(true);
-			const before = plates(id);
-			move(id);
-			expect(plates(id)).toBe(before);
-			expect(buildArrangement(db, id, 'owner').stale).toBe(true);
+		it(`does not rewrite plates after ${name}, and the plates go stale`, async () => {
+			const id = await mk();
+			await start(id);
+			expect((await view(id)).started.started).toBe(true);
+			const before = await plates(id);
+			await move(id);
+			expect(await plates(id)).toBe(before);
+			expect((await buildArrangement(db, id, 'owner')).stale).toBe(true);
 		});
 
-	it('a printer change on a started build keeps the plates too', () => {
-		const id = mk();
-		setPartStatus(db, id, 'owner', 'handle-left', { status: 'Printing' });
-		const before = plates(id);
-		setPrinter(db, id, 'owner', {
+	it('a printer change on a started build keeps the plates too', async () => {
+		const id = await mk();
+		await setPartStatus(db, id, 'owner', 'handle-left', { status: 'Printing' });
+		const before = await plates(id);
+		await setPrinter(db, id, 'owner', {
 			printer: { ...cc, bedX: 350, bedY: 320, catalogId: null, name: 'Big' }
 		});
-		expect(plates(id)).toBe(before);
+		expect(await plates(id)).toBe(before);
 	});
 
-	it('a live job reports its plate in started.printingPlates', () => {
-		const id = mk();
-		const printerId = createPrinter(db, orgId, 'owner', {
-			name: 'Shop',
-			kind: 'elegoo-sdcp',
-			secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
-			catalogId: 'elegoo-centauri-carbon'
-		}).id;
-		db.insert(printerJobs)
-			.values({
-				printerId,
-				buildId: id,
-				plateNumber: 3,
-				partSlugs: [],
-				status: 'paused',
-				startedAt: new Date()
+	it('a live job reports its plate in started.printingPlates', async () => {
+		const id = await mk();
+		const printerId = (
+			await createPrinter(db, orgId, 'owner', {
+				name: 'Shop',
+				kind: 'elegoo-sdcp',
+				secrets: { shareLink: 'https://shared-aaaaaaaa1111.octoeverywhere.com' },
+				catalogId: 'elegoo-centauri-carbon'
 			})
-			.run();
-		expect(view(id).started).toMatchObject({ started: true, liveJobs: 1, printingPlates: [3] });
+		).id;
+		await db.insert(printerJobs).values({
+			printerId,
+			buildId: id,
+			plateNumber: 3,
+			partSlugs: [],
+			status: 'paused',
+			startedAt: new Date()
+		});
+		expect((await view(id)).started).toMatchObject({
+			started: true,
+			liveJobs: 1,
+			printingPlates: [3]
+		});
 	});
 });

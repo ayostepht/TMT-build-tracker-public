@@ -60,7 +60,7 @@ beforeEach(async () => {
 	}
 });
 
-const mk = (printer?: BuildPrinter) =>
+const mk = async (printer?: BuildPrinter) =>
 	await createBuild(
 		db,
 		{ organizationId: orgId, templateId, designId: null, name: 'B', printer },
@@ -179,13 +179,15 @@ describe('arrangeForPrinter', () => {
 	it('moving a part to another color re-arranges automatically when no plate has logs', async () => {
 		const id = await mk(bed(256, 256, 1));
 		const before = await plateOf(id, 'wing-left');
+		const vBefore = await view(id);
 		expect(
-			before.parts.every((s) => (await view(id)).parts.find((p) => p.slug === s)!.role === 'accent')
+			before.parts.every((s) => vBefore.parts.find((p) => p.slug === s)!.role === 'accent')
 		).toBe(true);
 		await updateBuildDesign(db, id, 'owner', { partRoles: { 'wing-left': 'primary' } });
 		const after = await plateOf(id, 'wing-left');
+		const vAfter = await view(id);
 		expect(
-			after.parts.every((s) => (await view(id)).parts.find((p) => p.slug === s)!.role === 'primary')
+			after.parts.every((s) => vAfter.parts.find((p) => p.slug === s)!.role === 'primary')
 		).toBe(true);
 		expect((await buildArrangement(db, id, 'owner')).stale).toBe(false);
 	});
@@ -253,7 +255,7 @@ describe('arrangeForPrinter', () => {
 			.update(buildPlates)
 			.set({ arrangement: bad })
 			.where(and(eq(buildPlates.buildId, id), eq(buildPlates.number, row.number)));
-		expect(() => await buildArrangement(db, id, 'owner')).not.toThrow();
+		await expect(buildArrangement(db, id, 'owner')).resolves.toBeTruthy();
 	});
 
 	it('leaves other layouts alone when the printer changes', async () => {

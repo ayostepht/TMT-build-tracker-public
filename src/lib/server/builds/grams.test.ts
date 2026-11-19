@@ -67,7 +67,7 @@ describe('updatePart manualGrams', () => {
 		expect(plateGrams(v, plate)).toMatchObject({ total: 62.46, unknown: ['rear-caster-right'] });
 		const need = (x: typeof v) => filamentStats(x).reduce((a, s) => a + s.need, 0);
 		expect(need(v) - need(before)).toBeCloseTo(62.46);
-		const row = lastKind(id);
+		const row = await lastKind(id);
 		expect(row.kind).toBe('part.grams');
 		expect(row.payload).toMatchObject({ slug: 'rear-caster-left', manualGrams: 62.46 });
 		expect(
@@ -82,36 +82,34 @@ describe('updatePart manualGrams', () => {
 		expect((await view(id)).state['push-top'].manualGrams).toBeNull();
 		expect(partGrams(await view(id), 'push-top').source).toBe('bom');
 		expect((await lastKind(id)).payload).toMatchObject({ manualGrams: null, cleared: true });
-		(
-			await expect(await updatePart(db, id, 'owner', 'push-top', { manualGrams: null }))
-		).rejects.toThrow(ApiError);
+		await expect(updatePart(db, id, 'owner', 'push-top', { manualGrams: null })).rejects.toThrow(
+			ApiError
+		);
 	});
 
 	it.each([[-1], [Number.NaN], [20001], ['12'], [Infinity]])('refuses %s', async (bad) => {
 		const id = await mk();
-		(
-			await expect(await updatePart(db, id, 'owner', 'push-top', { manualGrams: bad }))
-		).rejects.toThrow(ApiError);
+		await expect(updatePart(db, id, 'owner', 'push-top', { manualGrams: bad })).rejects.toThrow(
+			ApiError
+		);
 		expect((await view(id)).state['push-top'].manualGrams ?? null).toBeNull();
 	});
 
 	it('is refused for viewers (403) and in drafts (400)', async () => {
 		const id = await mk();
-		(
-			await expect(await updatePart(db, id, 'viewer', 'push-top', { manualGrams: 5 }))
-		).rejects.toThrow(expect.objectContaining({ status: 403 }));
+		await expect(updatePart(db, id, 'viewer', 'push-top', { manualGrams: 5 })).rejects.toThrow(
+			expect.objectContaining({ status: 403 })
+		);
 		const d = await mk('draft');
-		(
-			await expect(await updatePart(db, d, 'owner', 'push-top', { manualGrams: 5 }))
-		).rejects.toThrow(expect.objectContaining({ status: 400 }));
+		await expect(updatePart(db, d, 'owner', 'push-top', { manualGrams: 5 })).rejects.toThrow(
+			expect.objectContaining({ status: 400 })
+		);
 	});
 
 	it('must be sent on its own, and an unknown part is a 404', async () => {
 		const id = await mk();
-		(
-			await expect(
-				await updatePart(db, id, 'owner', 'push-top', { manualGrams: 5, assigneeUserId: null })
-			)
+		await expect(
+			updatePart(db, id, 'owner', 'push-top', { manualGrams: 5, assigneeUserId: null })
 		).rejects.toThrow(ApiError);
 		await expect(updatePart(db, id, 'owner', 'nope', { manualGrams: 5 })).rejects.toThrow(
 			expect.objectContaining({ status: 404 })
@@ -142,8 +140,8 @@ describe('request-supplied keys', () => {
 		await expect(updatePlate(db, id, 'owner', 10, { slicerGrams: 20001 })).rejects.toThrow(
 			expect.objectContaining({ status: 400 })
 		);
-		(
-			await expect(await updatePlate(db, id, 'owner', 13, { slicerByPart: { [slug]: 1e9 } }))
+		await expect(
+			updatePlate(db, id, 'owner', 13, { slicerByPart: { [slug]: 1e9 } })
 		).rejects.toThrow(expect.objectContaining({ status: 400 }));
 		await updatePlate(db, id, 'owner', 10, { slicerGrams: 20000 });
 	});

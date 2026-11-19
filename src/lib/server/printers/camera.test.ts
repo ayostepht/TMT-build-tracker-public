@@ -243,9 +243,9 @@ describe('camera source (through an OctoEverywhere link)', () => {
 	});
 });
 
-describe('camera settings on a saved printer', async () => {
+describe('camera settings on a saved printer', () => {
 	const LINK = 'https://shared-testtoken12345678.octoeverywhere.com';
-	async function await setup() {
+	async function setup() {
 		const db = await createTestDb();
 		await db.insert(user).values({ id: 'u1', name: 'U', email: 'u@example.test' });
 		await db.insert(organization).values({ id: 'o', name: 'O', slug: 'o', createdAt: new Date() });
@@ -258,10 +258,9 @@ describe('camera settings on a saved printer', async () => {
 			...base,
 			cameraUrl: 'http://10.0.0.5:8080/s'
 		});
-		expect(row.cameraUrl).toBeNull();
-		expect(
-			(await updatePrinter(db, row.id, 'o', { cameraUrl: 'http://10.0.0.6/s' })).cameraUrl
-		).toBeNull();
+		expect(row).not.toHaveProperty('cameraUrl');
+		const edited = await updatePrinter(db, row.id, 'o', { cameraUrl: 'http://10.0.0.6/s' });
+		expect(edited).not.toHaveProperty('cameraUrl');
 		const view = JSON.stringify(toPublic(row));
 		expect(view).not.toContain('cameraUrl');
 		expect(view).not.toContain('10.0.0.5');
@@ -391,7 +390,7 @@ describe('camera hub', () => {
 			c.mode = 'error';
 		});
 		const s = hub.session('p1', async () => src());
-		(await expect(s.snapshot())).rejects.toThrow(CameraError);
+		await expect(s.snapshot()).rejects.toThrow(CameraError);
 		expect(s.status).toBe('error');
 		const stop = s.watch(() => {});
 		const before = cam.total;
@@ -422,7 +421,7 @@ describe('camera hub', () => {
 			origin: 'default' as const,
 			host: '10.9.9.9' // not the camera's host
 		}));
-		(await expect(s.snapshot())).rejects.toThrow(/away from the printer/);
+		await expect(s.snapshot()).rejects.toThrow(/away from the printer/);
 		expect(cam.total).toBe(0);
 	});
 

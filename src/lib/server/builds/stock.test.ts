@@ -38,9 +38,9 @@ const mk = async (kind: 'build' | 'draft' = 'build') =>
 		'owner'
 	);
 const view = async (id: string) => (await loadBuildView(db, id, 'owner'))!;
-const status = (fn: () => unknown) => {
+const status = async (fn: () => unknown) => {
 	try {
-		fn();
+		await fn();
 	} catch (e) {
 		return (e as { status?: number }).status;
 	}
@@ -69,7 +69,7 @@ describe('spool adds', () => {
 		expect(st.haveGrams).toBeCloseTo((f0.spools + 1.23) * 1000);
 		expect(st.startKg).toBe(f0.spools);
 		expect(st.addedKg).toBe(1.23);
-		const row = acts(id, 'filament.stock.add').at(-1)!;
+		const row = (await acts(id, 'filament.stock.add')).at(-1)!;
 		expect(row.payload).toMatchObject({
 			role: f.key,
 			kg: 1.23,
@@ -167,7 +167,7 @@ describe('spool adds', () => {
 		f = (await view(id)).filaments.find((x) => x.key === f0.key)!;
 		expect(f.spools).toBe(3.5);
 		expect(stockKg(f)).toBe(5.5);
-		const row = acts(id, 'filament.spools').at(-1)!;
+		const row = (await acts(id, 'filament.spools')).at(-1)!;
 		const v = await view(id);
 		expect(describeActivity({ ...v.activity[0] }, v)).toMatch(/starting spools to 3\.5 kg$/);
 		expect(row.payload).toMatchObject({ spools: 3.5 });
@@ -181,7 +181,7 @@ describe('spool adds', () => {
 		await updateFilament(db, id, 'owner', 'extra', { spools: 1 });
 		await addSpool(db, id, 'owner', 'extra', { kg: 2 });
 		await updateBuildDesign(db, id, 'owner', { removeRole: 'extra' });
-		const row = acts(id, 'design.update').at(-1)!;
+		const row = (await acts(id, 'design.update')).at(-1)!;
 		expect((row.payload.removed as { spools: number }).spools).toBe(3);
 	});
 });

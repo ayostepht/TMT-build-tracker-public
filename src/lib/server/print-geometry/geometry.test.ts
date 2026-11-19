@@ -1,12 +1,13 @@
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { strToU8 } from 'fflate';
 import { eq } from 'drizzle-orm';
 import type { PrintFootprint } from '#lib/domain/print-footprint.ts';
 import { loadFootprints } from '../builds/arrange-plan';
-import { openDb, runMigrations, type Db } from '../db';
+import { first, type Db } from '../db';
+import { createTestDb, dropTestDb } from '../db/testing';
 import { templatePrintGeometry, templates } from '../db/schema';
 import { templateSeeds } from '../seed';
 import { seedTemplates } from '../seed/run';
@@ -17,8 +18,6 @@ import { decodeMesh, encodeMesh } from './mesh-format';
 import { printDir, readPieceMesh } from './store';
 import { ModelScanner, normalizeMesh } from './reader';
 import { zipSync } from 'fflate';
-
-process.env.DATABASE_URL = join(mkdtempSync(join(tmpdir(), 'tmt-geo-')), 'unused.db');
 
 /** A box mesh as a 3MF object file. */
 function boxModel(id: number, sx: number, sy: number, sz: number): string {
@@ -86,7 +85,7 @@ const parts = [
 const open = (bytes: Uint8Array) => () => [bytes];
 
 describe('mesh format', () => {
-	it('round-trips', () => {
+	it('round-trips', async () => {
 		const m = {
 			positions: new Float32Array([0, 1, 2, 3, 4, 5, 6, 7, 8.5]),
 			indices: new Uint32Array([0, 1, 2])
@@ -170,7 +169,7 @@ describe('extractPartGeometry (synthetic 3MF)', () => {
 		expect(ok.parts[0].pieces[0].settings.extruder).toBe('1');
 	});
 
-	it('normalizeMesh turns a tilted bar to its min box', () => {
+	it('normalizeMesh turns a tilted bar to its min box', async () => {
 		// a flat 200 x 20 bar rotated 30 degrees in plan
 		const a = (30 * Math.PI) / 180;
 		const corners = [
@@ -190,23 +189,23 @@ describe('extractPartGeometry (synthetic 3MF)', () => {
 describe('importPrintGeometry', () => {
 	let db: Db;
 	let templateId: string;
-	beforeEach(() => {
-		db = openDb(':memory:');
-		runMigrations(db);
-		seedTemplates(db, templateSeeds);
-		templateId = db.select({ id: templates.id }).from(templates).get()!.id;
+	beforeEach(async () => {
+		db = await createTestDb();
+		await seedTemplates(db, templateSeeds);
+		templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
 	});
+	afterEach(async () => dropTestDb(db));
 	const file = (bytes: Uint8Array) => {
 		const p = join(mkdtempSync(join(tmpdir(), 'tmt-up-')), 'up.3mf');
 		writeFileSync(p, bytes);
 		return p;
 	};
 
-	it('seeds footprints from the kit data', () => {
-		const fps = loadFootprints(db, templateId);
+	it('seeds footprints from the kit data', async () => {
+		const fps = await loadFootprints(db, templateId);
 		expect(fps.get('wing-left')?.pieces[0]).toMatchObject({ w: 330.9, d: 189.7 });
 		expect(fps.get('rims-1-4')?.unitsPerPlate).toBe(1);
-		const rows = listPrintGeometry(db, templateId);
+		const rows = await listPrintGeometry(db, templateId);
 		expect(rows.every((r) => r.source === 'seed')).toBe(true);
 		expect(rows.find((r) => r.slug === 'connectors')?.pieces).toBeGreaterThan(3);
 	});
@@ -214,54 +213,52 @@ describe('importPrintGeometry', () => {
 	it('stores meshes and replaces the seed row', async () => {
 		const res = await importPrintGeometry(db, templateId, file(threeMf()), 'profile.3mf');
 		expect(res.imported).toBe(1);
-		const row = db
-			.select()
-			.from(templatePrintGeometry)
-			.where(eq(templatePrintGeometry.slug, 'wing-left'))
-			.get()!;
+		const row = (await first(
+			db.select().from(templatePrintGeometry).where(eq(templatePrintGeometry.slug, 'wing-left'))
+		))!;
 		expect(row.sourceNote).toBe('profile.3mf');
 		expect(row.meshPath).toBe(`print/${templateId}/wing-left.bin`);
 		expect(existsSync(join(printDir(templateId), 'wing-left.bin'))).toBe(true);
-		const fp = loadFootprints(db, templateId).get('wing-left')!;
+		const fp = (await loadFootprints(db, templateId)).get('wing-left')!;
 		expect(fp.pieces[0].w).toBeCloseTo(100, 0);
 		expect(fp.pieces[0].mesh).toBe('wing-left.bin');
 		expect(readPieceMesh(templateId, fp.pieces[0].mesh!).indices.length).toBe(36);
 		// other parts keep their seed rows
 		expect(
-			listPrintGeometry(db, templateId).filter((r) => r.source === 'seed').length
+			(await listPrintGeometry(db, templateId)).filter((r) => r.source === 'seed').length
 		).toBeGreaterThan(20);
 		// re-seeding does not overwrite imported rows
-		seedTemplates(db, templateSeeds);
-		expect(listPrintGeometry(db, templateId).find((r) => r.slug === 'wing-left')?.source).toBe(
-			'profile.3mf'
-		);
+		await seedTemplates(db, templateSeeds);
+		expect(
+			(await listPrintGeometry(db, templateId)).find((r) => r.slug === 'wing-left')?.source
+		).toBe('profile.3mf');
 	});
 
 	it('stores the flat outline on import, computes it lazily for older rows, never poses', async () => {
 		await importPrintGeometry(db, templateId, file(threeMf()), 'profile.3mf');
-		const get = () =>
-			db
-				.select()
-				.from(templatePrintGeometry)
-				.where(eq(templatePrintGeometry.slug, 'wing-left'))
-				.get()!;
-		const fp = get().footprint as unknown as PrintFootprint;
+		const get = async () =>
+			(await first(
+				db.select().from(templatePrintGeometry).where(eq(templatePrintGeometry.slug, 'wing-left'))
+			))!;
+		const fp = (await get()).footprint as unknown as PrintFootprint;
 		expect(fp.pieces[0].sil?.profile.rings.length).toBeGreaterThan(0);
 		expect('orient' in fp.pieces[0]).toBe(false);
 		// simulate a row imported before outlines existed
 		delete fp.pieces[0].sil;
-		db.update(templatePrintGeometry)
+		await db
+			.update(templatePrintGeometry)
 			.set({ footprint: fp as unknown as Record<string, unknown> })
-			.where(eq(templatePrintGeometry.slug, 'wing-left'))
-			.run();
-		expect((get().footprint as unknown as PrintFootprint).pieces[0].sil).toBeUndefined();
-		const got = loadFootprints(db, templateId).get('wing-left')!;
+			.where(eq(templatePrintGeometry.slug, 'wing-left'));
+		expect(((await get()).footprint as unknown as PrintFootprint).pieces[0].sil).toBeUndefined();
+		const got = (await loadFootprints(db, templateId)).get('wing-left')!;
 		expect(got.pieces[0].sil?.profile.rings.length).toBeGreaterThan(0);
 		expect('orient' in got.pieces[0]).toBe(false);
 		// cached in the row
-		expect((get().footprint as unknown as PrintFootprint).pieces[0].sil?.v).toBeGreaterThan(0);
+		expect(((await get()).footprint as unknown as PrintFootprint).pieces[0].sil?.v).toBeGreaterThan(
+			0
+		);
 		// seed rows (no mesh) have no outline
-		expect(loadFootprints(db, templateId).get('rims-1-4')?.pieces[0].sil).toBeUndefined();
+		expect((await loadFootprints(db, templateId)).get('rims-1-4')?.pieces[0].sil).toBeUndefined();
 	});
 
 	it('reads 3MFs out of a zip', async () => {
@@ -278,7 +275,7 @@ describe('importPrintGeometry', () => {
 });
 
 describe('mesh paint (supports, seam)', () => {
-	it('round-trips with a version-2 file and stays backward compatible with version 1', () => {
+	it('round-trips with a version-2 file and stays backward compatible with version 1', async () => {
 		const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]);
 		const indices = new Uint32Array([0, 2, 1, 0, 1, 3]);
 		const plain = decodeMesh(encodeMesh({ positions, indices }));
@@ -301,7 +298,7 @@ describe('mesh paint (supports, seam)', () => {
 });
 
 describe('ModelScanner paint', () => {
-	it('keeps paint_supports and paint_seam per triangle, in triangle order', () => {
+	it('keeps paint_supports and paint_seam per triangle, in triangle order', async () => {
 		const sc = new ModelScanner(true);
 		const xml = `<model><resources><object id="1" type="model"><mesh><vertices>
 <vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/><vertex x="0" y="0" z="1"/></vertices><triangles>
@@ -344,14 +341,13 @@ describe('source groups', () => {
 		expect(g![0].bed).toEqual({ x: 256, y: 256 });
 		expect(g![0].items).toHaveLength(2);
 
-		const db = openDb(':memory:');
-		runMigrations(db);
-		seedTemplates(db, templateSeeds);
-		const templateId = db.select({ id: templates.id }).from(templates).get()!.id;
+		const db = await createTestDb();
+		await seedTemplates(db, templateSeeds);
+		const templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
 		const p = join(mkdtempSync(join(tmpdir(), 'tmt-grp-')), 'g.3mf');
 		writeFileSync(p, two);
 		await importPrintGeometry(db, templateId, p, 'g.3mf');
-		const fp = loadFootprints(db, templateId).get('wing-left')!;
+		const fp = (await loadFootprints(db, templateId)).get('wing-left')!;
 		expect(fp.pieces).toHaveLength(1);
 		expect(fp.groups).toHaveLength(1);
 		const grp = fp.groups![0];

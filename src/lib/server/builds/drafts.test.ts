@@ -50,9 +50,9 @@ const mkDraft = async (name = 'Draft 1') =>
 	);
 const mkBuild = async (name = 'Build A') =>
 	await createBuild(db, { organizationId: orgId, templateId, designId: null, name }, 'owner');
-const rejected = (fn: () => void) => {
+const rejected = async (fn: () => void) => {
 	try {
-		fn();
+		await fn();
 	} catch (e) {
 		expect(e).toBeInstanceOf(ApiError);
 		expect((e as ApiError).status).toBe(400);

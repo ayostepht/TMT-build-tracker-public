@@ -76,7 +76,7 @@ const failed = { plateNumber: 1, result: 'Failed', date: '2026-11-12', grams: 10
 describe('logging an older attempt while the plate prints again', () => {
 	it('start from a live job takes its start and estimate; no live job takes now', async () => {
 		await printingAction(db, buildId, 'owner', { action: 'start', slugs: ['handle-left'] });
-		const t = part().startedAt!.getTime();
+		const t = (await part()).startedAt!.getTime();
 		expect(Math.abs(t - Date.now())).toBeLessThan(5000);
 		expect((await part()).runEstSeconds).toBeNull();
 		await printingAction(db, buildId, 'owner', { action: 'stop', slugs: ['handle-left'] });
@@ -107,7 +107,7 @@ describe('logging an older attempt while the plate prints again', () => {
 	it('a Failed run keeps the plate Printing with its start; delete and undo too', async () => {
 		await liveJob();
 		await printingAction(db, buildId, 'owner', { action: 'start', slugs: ['handle-left'] });
-		const before = part();
+		const before = await part();
 		const { runId } = await addRun(db, buildId, 'owner', failed);
 		expect(await db.select().from(printRuns)).toHaveLength(1);
 		expect(await part()).toMatchObject({

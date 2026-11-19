@@ -47,10 +47,8 @@ describe.skipIf(!file || !existsSync(file))('real sliced project', () => {
 		'upload, review and apply on an arranged and an unarranged build',
 		{ timeout: 900_000 },
 		async () => {
-			const work = resolve(process.env.TMT_SLICED_DB ?? 'data/scratch/sliced-real-' + Date.now());
-			mkdirSync(work, { recursive: true });
-			process.env.DATABASE_URL = resolve(work, 'tmt.db');
-			const { openDb, runMigrations } = await import('../db');
+			const { first } = await import('../db');
+			const { createTestDb } = await import('../db/testing');
 			const schema = await import('../db/schema');
 			const { templateSeeds } = await import('../seed');
 			const { seedTemplates } = await import('../seed/run');
@@ -61,38 +59,35 @@ describe.skipIf(!file || !existsSync(file))('real sliced project', () => {
 			const { timeStats } = await import('#lib/domain/accounting.ts');
 			const { catalogPrinter } = await import('#lib/printers/catalog.ts');
 			const { printerFromCatalog } = await import('#lib/printers/printer.ts');
-			const db = openDb(process.env.DATABASE_URL);
-			runMigrations(db);
-			seedTemplates(db, templateSeeds);
+			const db = await createTestDb();
+			await seedTemplates(db, templateSeeds);
 			console.log(
 				'INSTALL',
 				JSON.stringify(
 					await installKitPacks(db, { dir: process.env.KITPACK_DIR!, download: false })
 				)
 			);
-			const tpl = db.select().from(schema.templates).get()!;
-			db.insert(schema.organization)
-				.values({ id: 'org-s', name: 'Scratch', slug: 'scratch', createdAt: new Date() })
-				.run();
-			db.insert(schema.user)
-				.values({ id: 'u-s', name: 'S', email: 's@example.test', createdAt: new Date() })
-				.run();
-			db.insert(schema.member)
-				.values({
-					id: 'm-s',
-					organizationId: 'org-s',
-					userId: 'u-s',
-					role: 'owner',
-					createdAt: new Date()
-				})
-				.run();
+			const tpl = (await first(db.select().from(schema.templates)))!;
+			await db
+				.insert(schema.organization)
+				.values({ id: 'org-s', name: 'Scratch', slug: 'scratch', createdAt: new Date() });
+			await db
+				.insert(schema.user)
+				.values({ id: 'u-s', name: 'S', email: 's@example.test', createdAt: new Date() });
+			await db.insert(schema.member).values({
+				id: 'm-s',
+				organizationId: 'org-s',
+				userId: 'u-s',
+				role: 'owner',
+				createdAt: new Date()
+			});
 			const printer = printerFromCatalog(catalogPrinter('elegoo-centauri-carbon')!, 0);
 			const summary = await parseThreeMfFile(file!);
 			for (const [label, withPrinter] of [
 				['arranged', true],
 				['unarranged', false]
 			] as const) {
-				const id = createBuild(
+				const id = await createBuild(
 					db,
 					{
 						organizationId: 'org-s',
@@ -103,9 +98,9 @@ describe.skipIf(!file || !existsSync(file))('real sliced project', () => {
 					},
 					'u-s'
 				);
-				const before = loadBuildView(db, id, 'u-s')!;
+				const before = (await loadBuildView(db, id, 'u-s'))!;
 				const beforeT = timeStats(before);
-				const up = createUpload(
+				const up = await createUpload(
 					db,
 					id,
 					'u-s',
@@ -122,13 +117,13 @@ describe.skipIf(!file || !existsSync(file))('real sliced project', () => {
 				console.log(
 					`${label}: filamentMap ${JSON.stringify(up.suggestions.filamentMap)} roles ${before.filaments.map((f) => f.key).join(',')}`
 				);
-				const r = applyUpload(db, id, 'u-s', up.uploadId, {
+				const r = await applyUpload(db, id, 'u-s', up.uploadId, {
 					mapping: up.suggestions.mapping,
 					filamentMap: up.suggestions.filamentMap,
 					variantChoices: {},
 					convertRuns: true
 				});
-				const after = loadBuildView(db, id, 'u-s')!;
+				const after = (await loadBuildView(db, id, 'u-s'))!;
 				const t = timeStats(after);
 				console.log(
 					`${label}: applied ${JSON.stringify(r)}; plates ${after.plates.length}; total ${(t.totalSec / 3600).toFixed(1)} h estimated=${t.estimated}; ` +
@@ -170,10 +165,8 @@ describe.skipIf(!file || !existsSync(file))('real sliced project', () => {
 		'print template: learn per-part data, arrange for the Centauri Carbon, recolor and re-arrange',
 		{ timeout: 900_000 },
 		async () => {
-			const work = resolve('data/scratch/print-template-real-' + Date.now());
-			mkdirSync(work, { recursive: true });
-			process.env.DATABASE_URL = resolve(work, 'tmt.db');
-			const { openDb, runMigrations } = await import('../db');
+			const { first } = await import('../db');
+			const { createTestDb } = await import('../db/testing');
 			const schema = await import('../db/schema');
 			const { templateSeeds } = await import('../seed');
 			const { seedTemplates } = await import('../seed/run');
@@ -186,26 +179,23 @@ describe.skipIf(!file || !existsSync(file))('real sliced project', () => {
 			const { catalogPrinter } = await import('#lib/printers/catalog.ts');
 			const { printerFromCatalog } = await import('#lib/printers/printer.ts');
 			const { attachGcodeObjectStats } = await import('./gcode-stats');
-			const db = openDb(process.env.DATABASE_URL);
-			runMigrations(db);
-			seedTemplates(db, templateSeeds);
+			const db = await createTestDb();
+			await seedTemplates(db, templateSeeds);
 			await installKitPacks(db, { dir: process.env.KITPACK_DIR!, download: false });
-			const tpl = db.select().from(schema.templates).get()!;
-			db.insert(schema.organization)
-				.values({ id: 'org-s', name: 'Scratch', slug: 'scratch', createdAt: new Date() })
-				.run();
-			db.insert(schema.user)
-				.values({ id: 'u-s', name: 'S', email: 's@example.test', createdAt: new Date() })
-				.run();
-			db.insert(schema.member)
-				.values({
-					id: 'm-s',
-					organizationId: 'org-s',
-					userId: 'u-s',
-					role: 'owner',
-					createdAt: new Date()
-				})
-				.run();
+			const tpl = (await first(db.select().from(schema.templates)))!;
+			await db
+				.insert(schema.organization)
+				.values({ id: 'org-s', name: 'Scratch', slug: 'scratch', createdAt: new Date() });
+			await db
+				.insert(schema.user)
+				.values({ id: 'u-s', name: 'S', email: 's@example.test', createdAt: new Date() });
+			await db.insert(schema.member).values({
+				id: 'm-s',
+				organizationId: 'org-s',
+				userId: 'u-s',
+				role: 'owner',
+				createdAt: new Date()
+			});
 			const printer = printerFromCatalog(catalogPrinter('elegoo-centauri-carbon')!, 0);
 			const summary = await parseThreeMfFile(file!);
 			const fileHours =
@@ -222,13 +212,13 @@ describe.skipIf(!file || !existsSync(file))('real sliced project', () => {
 					method === 'exact'
 						? summary
 						: { ...summary, plates: summary.plates.map((p) => ({ ...p, exact: undefined })) };
-				const id = createBuild(
+				const id = await createBuild(
 					db,
 					{ organizationId: 'org-s', templateId: tpl.id, designId: null, name: method, printer },
 					'u-s'
 				);
-				const before = loadBuildView(db, id, 'u-s')!;
-				const up = createUpload(
+				const before = (await loadBuildView(db, id, 'u-s'))!;
+				const up = await createUpload(
 					db,
 					id,
 					'u-s',
@@ -237,14 +227,14 @@ describe.skipIf(!file || !existsSync(file))('real sliced project', () => {
 					before
 				);
 				const t1 = performance.now();
-				const r = applyUpload(db, id, 'u-s', up.uploadId, {
+				const r = await applyUpload(db, id, 'u-s', up.uploadId, {
 					mapping: up.suggestions.mapping,
 					filamentMap: up.suggestions.filamentMap,
 					mode: 'template',
 					arrange: true,
 					convertRuns: true
 				});
-				const v = loadBuildView(db, id, 'u-s')!;
+				const v = (await loadBuildView(db, id, 'u-s'))!;
 				const t = timeStats(v);
 				console.log(
 					`PT[${method}] applied ${JSON.stringify(r)} in ${Math.round(performance.now() - t1)} ms; template ${JSON.stringify(v.printTemplate)}; arranged plates ${v.plates.length}, total ${(t.totalSec / 3600).toFixed(1)} h (file ${fileHours.toFixed(1)} h), learned=${t.learned} estimated=${t.estimated}`
@@ -278,11 +268,9 @@ describe.skipIf(!file || !existsSync(file))('real sliced project', () => {
 					console.log(
 						`PT coverage: active parts ${v.parts.length}, without learned data: ${missing.map((x) => x.slug).join(', ') || 'none'}; learned but inactive (other variant option): ${inactive.join(', ') || 'none'}`
 					);
-					const rowsDb = db
-						.select()
-						.from(schema.buildPartProfiles)
-						.all()
-						.filter((r) => r.buildId === id);
+					const rowsDb = (await db.select().from(schema.buildPartProfiles)).filter(
+						(r) => r.buildId === id
+					);
 					let sumCopies = 0;
 					let sumQty = 0;
 					const diffs: string[] = [];
@@ -304,8 +292,8 @@ describe.skipIf(!file || !existsSync(file))('real sliced project', () => {
 					const role0 = v.parts.find((p) => p.slug === 'wing-left')!.role;
 					const other = role0 === 'primary' ? 'accent' : 'primary';
 					const t2 = performance.now();
-					updateBuildDesign(db, id, 'u-s', { partRoles: { 'wing-left': other } });
-					const w = loadBuildView(db, id, 'u-s')!;
+					await updateBuildDesign(db, id, 'u-s', { partRoles: { 'wing-left': other } });
+					const w = (await loadBuildView(db, id, 'u-s'))!;
 					const tt = timeStats(w);
 					const wing1 = w.plates.find((p) => p.parts.includes('wing-left'))!;
 					console.log(

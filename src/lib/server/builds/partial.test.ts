@@ -75,9 +75,9 @@ const body = (n: number, split: unknown, over: object = {}) => ({
 describe('Partial with per-part results', () => {
 	it('refuses grams over the cap with 400, for a plain run and for a split', async () => {
 		const { id, plate, a } = await setup();
-		const status = (fn: () => unknown) => {
+		const status = async (fn: () => unknown) => {
 			try {
-				fn();
+				await fn();
 			} catch (e) {
 				return (e as ApiError).status;
 			}
@@ -102,7 +102,7 @@ describe('Partial with per-part results', () => {
 		const { id, plate, a, b, all } = await setup();
 		await printingAction(db, id, 'owner', { action: 'start', slugs: all });
 		await printingAction(db, id, 'owner', { action: 'setEstimate', slugs: all, seconds: 7200 });
-		const before = acts(id).length;
+		const before = (await acts(id)).length;
 		const { runId, runIds } = await addRun(
 			db,
 			id,
@@ -112,7 +112,7 @@ describe('Partial with per-part results', () => {
 		expect(runIds).toHaveLength(2);
 		expect(runId).toBe(runIds[0]);
 		expect((await acts(id)).length).toBe(before + 1);
-		const row = acts(id, 'run.add').at(-1)!;
+		const row = (await acts(id, 'run.add')).at(-1)!;
 		expect(row.payload).toMatchObject({
 			split: true,
 			result: 'Partial',
@@ -174,7 +174,7 @@ describe('Partial with per-part results', () => {
 		});
 		expect(undone.sort()).toEqual([...runIds].sort());
 		expect(await runRows(id)).toHaveLength(0);
-		const u = acts(id, 'run.undo');
+		const u = await acts(id, 'run.undo');
 		expect(u).toHaveLength(1);
 		expect(u[0].payload).toMatchObject({ split: true, runIds: expect.any(Array) });
 		const v = await view(id);
@@ -194,13 +194,11 @@ describe('Partial with per-part results', () => {
 		expect(
 			await undoRun(db, id, 'owner', runId, { parts: snapshotParts(v0, all), runIds })
 		).toEqual([runIds[0]]);
-		(
-			await expect(await undoRun(db, id, 'owner', runId, { parts: [], runIds }))
-		).rejects.toThrowError(expect.objectContaining({ status: 404 }));
-		(
-			await expect(
-				await undoRun(db, id, 'owner', runId, { parts: [], runIds: Array(11).fill('x') })
-			)
+		await expect(undoRun(db, id, 'owner', runId, { parts: [], runIds })).rejects.toThrowError(
+			expect.objectContaining({ status: 404 })
+		);
+		await expect(
+			undoRun(db, id, 'owner', runId, { parts: [], runIds: Array(11).fill('x') })
 		).rejects.toThrow(ApiError);
 	});
 
@@ -273,8 +271,8 @@ describe('Partial with per-part results', () => {
 			.set({ runs: 2 })
 			.where(and(eq(buildPlates.buildId, id), eq(buildPlates.number, multi.number)));
 		for (const p of [perPart, multi]) {
-			(
-				await expect(await addRun(db, id, 'owner', body(p.number, { keptSlugs: [p.parts[0]] })))
+			await expect(
+				addRun(db, id, 'owner', body(p.number, { keptSlugs: [p.parts[0]] }))
 			).rejects.toThrowError(expect.objectContaining({ status: 400 }));
 		}
 		const plain = await addRun(db, id, 'owner', {
@@ -293,16 +291,16 @@ describe('Partial with per-part results', () => {
 
 	it('viewers cannot log, and a draft refuses it', async () => {
 		const { id, plate, a } = await setup();
-		(
-			await expect(await addRun(db, id, 'viewer', body(plate.number, { keptSlugs: [a] })))
+		await expect(
+			addRun(db, id, 'viewer', body(plate.number, { keptSlugs: [a] }))
 		).rejects.toThrowError(expect.objectContaining({ status: 403 }));
 		const draft = await createBuild(
 			db,
 			{ organizationId: orgId, templateId, designId: null, name: 'D', kind: 'draft' },
 			'owner'
 		);
-		(
-			await expect(await addRun(db, draft, 'owner', body(plate.number, { keptSlugs: [a] })))
+		await expect(
+			addRun(db, draft, 'owner', body(plate.number, { keptSlugs: [a] }))
 		).rejects.toThrowError(expect.objectContaining({ status: 400 }));
 		expect(
 			await db

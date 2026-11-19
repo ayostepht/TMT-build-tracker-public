@@ -158,19 +158,17 @@ describe('mutations', () => {
 		await expect(bad({ status: 'Printing', printedOn: '2026-01-02' })()).rejects.toThrowError(
 			expect.objectContaining({ status: 400 })
 		);
-		(
-			await expect(
-				await setPartStatus(db, id, 'viewer', slug, { status: 'Printed', printedOn: '2026-01-02' })
-			)
+		await expect(
+			setPartStatus(db, id, 'viewer', slug, { status: 'Printed', printedOn: '2026-01-02' })
 		).rejects.toThrowError(expect.objectContaining({ status: 403 }));
 		expect((await st()).status).toBe('To print');
 	});
 
 	it('validates input', async () => {
 		const id = await mk();
-		(
-			await expect(await setPartStatus(db, id, 'owner', 'nope', { status: 'Printed' }))
-		).rejects.toThrow(ApiError);
+		await expect(setPartStatus(db, id, 'owner', 'nope', { status: 'Printed' })).rejects.toThrow(
+			ApiError
+		);
 		await expect(setPartStatus(db, id, 'owner', 'x', { status: 'Bogus' })).rejects.toThrow(
 			ApiError
 		);
@@ -215,13 +213,13 @@ describe('mutations', () => {
 		const act = await db.select().from(activity).where(eq(activity.kind, 'filament.spools'));
 		expect(act).toHaveLength(2);
 		for (const bad of [-1, 100, 'abc', null, NaN])
-			(
-				await expect(await updateFilament(db, id, 'editor', 'primary', { spools: bad }))
-			).rejects.toThrow(ApiError);
+			await expect(updateFilament(db, id, 'editor', 'primary', { spools: bad })).rejects.toThrow(
+				ApiError
+			);
 		expect(await spools()).toBe(2.35);
-		(
-			await expect(await updateFilament(db, id, 'viewer', 'primary', { spools: 1 }))
-		).rejects.toThrowError(expect.objectContaining({ status: 403 }));
+		await expect(updateFilament(db, id, 'viewer', 'primary', { spools: 1 })).rejects.toThrowError(
+			expect.objectContaining({ status: 403 })
+		);
 	});
 
 	it('printing start/stop round-trips', async () => {
@@ -247,10 +245,8 @@ describe('mutations', () => {
 		const v1 = (await loadBuildView(db, id, 'owner'))!;
 		const row = v1.activity.find((a) => a.kind === 'printing.start')!;
 		expect(row.payload.printer).toBe('Garage printer');
-		(
-			await expect(
-				await printingAction(db, id, 'owner', { action: 'start', slugs: [slug], printer: 5 })
-			)
+		await expect(
+			printingAction(db, id, 'owner', { action: 'start', slugs: [slug], printer: 5 })
 		).rejects.toThrow(ApiError);
 		const { runId } = await addRun(db, id, 'owner', {
 			plateNumber: null,
@@ -292,14 +288,12 @@ describe('mutations', () => {
 		await log();
 		v = (await loadBuildView(db, id, 'owner'))!;
 		for (const s of plate.parts) expect(v.state[s].status).toBe('Printed');
-		(
-			await expect(
-				await addRun(db, id, 'viewer', {
-					plateNumber: plate.number,
-					date: '2026-01-02',
-					result: 'Success'
-				})
-			)
+		await expect(
+			addRun(db, id, 'viewer', {
+				plateNumber: plate.number,
+				date: '2026-01-02',
+				result: 'Success'
+			})
 		).rejects.toThrowError(expect.objectContaining({ status: 403 }));
 	});
 
@@ -340,8 +334,8 @@ describe('undoRun', () => {
 		});
 		expect((await loadBuildView(db, id, 'owner'))!.state[slug].status).toBe('Printed');
 
-		(
-			await expect(await undoRun(db, id, 'owner', runId, { parts: [{ ...snap, slug: other }] }))
+		await expect(
+			undoRun(db, id, 'owner', runId, { parts: [{ ...snap, slug: other }] })
 		).rejects.toThrow(ApiError);
 		await expect(undoRun(db, id, 'viewer', runId, { parts: [snap] })).rejects.toThrow(ApiError);
 		await undoRun(db, id, 'owner', runId, { parts: [snap] });
@@ -399,7 +393,7 @@ describe('editing and deleting past print logs', () => {
 		const v = (await loadBuildView(db, id, 'owner'))!;
 		expect(v.runs).toHaveLength(0);
 		expect(v.state[slug].status).toBe('Printed');
-		expect(await lastAct(id).payload).toMatchObject({ recomputed: [] });
+		expect((await lastAct(id)).payload).toMatchObject({ recomputed: [] });
 		expect(events.at(-1)).toMatchObject({ kind: 'run.delete' });
 	});
 
@@ -423,7 +417,7 @@ describe('editing and deleting past print logs', () => {
 		await updateRun(db, id, 'editor', runId, { result: 'Failed' });
 		v = (await loadBuildView(db, id, 'owner'))!;
 		expect(v.state[slug]).toMatchObject({ status: 'Reprint', printedOn: null });
-		expect(await lastAct(id).payload).toMatchObject({
+		expect((await lastAct(id)).payload).toMatchObject({
 			result: 'Failed',
 			recomputed: [{ slug, from: 'Printed', to: 'Reprint' }]
 		});

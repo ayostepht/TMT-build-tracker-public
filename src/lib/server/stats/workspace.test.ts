@@ -92,13 +92,15 @@ describe('loadWorkspaceStats', () => {
 			expect(w.builds.map((b) => b.name)).toEqual(['Build A']);
 			expect(w.kpis.hours.total).toBe(20);
 		}
-		expect(() => await loadWorkspaceStats(db, 'org1', 'outsider', { now: NOW })).toThrowError(
+		await expect(loadWorkspaceStats(db, 'org1', 'outsider', { now: NOW })).rejects.toThrowError(
 			expect.objectContaining({ status: 404 })
 		);
-		expect(() => await loadWorkspaceStats(db, 'org1', 'outsider', { now: NOW })).toThrow(ApiError);
+		await expect(loadWorkspaceStats(db, 'org1', 'outsider', { now: NOW })).rejects.toThrow(
+			ApiError
+		);
 		// another workspace's builds never show up
 		expect((await loadWorkspaceStats(db, 'org2', 'outsider', { now: NOW })).builds).toEqual([]);
-		expect(() => await loadWorkspaceStats(db, 'nope', 'owner', { now: NOW })).toThrow(ApiError);
+		await expect(loadWorkspaceStats(db, 'nope', 'owner', { now: NOW })).rejects.toThrow(ApiError);
 	});
 
 	it('leaves Studio drafts out', async () => {
@@ -156,9 +158,11 @@ describe('loadWorkspaceStats', () => {
 		await loadWorkspaceStats(db, 'org1', 'viewer', { now: NOW });
 
 		// Reducing 50 loaded builds to the page: the part this module owns.
-		const views = (await db.select({ id: builds.id }).from(builds)).map(
-			(b) => (await loadBuildView(db, b.id, 'viewer'))!
-		);
+		const views = await Promise.all(
+			(await db.select({ id: builds.id }).from(builds)).map((b) =>
+				loadBuildView(db, b.id, 'viewer')
+			)
+		).then((vs) => vs.map((v) => v!));
 		const t0 = performance.now();
 		const w = workspaceStats(views.map(buildStatsSummary), { now: NOW });
 		const reduceMs = performance.now() - t0;

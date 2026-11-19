@@ -9,7 +9,8 @@ import {
 	mayUseInvitations
 } from './auth-policy';
 import { isSiteAdmin } from './access';
-import { openDb, runMigrations, type Db } from './db';
+import { first, type Db } from './db';
+import { createTestDb, dropTestDb } from './db/testing';
 import {
 	account,
 	invitation,
@@ -50,14 +51,14 @@ const PUBLIC_ENV = {
 	GITHUB_CLIENT_SECRET: 'h-secret'
 };
 
-beforeEach(() => {
+beforeEach(async () => {
 	saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 	setEnv({});
-	db = openDb(':memory:');
-	runMigrations(db);
+	db = await createTestDb();
 });
 
-afterEach(() => {
+afterEach(async () => {
+	await dropTestDb(db);
 	for (const k of ENV_KEYS) {
 		if (saved[k] === undefined) delete process.env[k];
 		else process.env[k] = saved[k];
@@ -76,7 +77,7 @@ async function signUp(auth: Auth, name: string, email: string) {
 	return { id: res.response.user.id, headers: new Headers({ cookie }) };
 }
 
-function addInvitation(opts: {
+async function addInvitation(opts: {
 	id: string;
 	email: string;
 	inviterId: string;
@@ -85,31 +86,27 @@ function addInvitation(opts: {
 	expiresAt?: Date;
 }) {
 	const orgId = opts.orgId ?? 'org-1';
-	if (!db.select().from(organization).where(eq(organization.id, orgId)).get()) {
-		db.insert(organization)
-			.values({ id: orgId, name: 'Chapter', slug: orgId, createdAt: new Date() })
-			.run();
-		db.insert(member)
-			.values({
-				id: `m-${orgId}`,
-				organizationId: orgId,
-				userId: opts.inviterId,
-				role: 'owner',
-				createdAt: new Date()
-			})
-			.run();
-	}
-	db.insert(invitation)
-		.values({
-			id: opts.id,
+	if (!(await first(db.select().from(organization).where(eq(organization.id, orgId))))) {
+		await db
+			.insert(organization)
+			.values({ id: orgId, name: 'Chapter', slug: orgId, createdAt: new Date() });
+		await db.insert(member).values({
+			id: `m-${orgId}`,
 			organizationId: orgId,
-			email: opts.email,
-			role: 'editor',
-			status: opts.status ?? 'pending',
-			expiresAt: opts.expiresAt ?? new Date(Date.now() + 86_400_000),
-			inviterId: opts.inviterId
-		})
-		.run();
+			userId: opts.inviterId,
+			role: 'owner',
+			createdAt: new Date()
+		});
+	}
+	await db.insert(invitation).values({
+		id: opts.id,
+		organizationId: orgId,
+		email: opts.email,
+		role: 'editor',
+		status: opts.status ?? 'pending',
+		expiresAt: opts.expiresAt ?? new Date(Date.now() + 86_400_000),
+		inviterId: opts.inviterId
+	});
 }
 
 async function oauthLogin(
@@ -135,130 +132,137 @@ async function oauthLogin(
 }
 
 describe('isSiteAdmin', () => {
-	const seed = () => {
+	const seed = async () => {
 		const now = new Date();
 		for (const [id, email, verified] of [
 			['u1', 'first@example.com', false],
 			['u2', 'boss@example.com', true],
 			['u3', 'raw@example.com', false]
 		] as const)
-			db.insert(user)
-				.values({ id, name: id, email, emailVerified: verified, createdAt: now, updatedAt: now })
-				.run();
+			await db
+				.insert(user)
+				.values({ id, name: id, email, emailVerified: verified, createdAt: now, updatedAt: now });
 	};
 
-	it('self-hosted: ADMIN_EMAILS match (verified or not); the earliest user only while no listed account exists', () => {
-		seed();
+	it('self-hosted: ADMIN_EMAILS match (verified or not); the earliest user only while no listed account exists', async () => {
+		await seed();
 		setEnv({ ADMIN_EMAILS: 'nobody@example.com' });
-		expect(isSiteAdmin(db, { id: 'u1', email: 'first@example.com', emailVerified: false })).toBe(
-			true
-		);
+		expect(
+			await isSiteAdmin(db, { id: 'u1', email: 'first@example.com', emailVerified: false })
+		).toBe(true);
 		setEnv({ ADMIN_EMAILS: 'Boss@Example.com, raw@example.com' });
-		expect(isSiteAdmin(db, { id: 'u1', email: 'first@example.com', emailVerified: false })).toBe(
-			false
-		);
-		expect(isSiteAdmin(db, { id: 'u2', email: 'boss@example.com', emailVerified: true })).toBe(
-			true
-		);
-		expect(isSiteAdmin(db, { id: 'u3', email: 'raw@example.com', emailVerified: false })).toBe(
-			true
-		);
-		expect(isSiteAdmin(db, { id: 'u9', email: 'other@example.com' })).toBe(false);
+		expect(
+			await isSiteAdmin(db, { id: 'u1', email: 'first@example.com', emailVerified: false })
+		).toBe(false);
+		expect(
+			await isSiteAdmin(db, { id: 'u2', email: 'boss@example.com', emailVerified: true })
+		).toBe(true);
+		expect(
+			await isSiteAdmin(db, { id: 'u3', email: 'raw@example.com', emailVerified: false })
+		).toBe(true);
+		expect(await isSiteAdmin(db, { id: 'u9', email: 'other@example.com' })).toBe(false);
 	});
 
-	it('public: only a listed AND verified email; never the earliest user', () => {
-		seed();
+	it('public: only a listed AND verified email; never the earliest user', async () => {
+		await seed();
 		setEnv({ ...PUBLIC_ENV, ADMIN_EMAILS: 'boss@example.com,raw@example.com' });
-		expect(isSiteAdmin(db, { id: 'u2', email: 'BOSS@example.com', emailVerified: true })).toBe(
-			true
-		);
-		expect(isSiteAdmin(db, { id: 'u3', email: 'raw@example.com', emailVerified: false })).toBe(
-			false
-		);
-		expect(isSiteAdmin(db, { id: 'u3', email: 'raw@example.com' })).toBe(false);
+		expect(
+			await isSiteAdmin(db, { id: 'u2', email: 'BOSS@example.com', emailVerified: true })
+		).toBe(true);
+		expect(
+			await isSiteAdmin(db, { id: 'u3', email: 'raw@example.com', emailVerified: false })
+		).toBe(false);
+		expect(await isSiteAdmin(db, { id: 'u3', email: 'raw@example.com' })).toBe(false);
 		// earliest user, not listed
-		expect(isSiteAdmin(db, { id: 'u1', email: 'first@example.com', emailVerified: true })).toBe(
-			false
-		);
+		expect(
+			await isSiteAdmin(db, { id: 'u1', email: 'first@example.com', emailVerified: true })
+		).toBe(false);
 	});
 
-	it('public with no ADMIN_EMAILS: nobody', () => {
-		seed();
+	it('public with no ADMIN_EMAILS: nobody', async () => {
+		await seed();
 		setEnv(PUBLIC_ENV);
-		expect(isSiteAdmin(db, { id: 'u1', email: 'first@example.com', emailVerified: true })).toBe(
-			false
-		);
+		expect(
+			await isSiteAdmin(db, { id: 'u1', email: 'first@example.com', emailVerified: true })
+		).toBe(false);
 	});
 });
 
 describe('new-user policy (SIGNUP)', () => {
-	const seedUser = () => {
+	const seedUser = async () => {
 		const now = new Date();
-		db.insert(user)
-			.values({
-				id: 'u1',
-				name: 'Owner',
-				email: 'owner@example.com',
-				emailVerified: false,
-				createdAt: now,
-				updatedAt: now
-			})
-			.run();
+		await db.insert(user).values({
+			id: 'u1',
+			name: 'Owner',
+			email: 'owner@example.com',
+			emailVerified: false,
+			createdAt: now,
+			updatedAt: now
+		});
 	};
 	const cfg = (signup: 'open' | 'invite' | 'closed') => ({ publicMode: false, signup });
 
-	it('open: anyone', () => {
-		seedUser();
-		expect(decideNewUser(db, { email: 'new@example.com' }, cfg('open')).ok).toBe(true);
+	it('open: anyone', async () => {
+		await seedUser();
+		expect((await decideNewUser(db, { email: 'new@example.com' }, cfg('open'))).ok).toBe(true);
 	});
 
-	it('closed and invite: the first account on an empty database is allowed (bootstrap)', () => {
-		expect(decideNewUser(db, { email: 'a@example.com' }, cfg('closed')).ok).toBe(true);
-		expect(decideNewUser(db, { email: 'a@example.com' }, cfg('invite')).ok).toBe(true);
-		expect(effectiveSignup(db, cfg('closed'))).toBe('open');
-		seedUser();
-		expect(effectiveSignup(db, cfg('closed'))).toBe('closed');
-		expect(effectiveSignup(db, cfg('invite'))).toBe('invite');
+	it('closed and invite: the first account on an empty database is allowed (bootstrap)', async () => {
+		expect((await decideNewUser(db, { email: 'a@example.com' }, cfg('closed'))).ok).toBe(true);
+		expect((await decideNewUser(db, { email: 'a@example.com' }, cfg('invite'))).ok).toBe(true);
+		expect(await effectiveSignup(db, cfg('closed'))).toBe('open');
+		await seedUser();
+		expect(await effectiveSignup(db, cfg('closed'))).toBe('closed');
+		expect(await effectiveSignup(db, cfg('invite'))).toBe('invite');
 	});
 
-	it('closed: nobody after bootstrap, even with an invitation', () => {
-		seedUser();
-		addInvitation({ id: 'i1', email: 'new@example.com', inviterId: 'u1' });
-		expect(decideNewUser(db, { email: 'new@example.com' }, cfg('closed'))).toMatchObject({
+	it('closed: nobody after bootstrap, even with an invitation', async () => {
+		await seedUser();
+		await addInvitation({ id: 'i1', email: 'new@example.com', inviterId: 'u1' });
+		expect(await decideNewUser(db, { email: 'new@example.com' }, cfg('closed'))).toMatchObject({
 			ok: false,
 			code: 'signup_closed'
 		});
 	});
 
-	it('invite: only a pending, unexpired invitation for that email (case-insensitive)', () => {
-		seedUser();
-		addInvitation({ id: 'i1', email: 'New@Example.com', inviterId: 'u1' });
-		addInvitation({
+	it('invite: only a pending, unexpired invitation for that email (case-insensitive)', async () => {
+		await seedUser();
+		await addInvitation({ id: 'i1', email: 'New@Example.com', inviterId: 'u1' });
+		await addInvitation({
 			id: 'i2',
 			email: 'old@example.com',
 			inviterId: 'u1',
 			expiresAt: new Date(Date.now() - 1000)
 		});
-		addInvitation({ id: 'i3', email: 'used@example.com', inviterId: 'u1', status: 'accepted' });
-		expect(decideNewUser(db, { email: 'new@example.com' }, cfg('invite')).ok).toBe(true);
+		await addInvitation({
+			id: 'i3',
+			email: 'used@example.com',
+			inviterId: 'u1',
+			status: 'accepted'
+		});
+		expect((await decideNewUser(db, { email: 'new@example.com' }, cfg('invite'))).ok).toBe(true);
 		for (const e of ['old@example.com', 'used@example.com', 'nobody@example.com'])
-			expect(decideNewUser(db, { email: e }, cfg('invite'))).toMatchObject({
+			expect(await decideNewUser(db, { email: e }, cfg('invite'))).toMatchObject({
 				ok: false,
 				code: 'invitation_required'
 			});
 	});
 
-	it('public: verified provider email only; SIGNUP is not consulted', () => {
+	it('public: verified provider email only; SIGNUP is not consulted', async () => {
 		const c = { publicMode: true, signup: 'closed' as const };
-		expect(decideNewUser(db, { email: 'a@example.com', emailVerified: true }, c).ok).toBe(true);
-		expect(decideNewUser(db, { email: 'a@example.com', emailVerified: false }, c)).toMatchObject({
+		expect((await decideNewUser(db, { email: 'a@example.com', emailVerified: true }, c)).ok).toBe(
+			true
+		);
+		expect(
+			await decideNewUser(db, { email: 'a@example.com', emailVerified: false }, c)
+		).toMatchObject({
 			ok: false,
 			code: 'email_not_verified'
 		});
-		expect(decideNewUser(db, { email: 'a@example.com' }, c).ok).toBe(false);
+		expect((await decideNewUser(db, { email: 'a@example.com' }, c)).ok).toBe(false);
 	});
 
-	it('invitations: public mode needs a verified email, self-hosted does not', () => {
+	it('invitations: public mode needs a verified email, self-hosted does not', async () => {
 		expect(mayUseInvitations({ publicMode: true, signup: 'open' }, { emailVerified: false })).toBe(
 			false
 		);
@@ -270,7 +274,7 @@ describe('new-user policy (SIGNUP)', () => {
 		);
 	});
 
-	it('login error codes map to fixed messages', () => {
+	it('login error codes map to fixed messages', async () => {
 		expect(loginErrorMessage(null)).toBeNull();
 		expect(loginErrorMessage('email_not_found')).toMatch(/GitHub/);
 		expect(loginErrorMessage('account_not_linked')).toMatch(/already exists/);
@@ -286,7 +290,7 @@ describe('self-hosted auth enforcement', () => {
 		await expect(signUp(auth, 'Second', 'second@example.com')).rejects.toMatchObject({
 			status: 'FORBIDDEN'
 		});
-		expect(db.select().from(user).all()).toHaveLength(1);
+		expect(await db.select().from(user)).toHaveLength(1);
 	});
 
 	it('SIGNUP=invite: only the invited address can register', async () => {
@@ -296,7 +300,7 @@ describe('self-hosted auth enforcement', () => {
 		await expect(signUp(auth, 'Nope', 'nope@example.com')).rejects.toMatchObject({
 			status: 'FORBIDDEN'
 		});
-		addInvitation({ id: 'i1', email: 'guest@example.com', inviterId: first.id });
+		await addInvitation({ id: 'i1', email: 'guest@example.com', inviterId: first.id });
 		const guest = await signUp(auth, 'Guest', 'guest@example.com');
 		expect(guest.id).toBeTruthy();
 	});
@@ -308,7 +312,7 @@ describe('self-hosted auth enforcement', () => {
 		await expect(
 			oauthLogin(auth, 'oidc', { id: 'sso-1', email: 'stranger@example.com', emailVerified: true })
 		).rejects.toMatchObject({ status: 'FORBIDDEN' });
-		addInvitation({ id: 'i1', email: 'guest@example.com', inviterId: first.id });
+		await addInvitation({ id: 'i1', email: 'guest@example.com', inviterId: first.id });
 		const ok = await oauthLogin(auth, 'oidc', {
 			id: 'sso-2',
 			email: 'guest@example.com',
@@ -326,8 +330,8 @@ describe('self-hosted auth enforcement', () => {
 			emailVerified: true
 		});
 		expect(res.error).toBe('account not linked');
-		expect(db.select().from(account).where(eq(account.providerId, 'oidc')).all()).toHaveLength(0);
-		expect(db.select().from(user).all()).toHaveLength(1);
+		expect(await db.select().from(account).where(eq(account.providerId, 'oidc'))).toHaveLength(0);
+		expect(await db.select().from(user)).toHaveLength(1);
 		// the login page turns the redirect code into a message that makes sense
 		expect(loginErrorMessage(res.error!.split(' ').join('_'))).toMatch(/already exists/);
 	});
@@ -373,7 +377,7 @@ describe('public mode auth', () => {
 				expect(res.status, `${method} ${p}`).toBeLessThan(500);
 			}
 		}
-		expect(db.select().from(user).all()).toHaveLength(0);
+		expect(await db.select().from(user)).toHaveLength(0);
 	});
 
 	it('refuses an unverified provider email, including via a later GitHub login', async () => {
@@ -382,7 +386,7 @@ describe('public mode auth', () => {
 		await expect(
 			oauthLogin(auth, 'github', { id: 'gh-1', email: 'pat@example.com', emailVerified: false })
 		).rejects.toMatchObject({ body: { code: 'email_not_verified' } });
-		expect(db.select().from(user).all()).toHaveLength(0);
+		expect(await db.select().from(user)).toHaveLength(0);
 	});
 
 	it('Google then GitHub on the same verified email is one user', async () => {
@@ -401,15 +405,11 @@ describe('public mode auth', () => {
 		expect(a.error).toBeNull();
 		expect(b.error).toBeNull();
 		expect(b.data?.user.id).toBe(a.data?.user.id);
-		expect(db.select().from(user).all()).toHaveLength(1);
-		expect(
-			db
-				.select()
-				.from(account)
-				.all()
-				.map((x) => x.providerId)
-				.sort()
-		).toEqual(['github', 'google']);
+		expect(await db.select().from(user)).toHaveLength(1);
+		expect((await db.select().from(account)).map((x) => x.providerId).sort()).toEqual([
+			'github',
+			'google'
+		]);
 	});
 
 	it('GitHub with an unverified email does not attach to the Google user', async () => {
@@ -422,23 +422,21 @@ describe('public mode auth', () => {
 			emailVerified: false
 		});
 		expect(b.error).toBe('account not linked');
-		expect(db.select().from(account).all()).toHaveLength(1);
+		expect(await db.select().from(account)).toHaveLength(1);
 	});
 
 	it('refuses a session for a user whose email is not verified', async () => {
 		setEnv(PUBLIC_ENV);
 		const auth = createAuth(db);
 		const now = new Date();
-		db.insert(user)
-			.values({
-				id: 'u1',
-				name: 'U',
-				email: 'u@example.com',
-				emailVerified: false,
-				createdAt: now,
-				updatedAt: now
-			})
-			.run();
+		await db.insert(user).values({
+			id: 'u1',
+			name: 'U',
+			email: 'u@example.com',
+			emailVerified: false,
+			createdAt: now,
+			updatedAt: now
+		});
 		const ctx = await auth.$context;
 		await expect(ctx.internalAdapter.createSession('u1')).rejects.toMatchObject({
 			status: 'FORBIDDEN'
@@ -452,7 +450,7 @@ describe('public mode auth', () => {
 		const selfhost = createAuth(db);
 		const pat = await signUp(selfhost, 'Pat', 'pat@example.com');
 		const inviter = await signUp(selfhost, 'Inviter', 'inviter@example.com');
-		addInvitation({ id: 'inv-1', email: 'pat@example.com', inviterId: inviter.id });
+		await addInvitation({ id: 'inv-1', email: 'pat@example.com', inviterId: inviter.id });
 
 		setEnv(PUBLIC_ENV);
 		const pub = createAuth(db);
@@ -462,24 +460,21 @@ describe('public mode auth', () => {
 			status: 'FORBIDDEN',
 			body: { message: expect.stringMatching(/verif/i) }
 		});
-		expect(db.select().from(invitation).where(eq(invitation.id, 'inv-1')).get()?.status).toBe(
-			'pending'
-		);
 		expect(
-			db
-				.select()
-				.from(member)
-				.where(eq(member.userId, pat.id))
-				.all()
-				.filter((m) => m.organizationId === 'org-1')
+			(await first(db.select().from(invitation).where(eq(invitation.id, 'inv-1'))))?.status
+		).toBe('pending');
+		expect(
+			(await db.select().from(member).where(eq(member.userId, pat.id))).filter(
+				(m) => m.organizationId === 'org-1'
+			)
 		).toHaveLength(0);
 
 		// verified: accepted
-		db.update(user).set({ emailVerified: true }).where(eq(user.id, pat.id)).run();
+		await db.update(user).set({ emailVerified: true }).where(eq(user.id, pat.id));
 		await pub.api.acceptInvitation({ body: { invitationId: 'inv-1' }, headers: pat.headers });
-		expect(db.select().from(invitation).where(eq(invitation.id, 'inv-1')).get()?.status).toBe(
-			'accepted'
-		);
+		expect(
+			(await first(db.select().from(invitation).where(eq(invitation.id, 'inv-1'))))?.status
+		).toBe('accepted');
 	});
 });
 
@@ -489,29 +484,27 @@ describe('session hook and bootstrap guard', () => {
 		const auth = createAuth(db);
 		const ctx = await auth.$context;
 		const now = new Date();
-		db.insert(user)
-			.values({
-				id: 'u1',
-				name: 'Pat',
-				email: 'pat@example.com',
-				emailVerified: false,
-				createdAt: now,
-				updatedAt: now
-			})
-			.run();
+		await db.insert(user).values({
+			id: 'u1',
+			name: 'Pat',
+			email: 'pat@example.com',
+			emailVerified: false,
+			createdAt: now,
+			updatedAt: now
+		});
 		await expect(
 			ctx.internalAdapter.createSession('u1', false, { activeOrganizationId: 'org-x' })
 		).rejects.toMatchObject({ body: { code: 'email_not_verified' } });
-		expect(db.select().from(sessionTable).all()).toHaveLength(0);
+		expect(await db.select().from(sessionTable)).toHaveLength(0);
 	});
 
 	it('sessions never store the IP address, the user agent is kept', async () => {
 		const auth = createAuth(db);
 		await signUp(auth, 'Pat', 'pat@example.com');
 		const ctx = await auth.$context;
-		const [u] = db.select().from(user).all();
+		const [u] = await db.select().from(user);
 		await ctx.internalAdapter.createSession(u.id, false, { activeOrganizationId: 'org-x' });
-		const rows = db.select().from(sessionTable).all();
+		const rows = await db.select().from(sessionTable);
 		expect(rows.length).toBeGreaterThan(0);
 		for (const r of rows) expect(r.ipAddress ?? '').toBe('');
 	});
@@ -544,8 +537,9 @@ describe('session hook and bootstrap guard', () => {
 				} as never
 			);
 		};
-		const row = (p: string) => db.select().from(account).where(eq(account.providerId, p)).all()[0];
-		const nulls = (r: ReturnType<typeof row>) => [
+		const row = async (p: string) =>
+			(await db.select().from(account).where(eq(account.providerId, p)))[0];
+		const nulls = (r: Awaited<ReturnType<typeof row>>) => [
 			r.accessToken,
 			r.refreshToken,
 			r.accessTokenExpiresAt,
@@ -560,11 +554,11 @@ describe('session hook and bootstrap guard', () => {
 			expect((await login(p, `${p}-1`, email)).error).toBeNull();
 			// second sign-in takes the update path
 			expect((await login(p, `${p}-1`, email)).error).toBeNull();
-			const r = row(p);
+			const r = await row(p);
 			expect(nulls(r).every((v) => v === null)).toBe(true);
 			expect(r.idToken).toBe(p === 'oidc' ? 'idt' : null);
 		}
-		const cred = row('credential');
+		const cred = await row('credential');
 		expect(cred.password).toMatch(/\S{20,}/);
 	});
 
@@ -587,6 +581,6 @@ describe('session hook and bootstrap guard', () => {
 			} as never);
 		const results = await Promise.allSettled([make('a'), make('b')]);
 		expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
-		expect(db.select().from(user).all()).toHaveLength(1);
+		expect(await db.select().from(user)).toHaveLength(1);
 	});
 });

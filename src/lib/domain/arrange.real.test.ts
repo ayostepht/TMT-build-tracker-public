@@ -24,8 +24,8 @@ describe.skipIf(!xpa || !existsSync(xpa))('arranger against the real X/P/A proje
 			const dir = resolve('data/scratch/arrange-real-' + process.pid);
 			mkdirSync(dir, { recursive: true });
 			try {
-				process.env.DATABASE_URL = resolve(dir, 'u.db');
-				const { openDb, runMigrations } = await import('../server/db');
+				const { first } = await import('../server/db');
+				const { createTestDb } = await import('../server/db/testing');
 				const schema = await import('../server/db/schema');
 				const { templateSeeds } = await import('../server/seed');
 				const { seedTemplates } = await import('../server/seed/run');
@@ -37,10 +37,9 @@ describe.skipIf(!xpa || !existsSync(xpa))('arranger against the real X/P/A proje
 				const { previewExport } = await import('../server/threemf-export/index');
 				const { catalogPrinter } = await import('../printers/catalog.ts');
 				const { printerFromCatalog } = await import('../printers/printer.ts');
-				const db = openDb(resolve(dir, 'u.db'));
-				runMigrations(db);
-				seedTemplates(db, templateSeeds);
-				const tpl = db.select().from(schema.templates).get()!;
+				const db = await createTestDb();
+				await seedTemplates(db, templateSeeds);
+				const tpl = (await first(db.select().from(schema.templates)))!;
 				for (const f of imports) {
 					const name = f.split('/').pop()!;
 					const res = await importPrintGeometry(db, tpl.id, f, name);
@@ -48,12 +47,12 @@ describe.skipIf(!xpa || !existsSync(xpa))('arranger against the real X/P/A proje
 				}
 				const xpaName = xpa!.split('/').pop()!;
 				const mine = new Set(
-					listPrintGeometry(db, tpl.id)
+					(await listPrintGeometry(db, tpl.id))
 						.filter((r) => r.source === xpaName)
 						.map((r) => r.slug)
 				);
 				expect(mine.size).toBeGreaterThan(10);
-				const fps = loadFootprints(db, tpl.id);
+				const fps = await loadFootprints(db, tpl.id);
 
 				// 1. fitter on every piece of the file's parts, 256 bed, 1 mm margin
 				const rows: string[] = [];
@@ -78,32 +77,30 @@ describe.skipIf(!xpa || !existsSync(xpa))('arranger against the real X/P/A proje
 				if (process.env.TMT_REAL_OUT) writeFileSync(process.env.TMT_REAL_OUT, rows.join('\n'));
 
 				// 2. full arranger + export guard
-				if (!db.select().from(schema.organization).get()) {
-					db.insert(schema.organization)
-						.values({ id: 'org-r', name: 'Scratch', slug: 'scratch', createdAt: new Date() })
-						.run();
-					db.insert(schema.user)
-						.values({ id: 'u-r', name: 'S', email: 's@example.test', createdAt: new Date() })
-						.run();
-					db.insert(schema.member)
-						.values({
-							id: 'm-r',
-							organizationId: 'org-r',
-							userId: 'u-r',
-							role: 'owner',
-							createdAt: new Date()
-						})
-						.run();
+				if (!(await first(db.select().from(schema.organization)))) {
+					await db
+						.insert(schema.organization)
+						.values({ id: 'org-r', name: 'Scratch', slug: 'scratch', createdAt: new Date() });
+					await db
+						.insert(schema.user)
+						.values({ id: 'u-r', name: 'S', email: 's@example.test', createdAt: new Date() });
+					await db.insert(schema.member).values({
+						id: 'm-r',
+						organizationId: 'org-r',
+						userId: 'u-r',
+						role: 'owner',
+						createdAt: new Date()
+					});
 				}
-				const org = db.select().from(schema.organization).get()!;
-				const uid = db.select().from(schema.member).get()!.userId;
+				const org = (await first(db.select().from(schema.organization)))!;
+				const uid = (await first(db.select().from(schema.member)))!.userId;
 				const printer = printerFromCatalog(catalogPrinter('elegoo-centauri-carbon')!, 0);
-				const id = createBuild(
+				const id = await createBuild(
 					db,
 					{ organizationId: org.id, templateId: tpl.id, designId: null, name: 'Real', printer },
 					uid
 				);
-				const arr = arrangeForPrinter(db, id, uid, { convertRuns: true });
+				const arr = await arrangeForPrinter(db, id, uid, { convertRuns: true });
 				console.log(
 					'ARRANGED plates',
 					arr.plates,
@@ -112,7 +109,7 @@ describe.skipIf(!xpa || !existsSync(xpa))('arranger against the real X/P/A proje
 						arr.warnings.map((w: { code: string; slug: string }) => w.code + ':' + w.slug)
 					)
 				);
-				const pre = previewExport(db, id, uid, { flavor: 'orca' });
+				const pre = await previewExport(db, id, uid, { flavor: 'orca' });
 				const over = arr.warnings.filter((w: { code: string }) => w.code === 'oversize');
 				console.log('OVERSIZE', JSON.stringify(over.map((w: { slug: string }) => w.slug)));
 				console.log('EXPORT WARNINGS', JSON.stringify(pre.warnings));
