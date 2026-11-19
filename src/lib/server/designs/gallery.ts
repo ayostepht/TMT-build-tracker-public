@@ -8,7 +8,7 @@
  * - A copy ("Use this design") is a normal private design of the viewer. It keeps only
  *   `copied_from_design_id`; later edits, unsharing or deleting the original don't touch it.
  */
-import { and, asc, count, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 import { colorFamily, type FamilyId } from '#lib/domain/swatch-picker.ts';
 import { ApiError, requireNotDemoId, requireSiteAdmin, type SiteAdminCandidate } from '../access';
 import { advisoryLock, first, one, type DbOrTx } from '../db';
@@ -23,6 +23,9 @@ export const GALLERY_PAGE_SIZE = 24;
 export const GALLERY_MAX_PAGE_SIZE = 48;
 /** Share actions one person may do in 24 hours (sharing the same design again counts again). */
 export const SHARES_PER_DAY = 20;
+/** Share events older than this are pruned when someone shares (the daily limit needs 24 hours). */
+const SHARE_EVENT_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+const SHARE_EVENT_PRUNE_BATCH = 200;
 const FAMILY_IDS = new Set<string>([
 	'red',
 	'orange',
@@ -173,6 +176,11 @@ export async function listGallery(
 	const family = opts.family && FAMILY_IDS.has(opts.family) ? (opts.family as FamilyId) : null;
 	const where = and(
 		isNotNull(colorDesigns.sharedAt),
+		// Only designs on the built-in kit are listed, whatever was shared before the share-time check.
+		inArray(
+			colorDesigns.templateId,
+			db.select({ id: templates.id }).from(templates).where(isNull(templates.ownerOrgId))
+		),
 		q ? sql`${colorDesigns.name} ilike ${'%' + likeEscape(q) + '%'} escape '\\'` : undefined
 	);
 	const order = [
@@ -215,7 +223,7 @@ export async function listGallery(
 	};
 }
 
-/** A shared design by id or slug. 404 when it is not (or no longer) in the gallery, whoever asks. */
+/** A shared design by id or slug. 404 when it is not (or no longer) in the gallery or sits on a team's kit copy, whoever asks. */
 export async function findSharedDesign(db: DbOrTx, key: string): Promise<DesignRow> {
 	const d =
 		(await first(
@@ -231,6 +239,11 @@ export async function findSharedDesign(db: DbOrTx, key: string): Promise<DesignR
 				.where(and(eq(colorDesigns.slug, key), isNotNull(colorDesigns.sharedAt)))
 		));
 	if (!d) throw new ApiError(404, 'Not found');
+	// Only designs on a built-in kit are in the gallery; a team's kit copy is never reachable here.
+	const tpl = await first(
+		db.select({ owner: templates.ownerOrgId }).from(templates).where(eq(templates.id, d.templateId))
+	);
+	if (!tpl || tpl.owner) throw new ApiError(404, 'Not found');
 	return d;
 }
 
@@ -277,6 +290,17 @@ export async function shareDesign(db: DbOrTx, key: string, userId: string): Prom
 			throw new ApiError(429, `You can share ${SHARES_PER_DAY} designs a day. Try again tomorrow.`);
 		const now = new Date();
 		await tx.insert(designShareEvents).values({ userId, designId: d.id, createdAt: now });
+		// Events only matter for the daily limit: drop old ones (a bounded batch per share).
+		await tx.delete(designShareEvents).where(
+			inArray(
+				designShareEvents.id,
+				tx
+					.select({ id: designShareEvents.id })
+					.from(designShareEvents)
+					.where(lt(designShareEvents.createdAt, new Date(now.getTime() - SHARE_EVENT_KEEP_MS)))
+					.limit(SHARE_EVENT_PRUNE_BATCH)
+			)
+		);
 		await tx
 			.update(colorDesigns)
 			.set({

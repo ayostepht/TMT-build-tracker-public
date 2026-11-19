@@ -21,7 +21,7 @@ import {
 	snapshotWorkspace
 } from '../quota';
 import { listTeams } from '../teams';
-import { canSeeDesign, coworkerIds, type DesignRow } from './access';
+import { canSeeDesign, coworkerIds, isSeededExample, type DesignRow } from './access';
 import { publicSharerName } from './gallery';
 import {
 	hasSnapshot,
@@ -145,7 +145,9 @@ async function summarize(db: DbOrTx, rows: DesignRow[], userId: string): Promise
 	);
 	const coworkers = await coworkerIds(db, userId);
 	const close = (d: DesignRow) =>
-		!d.authorUserId || d.authorUserId === userId || coworkers.has(d.authorUserId);
+		isSeededExample(d) ||
+		d.authorUserId === userId ||
+		(!!d.authorUserId && coworkers.has(d.authorUserId));
 	return Promise.all(
 		rows.map(async (d) => {
 			const counts: Record<string, number> = {};
@@ -193,7 +195,7 @@ export async function listDesigns(
 			and(
 				opts.templateId ? eq(colorDesigns.templateId, opts.templateId) : undefined,
 				or(
-					isNull(colorDesigns.authorUserId),
+					and(isNull(colorDesigns.authorUserId), eq(colorDesigns.isPublic, true)),
 					inArray(colorDesigns.authorUserId, [userId, ...coworkers])
 				)
 			)
