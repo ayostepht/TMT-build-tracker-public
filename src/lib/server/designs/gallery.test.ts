@@ -109,8 +109,9 @@ describe('share and unshare', () => {
 	it('only the author shares; sharing twice is harmless', async () => {
 		const d = await addDesign('alice');
 		expect(await status(() => shareDesign(db, d.id, 'bob'))).toBe(404);
+		// the retired isPublic column grants nothing: sharing has one meaning, the gallery
 		await db.update(colorDesigns).set({ isPublic: true }).where(eq(colorDesigns.id, d.id));
-		expect(await status(() => shareDesign(db, d.id, 'bob'))).toBe(403);
+		expect(await status(() => shareDesign(db, d.id, 'bob'))).toBe(404);
 		await shareDesign(db, d.id, 'alice');
 		const at = (await findSharedDesign(db, d.id)).sharedAt;
 		await shareDesign(db, d.id, 'alice');

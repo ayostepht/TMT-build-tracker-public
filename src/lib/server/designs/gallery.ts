@@ -39,7 +39,10 @@ export interface GalleryItem {
 	id: string;
 	slug: string;
 	name: string;
+	templateId: string;
 	templateName: string;
+	/** Part slug to slot key, so the card can draw the design on the chair when it has no saved picture. */
+	partRoles: Record<string, string>;
 	/** Display name of the person who shared it (never an email). */
 	sharerName: string;
 	sharedAt: string;
@@ -143,7 +146,9 @@ async function toItems(db: DbOrTx, rows: DesignRow[], userId: string): Promise<G
 			id: d.id,
 			slug: d.slug,
 			name: d.name,
+			templateId: d.templateId,
 			templateName: tplNames.get(d.templateId) ?? '',
+			partRoles: d.partRoles,
 			sharerName: names.get(d.sharedBy ?? d.authorUserId ?? '') ?? 'A maker',
 			sharedAt: (d.sharedAt ?? d.createdAt).toISOString(),
 			roles: d.roles,

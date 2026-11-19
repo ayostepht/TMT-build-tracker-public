@@ -9,7 +9,7 @@ export const GET: RequestHandler = (event) =>
 		design: await getDesignDetail(getDb(), event.params.id, requireUserId(event))
 	}));
 
-/** `{ name?, isPublic? }`: author only. */
+/** `{ name? }`: author only (sharing to the gallery has its own routes). */
 export const PATCH: RequestHandler = (event) =>
 	respond(async () =>
 		updateDesignMeta(getDb(), event.params.id, requireUserId(event), await readJson(event))

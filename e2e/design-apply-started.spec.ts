@@ -66,7 +66,7 @@ async function makeDesign(page: Page, chapterUrl: string, name: string) {
 			}
 		}
 	});
-	const made = await api(page, 'POST', '/api/designs', { buildId, name, isPublic: false });
+	const made = await api(page, 'POST', '/api/designs', { buildId, name });
 	expect(made.status).toBe(200);
 	return made.body.id as string;
 }

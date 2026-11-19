@@ -23,6 +23,8 @@
 		showHardware?: boolean;
 		/** Shown instead of the canvas when WebGL is unavailable. */
 		fallback?: Snippet;
+		/** No "Loading the 3D model" text over the canvas (a poster image shows meanwhile). */
+		quiet?: boolean;
 	}
 
 	let {
@@ -36,7 +38,8 @@
 		onready,
 		autoRotate = false,
 		showHardware = true,
-		fallback
+		fallback,
+		quiet = false
 	}: Props = $props();
 
 	let host: HTMLDivElement | undefined = $state();
@@ -195,11 +198,11 @@
 				<button type="button" class="btn sm" onclick={reload}>Reload 3D view</button>
 			</div>
 		{/if}
-		{#if status === 'loading'}
+		{#if status === 'loading' && !quiet}
 			<div class="cv-msg" aria-live="polite">
 				Loading the 3D model{progress > 0 && progress < 1 ? ` ${Math.round(progress * 100)}%` : '…'}
 			</div>
-		{:else if status === 'error'}
+		{:else if status === 'error' && !quiet}
 			<div class="cv-msg" role="alert">{errorText || 'The 3D model could not be loaded'}</div>
 		{/if}
 	{/if}

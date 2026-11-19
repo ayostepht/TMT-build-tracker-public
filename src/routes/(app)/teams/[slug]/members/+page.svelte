@@ -141,7 +141,7 @@
 		danger
 	>
 		<p>
-			{who.name} will lose access to this chapter's builds and printers. Their print history stays.
+			{who.name} will lose access to this team's builds and printers. Their print history stays.
 		</p>
 		<form
 			class="mem-actions"

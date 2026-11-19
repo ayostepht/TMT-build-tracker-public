@@ -39,9 +39,9 @@
 		onchange?: (p: BuildPrinter | null) => void;
 		name?: string;
 		disabled?: boolean;
-		/** Chapter or My builds whose printers (Printers page) are offered first. */
+		/** Team or My builds whose printers (Printers page) are offered first. */
 		orgId?: string;
-		/** With exactly one printer for this chapter or My builds and no choice yet, select it. */
+		/** With exactly one printer for this team or My builds and no choice yet, select it. */
 		preselectSingle?: boolean;
 	} = $props();
 
@@ -226,7 +226,7 @@
 				{/each}
 			</select>
 			<span class="hint"
-				>Printers from all your chapters and My builds. Or pick a standard bed size below.</span
+				>Printers from all your teams and My builds. Or pick a standard bed size below.</span
 			>
 		</label>
 		{#if integrationsSlug}

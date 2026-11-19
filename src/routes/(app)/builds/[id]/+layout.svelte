@@ -62,7 +62,7 @@
 {/if}
 {#if !ctx.canEdit}
 	<div class="banner" role="note">
-		You have view-only access to this {isDraft ? 'draft' : 'build'}. Ask a chapter owner for editor
+		You have view-only access to this {isDraft ? 'draft' : 'build'}. Ask a team owner for editor
 		access to make changes.
 	</div>
 {/if}

@@ -28,15 +28,15 @@
 
 {#if current?.personal && ctx.view.role === 'owner'}
 	<section class="card">
-		<h2>Move to chapter</h2>
+		<h2>Move to team</h2>
 		{#if targets.length}
 			<p class="muted">
-				Share this build with a chapter you own or edit. Its members will see it and can work on it.
+				Share this build with a team you own or edit. Its members will see it and can work on it.
 			</p>
 			{#if !confirming}
 				<div class="form-grid">
 					<label class="field"
-						>Chapter
+						>Team
 						<select bind:value={choice}>
 							{#each targets as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
 						</select>
@@ -44,7 +44,7 @@
 				</div>
 				<div>
 					<button class="btn" type="button" bind:this={trigger} onclick={() => (confirming = true)}
-						>Move to chapter…</button
+						>Move to team…</button
 					>
 				</div>
 			{:else}
@@ -68,9 +68,8 @@
 			{/if}
 		{:else}
 			<p class="muted">
-				You are not part of a chapter yet. <a href={resolve('/(app)/onboarding')}
-					>Create a chapter</a
-				> to share this build.
+				You are not part of a team yet. <a href={resolve('/(app)/onboarding')}>Create a team</a> to share
+				this build.
 			</p>
 		{/if}
 	</section>

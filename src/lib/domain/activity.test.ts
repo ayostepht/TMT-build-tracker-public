@@ -55,7 +55,7 @@ describe('describeActivity', () => {
 		);
 		expect(say('build.update', {})).toBe('Steph edited the build details');
 		expect(say('build.move', { toName: 'Chapter A' })).toBe('Steph moved this build to Chapter A');
-		expect(say('build.move', {})).toBe('Steph moved this build to a chapter');
+		expect(say('build.move', {})).toBe('Steph moved this build to a team');
 	});
 	it('part status and update use part names, not slugs', () => {
 		const s = say('part.status', { slug: part.slug, from: 'To print', to: 'Printing' });

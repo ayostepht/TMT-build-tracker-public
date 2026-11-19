@@ -41,7 +41,6 @@ export interface DesignSummary {
 	templateName: string;
 	authorUserId: string | null;
 	authorName: string | null;
-	isPublic: boolean;
 	/** Listed in the shared gallery. */
 	shared: boolean;
 	/** The gallery design this was copied from, when it was. */
@@ -155,7 +154,6 @@ async function summarize(db: DbOrTx, rows: DesignRow[], userId: string): Promise
 				templateName: tplNames.get(d.templateId) ?? '',
 				authorUserId: d.authorUserId,
 				authorName: d.authorUserId ? (authors.get(d.authorUserId) ?? null) : null,
-				isPublic: d.isPublic,
 				shared: d.sharedAt !== null,
 				copiedFromId: d.copiedFromDesignId,
 				mine: d.authorUserId === userId,
@@ -168,7 +166,7 @@ async function summarize(db: DbOrTx, rows: DesignRow[], userId: string): Promise
 	);
 }
 
-/** Designs the user may see (public, their own, their co-members'), newest first. */
+/** Designs the user may see (their own, their co-members', and the seeded examples), newest first. */
 export async function listDesigns(
 	db: DbOrTx,
 	userId: string,
@@ -218,8 +216,6 @@ export async function createDesign(
 	if (!isObj(body)) bad('Invalid body');
 	if (typeof body.buildId !== 'string') bad('buildId is required');
 	const name = designName(body.name);
-	if (body.isPublic !== undefined && typeof body.isPublic !== 'boolean')
-		bad('isPublic must be true or false');
 	const view = await loadBuildView(db, body.buildId, userId);
 	if (!view) throw new ApiError(404, 'Not found');
 	if (!view.canEdit) throw new ApiError(403, 'Your role cannot edit');
@@ -242,15 +238,14 @@ export async function createDesign(
 					name,
 					authorUserId: userId,
 					roles,
-					partRoles: effectivePartRoles(view),
-					isPublic: body.isPublic === true
+					partRoles: effectivePartRoles(view)
 				})
 				.returning({ id: colorDesigns.id, slug: colorDesigns.slug })
 		);
 	});
 }
 
-/** Rename or publish/unpublish. Author only. */
+/** Rename. Author only. (Sharing to the gallery has its own functions in gallery.ts.) */
 export async function updateDesignMeta(
 	db: DbOrTx,
 	key: string,
@@ -262,10 +257,6 @@ export async function updateDesignMeta(
 	requireAuthor(d, userId);
 	const set: Partial<typeof colorDesigns.$inferInsert> = {};
 	if (body.name !== undefined) set.name = designName(body.name);
-	if (body.isPublic !== undefined) {
-		if (typeof body.isPublic !== 'boolean') bad('isPublic must be true or false');
-		set.isPublic = body.isPublic;
-	}
 	if (!Object.keys(set).length) bad('Nothing to update');
 	await db.update(colorDesigns).set(set).where(eq(colorDesigns.id, d.id));
 }

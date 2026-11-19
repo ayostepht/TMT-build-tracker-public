@@ -1,8 +1,11 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import AppMark from '#lib/components/AppMark.svelte';
 
 	let { signedIn = false }: { signedIn?: boolean } = $props();
+	// The sign-in page is already the sign-in button.
+	const onLogin = $derived(page.url.pathname === '/login');
 </script>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -->
@@ -17,7 +20,7 @@
 				<a class="btn primary" href={resolve('/(app)/workspace')}>Open your builds</a>
 			{:else}
 				<a class="site-head__link" href="/demo">Try the demo</a>
-				<a class="btn" href={resolve('/login')}>Sign in</a>
+				{#if !onLogin}<a class="btn site-head__btn" href={resolve('/login')}>Sign in</a>{/if}
 			{/if}
 		</nav>
 	</div>
@@ -59,19 +62,30 @@
 		align-items: center;
 		gap: var(--sp-8);
 	}
+	.site-head__btn {
+		white-space: nowrap;
+	}
 	.site-head__link {
+		white-space: nowrap;
 		color: var(--ink);
 		font-weight: 500;
 		min-height: 44px;
 		display: inline-flex;
 		align-items: center;
 	}
-	@media (max-width: 380px) {
+	/* phone: brand, "Try the demo" and "Sign in" must share one line without wrapping */
+	@media (max-width: 480px) {
+		.site-head__in {
+			gap: var(--sp-5);
+		}
+		.site-head__brand {
+			gap: var(--sp-4);
+		}
 		.site-head__brand span {
 			font-size: var(--fs-lg);
 		}
 		.site-head__nav {
-			gap: var(--sp-5);
+			gap: var(--sp-6);
 		}
 	}
 </style>

@@ -103,7 +103,7 @@ async function makeDesign(mutate?: (src: string) => void | Promise<void>) {
 		.set({ name: 'Lime', hex: '#66dd00' })
 		.where(and(eq(buildFilaments.buildId, src), eq(buildFilaments.roleKey, 'accent')));
 	await mutate?.(src);
-	return await createDesign(db, 'owner', { buildId: src, name: 'Ocean set', isPublic: true });
+	return await createDesign(db, 'owner', { buildId: src, name: 'Ocean set' });
 }
 const startReprint = (id: string) =>
 	setPartStatus(db, id, 'owner', 'handle-left', { status: 'Reprint' });

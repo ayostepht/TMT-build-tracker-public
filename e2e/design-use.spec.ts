@@ -8,13 +8,12 @@ test('design page: "Use this design" focuses the build name and highlights the c
 }) => {
 	const { buildId } = await ownerWithBuild(page, 'usedesign');
 
-	// Save the build's colors as a public design to get a design page.
+	// Save the build's colors as a design to get a design page.
 	await page.goto(`/builds/${buildId}/design`);
 	await expect(page.getByTestId('autosave-status')).toContainText('Saved automatically');
 	await page.getByTestId('open-share').click();
 	const dlg = page.getByTestId('share-dialog');
 	await dlg.getByLabel('Design name').fill('Use Me');
-	await dlg.getByLabel(/Share publicly/).check();
 	await dlg.getByRole('button', { name: 'Save design' }).click();
 	await expect(page.getByTestId('design-saved')).toContainText('Saved "Use Me"');
 	await page.goto('/designs');

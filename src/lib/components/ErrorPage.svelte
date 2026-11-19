@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import SiteHeader from '#lib/components/site/SiteHeader.svelte';
 
 	let {
 		status,
@@ -23,7 +24,7 @@
 			: status === 401 || status === 403
 				? {
 						title: 'No access',
-						body: 'You do not have access to that. Ask a chapter owner, or sign in with another account.'
+						body: 'You do not have access to that. Ask a team owner, or sign in with another account.'
 					}
 				: status === 429
 					? {
@@ -40,6 +41,7 @@
 
 <svelte:head><title>{copy.title} · TMT Build Tracker</title></svelte:head>
 
+{#if standalone}<SiteHeader signedIn={false} />{/if}
 <svelte:element
 	this={standalone ? 'main' : 'div'}
 	class:wrap={standalone}
@@ -67,14 +69,15 @@
 <style>
 	.err {
 		max-width: 520px;
-		margin: 8vh auto 0;
+		margin: 10vh auto 0;
 		padding: 28px 24px;
+		box-shadow: 5px 5px 0 var(--line);
 		display: grid;
 		gap: 12px;
 		justify-items: start;
 		background: var(--card);
 		border: 1px solid var(--line);
-		border-radius: var(--r-xl);
+		border-radius: var(--r-lg);
 	}
 	.err-code {
 		font: 700 56px/1 var(--f-display);
