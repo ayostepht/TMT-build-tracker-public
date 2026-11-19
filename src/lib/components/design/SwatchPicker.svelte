@@ -291,6 +291,15 @@
 	}
 	const detailWhy = $derived(detail ? pickerReason(detail) : '');
 	const detailApprox = $derived(detail ? isApproxHex(detail) : false);
+	const extrasTitle = $derived(
+		[
+			detailApprox ? 'Approx. color: estimated from product photos' : '',
+			detailWhy ? `Palettes skip it: ${detailWhy}` : '',
+			detail && detailOthers.length ? alsoText(detail, detailOthers) : ''
+		]
+			.filter(Boolean)
+			.join(' · ')
+	);
 
 	function pick(t: SwatchTuple) {
 		hover = t;
@@ -570,13 +579,16 @@
 				<span class="dtxt">
 					<b>{nameOf(detail)}</b>
 					<span class="muted">{detail[0]} · {detail[3]} · {detail[2]}</span>
-					{#if detailApprox}<span class="why" data-testid="swatch-approx"
-							>Approx. color: estimated from product photos</span
-						>{/if}
-					{#if detailWhy}<span class="why">Palettes skip it: {detailWhy}</span>{/if}
-					{#if detailOthers.length}<span class="muted" data-testid="swatch-also"
-							>{alsoText(detail, detailOthers)}</span
-						>{/if}
+					<!-- One fixed-height line, so hovering never changes the height of what is above the grid. -->
+					<span class="extras why" title={extrasTitle}>
+						{#if detailApprox}<span data-testid="swatch-approx"
+								>Approx. color: estimated from product photos</span
+							>{/if}
+						{#if detailWhy}<span>Palettes skip it: {detailWhy}</span>{/if}
+						{#if detailOthers.length}<span class="muted" data-testid="swatch-also"
+								>{alsoText(detail, detailOthers)}</span
+							>{/if}
+					</span>
 				</span>
 			{:else if current}
 				<span class="sp-dot" style="background-color:{current.hex}" aria-hidden="true"></span>
@@ -589,29 +601,33 @@
 			{/if}
 		</div>
 
-		{#if detailOthers.length}
-			<details class="others" data-testid="other-brands">
-				<summary>Other brands ({detailOthers.length})</summary>
-				<ul>
-					{#each detailOthers as o (o.t[0] + o.t[1] + o.t[2] + o.t[3])}
-						<li>
-							<button
-								type="button"
-								class="opick"
-								data-testid="other-brand"
-								aria-label="Use {nameOf(o.t)}, {o.t[3]}, {o.t[2]}"
-								onclick={() => pick(o.t)}
-							>
-								<span class="sp-dot sm" style="background-color:{o.t[2]}" aria-hidden="true"></span>
-								<span class="mtxt"
-									><b>{o.t[0]} · {o.t[1]}</b> <span class="muted">{o.t[3]} · {o.t[2]}</span></span
+		<!-- The row is always reserved and the list opens over the grid, so hovering never shifts the swatches. -->
+		<div class="otherswrap">
+			{#if detailOthers.length}
+				<details class="others" data-testid="other-brands">
+					<summary>Other brands ({detailOthers.length})</summary>
+					<ul>
+						{#each detailOthers as o (o.t[0] + o.t[1] + o.t[2] + o.t[3])}
+							<li>
+								<button
+									type="button"
+									class="opick"
+									data-testid="other-brand"
+									aria-label="Use {nameOf(o.t)}, {o.t[3]}, {o.t[2]}"
+									onclick={() => pick(o.t)}
 								>
-							</button>
-						</li>
-					{/each}
-				</ul>
-			</details>
-		{/if}
+									<span class="sp-dot sm" style="background-color:{o.t[2]}" aria-hidden="true"
+									></span>
+									<span class="mtxt"
+										><b>{o.t[0]} · {o.t[1]}</b> <span class="muted">{o.t[3]} · {o.t[2]}</span></span
+									>
+								</button>
+							</li>
+						{/each}
+					</ul>
+				</details>
+			{/if}
+		</div>
 
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="body" bind:this={bodyEl} onkeydown={gridKey}>
@@ -783,7 +799,13 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--sp-4);
-		padding: var(--sp-5) var(--sp-6) 0;
+		padding: 0 var(--sp-6) 0;
+		/* The whole panel is the one scroll container (no nested grid scroller on short screens). */
+		overflow-y: auto;
+		overflow-x: hidden;
+		overscroll-behavior: contain;
+		overflow-anchor: none;
+		scroll-padding-top: 64px;
 		background: var(--card);
 		border: 1px solid var(--line);
 		border-radius: var(--r-xl);
@@ -796,6 +818,11 @@
 		justify-content: space-between;
 		align-items: center;
 		gap: var(--sp-4);
+		position: sticky;
+		top: 0;
+		z-index: 2;
+		background: var(--card);
+		padding: var(--sp-5) 0 var(--sp-3);
 	}
 	h2 {
 		margin: 0;
@@ -876,7 +903,23 @@
 		display: flex;
 		align-items: center;
 		gap: var(--sp-5);
-		min-height: 40px;
+		/* Fixed: name, type line and one line of notes, whatever is hovered. */
+		height: 3.6rem;
+		overflow: hidden;
+	}
+	.extras {
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-height: 1.25em;
+	}
+	.extras > span + span::before {
+		content: ' · ';
+	}
+	.otherswrap {
+		position: relative;
+		min-height: 1.4rem;
 	}
 	.sp-dot {
 		width: 36px;
@@ -904,14 +947,11 @@
 		flex-wrap: wrap;
 	}
 	.body {
-		flex: 1;
-		min-height: 0;
-		overflow-y: auto;
+		flex: none;
 		display: grid;
 		gap: var(--sp-7);
 		align-content: start;
 		padding-bottom: var(--sp-8);
-		overscroll-behavior: contain;
 	}
 	.grid {
 		display: grid;
@@ -994,6 +1034,15 @@
 		overflow-y: auto;
 		display: grid;
 		gap: var(--sp-1);
+		position: absolute;
+		left: 0;
+		right: 0;
+		z-index: 1;
+		padding: var(--sp-2);
+		background: var(--card);
+		border: 1px solid var(--line);
+		border-radius: var(--r-lg);
+		box-shadow: var(--shadow-2);
 	}
 	.opick {
 		display: flex;
@@ -1139,11 +1188,15 @@
 		/* The card grows with its content and the page scrolls; nothing is clipped or overflows it. */
 		.sheet {
 			flex: none;
+			overflow: visible;
+			padding-top: var(--sp-5);
 			padding-bottom: var(--sp-5);
 		}
+		header {
+			position: static;
+			padding: 0;
+		}
 		.body {
-			flex: none;
-			overflow: visible;
 			padding-bottom: 0;
 		}
 		.sw {
@@ -1175,7 +1228,10 @@
 	}
 	@media (min-width: 900px) {
 		.sheet {
-			padding: var(--sp-7) var(--sp-8) 0;
+			padding: 0 var(--sp-8) 0;
+		}
+		header {
+			padding-top: var(--sp-7);
 		}
 		.filters {
 			flex-wrap: wrap;
