@@ -8,11 +8,9 @@ import {
 	type SiteAdminCandidate
 } from '../access';
 import { advisoryLock, first, one, type DbOrTx } from '../db';
-import { canSeeDesign } from '../designs/access';
 import { assertUnder, quotaLimit } from '../quota';
 import {
 	builds,
-	colorDesigns,
 	templateAssemblySteps,
 	templateFilamentRoles,
 	templateGuidePages,
@@ -47,8 +45,8 @@ export async function countKitCopies(db: DbOrTx, orgId: string): Promise<number>
 
 /**
  * May this user read the template (model, layouts, kit status, ...)? Built-in kits: everyone.
- * A workspace's copy: members of that workspace, site admins, and anyone who can see a color
- * design made on it (shared gallery designs show the copy's model).
+ * A workspace's copy: members of that workspace and site admins only. Color designs made on a
+ * copy never open it up (they can't be shared to the gallery either).
  */
 export async function canViewTemplate(
 	db: DbOrTx,
@@ -65,11 +63,6 @@ export async function canViewTemplate(
 	if (!t.ownerOrgId) return true;
 	if (await getMemberRole(db, t.ownerOrgId, user.id)) return true;
 	if (await isSiteAdmin(db, user)) return true;
-	const designs = await db
-		.select()
-		.from(colorDesigns)
-		.where(eq(colorDesigns.templateId, templateId));
-	for (const d of designs) if (await canSeeDesign(db, d, user.id)) return true;
 	return false;
 }
 

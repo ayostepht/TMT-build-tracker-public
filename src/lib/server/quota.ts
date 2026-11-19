@@ -85,14 +85,14 @@ function sentence(key: QuotaKey, limit: number, current: number): string {
 			customFilamentsPerWorkspace: 'Custom filaments cannot be added on this server.',
 			savedDesignsPerUser: 'Designs cannot be saved on this server.',
 			kitCopiesPerWorkspace: 'Kit copies cannot be made on this server.',
-			chaptersPerUser: 'Chapters cannot be created on this server.',
-			membersPerChapter: 'Members cannot be added to chapters on this server.',
+			chaptersPerUser: 'Teams cannot be created on this server.',
+			membersPerChapter: 'Members cannot be added to teams on this server.',
 			pendingInvitesPerChapter: 'Invitations cannot be sent on this server.',
 			stepConversionsPerUser: 'Model conversions are not allowed on this server.',
 			sseConnectionsPerUser: 'Live updates are not available on this server.',
 			accountsTotal: 'Sign-up is closed on this server.',
 			signupsPerDay: 'Sign-up is closed on this server.',
-			membershipsPerUser: 'Joining chapters is not allowed on this server.',
+			membershipsPerUser: 'Joining teams is not allowed on this server.',
 			concurrentUploadsPerUser: 'Uploads are not allowed on this server.',
 			uploadBytesPerWorkspace: 'Uploads are not allowed on this server.',
 			uploadBytesPerUser: 'Uploads are not allowed on this server.'
@@ -117,11 +117,11 @@ function sentence(key: QuotaKey, limit: number, current: number): string {
 		case 'kitCopiesPerWorkspace':
 			return `This workspace already has ${n(current, 'kit copy', 'kit copies')}, ${TAIL}. Delete one or ask the admin.`;
 		case 'chaptersPerUser':
-			return `You already belong to ${n(current, 'chapter')} you created, ${TAIL}. Delete one or ask the admin.`;
+			return `You already belong to ${n(current, 'team')} you created, ${TAIL}. Delete one or ask the admin.`;
 		case 'membersPerChapter':
-			return `This chapter already has ${n(current, 'member')}, ${TAIL}. Remove one or ask the admin.`;
+			return `This team already has ${n(current, 'member')}, ${TAIL}. Remove one or ask the admin.`;
 		case 'pendingInvitesPerChapter':
-			return `This chapter already has ${n(current, 'pending invitation')}, ${TAIL}. Cancel one or ask the admin.`;
+			return `This team already has ${n(current, 'pending invitation')}, ${TAIL}. Cancel one or ask the admin.`;
 		case 'stepConversionsPerUser':
 			return `You already have ${n(current, 'model conversion')} queued or running, ${TAIL}. Wait for it to finish and try again.`;
 		case 'accountsTotal':
@@ -129,7 +129,7 @@ function sentence(key: QuotaKey, limit: number, current: number): string {
 		case 'signupsPerDay':
 			return `This server has reached its limit of ${n(limit, 'new account')} per day. Try again tomorrow.`;
 		case 'membershipsPerUser':
-			return `You already belong to ${n(current, 'chapter')}, ${TAIL}. Leave one or ask the admin.`;
+			return `You already belong to ${n(current, 'team')}, ${TAIL}. Leave one or ask the admin.`;
 		case 'concurrentUploadsPerUser':
 			return `You already have ${n(current, 'upload')} in progress, ${TAIL}. Wait for it to finish and try again.`;
 		case 'sseConnectionsPerUser':

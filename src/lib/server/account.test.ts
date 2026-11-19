@@ -78,7 +78,7 @@ describe('organization quotas through the plugin endpoints', () => {
 		const b = await post('/organization/create', u.cookie, { name: 'Two', slug: 'two' });
 		expect(b.status).toBe(409);
 		const body = (await b.json()) as { message: string; code: string };
-		expect(body.message).toContain('You already created 1 chapter');
+		expect(body.message).toContain('You already created 1 team');
 		expect(body.code).toBe('QUOTA');
 		expect(
 			await first(db.select().from(organization).where(eq(organization.slug, 'two')))

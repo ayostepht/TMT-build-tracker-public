@@ -290,7 +290,7 @@ export async function updatePart(
 		if (body.assigneeUserId !== undefined) {
 			const a = body.assigneeUserId;
 			if (a !== null && (typeof a !== 'string' || !view.members.some((m) => m.userId === a)))
-				bad('assignee must be a chapter member');
+				bad('assignee must be a team member');
 			patch.assigneeUserId = a as string | null;
 		}
 		if (body.manualGrams !== undefined) {
@@ -921,8 +921,8 @@ export async function moveBuild(
 	await requireEditor(db, targetId, userId);
 	if (targetId === access.organizationId) bad('The build is already there');
 	if (!(await isPersonalOrg(db, access.organizationId)))
-		bad('Only builds in My builds can be moved to a chapter');
-	if (await isPersonalOrg(db, targetId)) bad('Pick a chapter to move the build to');
+		bad('Only builds in My builds can be moved to a team');
+	if (await isPersonalOrg(db, targetId)) bad('Pick a team to move the build to');
 	const now = new Date();
 	const target = await first(
 		db.select({ name: organization.name }).from(organization).where(eq(organization.id, targetId))

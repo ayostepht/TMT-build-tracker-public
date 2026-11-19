@@ -165,7 +165,7 @@ export function slugify(name: string): string {
 			.normalize('NFKD')
 			.replace(/[^a-z0-9]+/g, '-')
 			.replace(/^-+|-+$/g, '')
-			.slice(0, 40) || 'chapter'
+			.slice(0, 40) || 'team'
 	);
 }
 
@@ -257,22 +257,22 @@ type ChapterQuotaKey =
 
 const plural = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 
-/** Sentences shown to the user (the generic quota text does not name chapters). */
+/** Sentences shown to the user (the generic quota text does not name teams). */
 const CHAPTER_SENTENCES: Record<ChapterQuotaKey, (limit: number) => string> = {
 	chaptersPerUser: (l) =>
 		l === 0
-			? 'Chapters cannot be created on this server. Ask the admin.'
-			: `You already created ${plural(l, 'chapter')}, the limit on this server. Delete one or ask the admin.`,
+			? 'Teams cannot be created on this server. Ask the admin.'
+			: `You already created ${plural(l, 'team')}, the limit on this server. Delete one or ask the admin.`,
 	membershipsPerUser: (l) =>
 		l === 0
-			? 'Joining chapters is not allowed on this server. Ask the admin.'
-			: `You already belong to ${plural(l, 'chapter')}, the limit on this server. Leave one first or ask the admin.`,
+			? 'Joining teams is not allowed on this server. Ask the admin.'
+			: `You already belong to ${plural(l, 'team')}, the limit on this server. Leave one first or ask the admin.`,
 	membersPerChapter: (l) =>
-		`This chapter already has ${plural(l, 'member')}, the limit on this server. Remove someone or ask the admin.`,
+		`This team already has ${plural(l, 'member')}, the limit on this server. Remove someone or ask the admin.`,
 	pendingInvitesPerChapter: (l) =>
 		l === 0
 			? 'Invitations are not allowed on this server. Ask the admin.'
-			: `This chapter already has ${plural(l, 'open invitation')}, the limit on this server. Cancel one or ask the admin.`
+			: `This team already has ${plural(l, 'open invitation')}, the limit on this server. Cancel one or ask the admin.`
 };
 
 async function chapterQuota(
