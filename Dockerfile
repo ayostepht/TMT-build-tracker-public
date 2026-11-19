@@ -1,9 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
-# Build tools are only needed here, in case a native dependency has no prebuilt binary for the platform.
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
-    && rm -rf /var/lib/apt/lists/*
+# No native build tools: every dependency is pure JavaScript or WebAssembly (postgres-js, occt-import-js).
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci
 COPY . .
@@ -29,14 +27,17 @@ RUN --mount=type=secret,id=gh_token,required=false \
     fetch-kitpacks /kitpacks-context/index.json /kitpacks-context /kitpacks
 
 FROM node:22-bookworm-slim AS runtime
+# Hosted-site image. Settings that belong to the host (DATABASE_URL, BETTER_AUTH_SECRET, PUBLIC_URL,
+# ADMIN_EMAILS, OAuth keys) are never baked in: set them in the host's secret store.
+# BODY_SIZE_LIMIT / MAX_3MF_MB: Cloudflare's free plan refuses request bodies over 100 MB, so a
+# 3MF is capped at 95 MB and the body limit sits just above it (the server warns if it is lower).
 ENV NODE_ENV=production \
-    BODY_SIZE_LIMIT=1100M \
+    BODY_SIZE_LIMIT=100M \
+    MAX_3MF_MB=95 \
     PORT=3000 \
     HOST=0.0.0.0 \
     DATA_DIR=/data \
     KITPACK_DIR=/app/kitpacks
-# PUBLIC_URL is intentionally unset: the origin is then taken from each request
-# (http by default, https when a proxy sends X-Forwarded-Proto). See the README.
 WORKDIR /app
 RUN mkdir -p /data && chown node:node /data
 COPY --from=builder --chown=node:node /app/build ./build
@@ -45,9 +46,10 @@ COPY --from=builder --chown=node:node /app/package.json ./package.json
 COPY --from=builder --chown=node:node /app/drizzle ./drizzle
 COPY --from=builder --chown=node:node /app/scripts/proxy-origin.mjs /app/scripts/response-defaults.mjs /app/scripts/import-print-geometry.mjs /app/scripts/build-kit-pack.mjs ./scripts/
 COPY --from=kitpack --chown=node:node /kitpacks ./kitpacks
+# Non-root. A volume mounted at /data must be writable by uid 1000 (the node user).
 USER node
 VOLUME /data
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "--import", "./scripts/proxy-origin.mjs", "build"]

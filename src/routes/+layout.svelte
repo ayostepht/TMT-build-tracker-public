@@ -2,9 +2,10 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { initPwa } from '#lib/client/pwa.ts';
+	import Analytics from '#lib/components/Analytics.svelte';
 	import type { LayoutProps } from './$types';
 
-	let { children }: LayoutProps = $props();
+	let { children, data }: LayoutProps = $props();
 
 	/** Skip link: move focus to the page's <main> (a hash jump alone does not move focus). */
 	function skip(e: MouseEvent) {
@@ -24,6 +25,8 @@
 </svelte:head>
 
 <a class="skip-link" href="#main" onclick={skip}>Skip to content</a>
+
+<Analytics config={data.analytics} />
 
 {@render children()}
 
