@@ -40,13 +40,13 @@
 	<div class="kicker">Account</div>
 	<h1>{data.name}</h1>
 	<p class="muted">{data.email}</p>
-	<p class="muted"><small>People in a chapter can see each other's name and email.</small></p>
+	<p class="muted"><small>People in a team can see each other's name and email.</small></p>
 
 	<div class="card stack">
 		<h2>Export my data</h2>
 		<p class="muted">
-			One JSON file with your profile, your chapters, your saved designs and the builds in My
-			builds. Photos are listed by file name only.
+			One JSON file with your profile, your teams, your saved designs and the builds in My builds.
+			Photos are listed by file name only.
 		</p>
 		<div>
 			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
@@ -61,9 +61,7 @@
 			<h2>Site admins</h2>
 			<p class="muted">
 				Site admins manage the kit and who else is an admin. Admins set by the server configuration
-				cannot be changed here. If ADMIN_EMAILS names someone who has no account yet, the first
-				account stays admin until they sign up. On a self-hosted server, an address in ADMIN_EMAILS
-				becomes an admin as soon as someone registers it, so register it first.
+				cannot be changed here. Only accounts with a verified email can be admins.
 			</p>
 			<ul class="acct-list admins">
 				{#each data.siteAdmins as a (a.id)}
@@ -71,11 +69,7 @@
 						<span
 							><b>{a.name}</b> <span class="muted">{a.email}</span>
 							<small class="muted"
-								>{a.source === 'config'
-									? 'set by the server configuration'
-									: a.source === 'first'
-										? 'first account'
-										: 'granted'}</small
+								>{a.source === 'config' ? 'set by the server configuration' : 'granted'}</small
 							></span
 						>
 						{#if a.source === 'granted'}
@@ -156,7 +150,7 @@
 						<li>Deleted with you, because you are its only member: {c}.</li>
 					{/each}
 					{#each data.leftChapters as c (c)}
-						<li>You leave {c}. Builds you made there stay with the chapter.</li>
+						<li>You leave {c}. Builds you made there stay with the team.</li>
 					{/each}
 				</ul>
 
@@ -195,18 +189,6 @@
 							data-testid="delete-confirm-email"
 						/></label
 					>
-					{#if data.usesPassword}
-						<label class="field"
-							>Password
-							<input
-								name="password"
-								type="password"
-								autocomplete="current-password"
-								required
-								data-testid="delete-password"
-							/></label
-						>
-					{/if}
 					<div class="acct-actions">
 						<button
 							class="btn danger solid"

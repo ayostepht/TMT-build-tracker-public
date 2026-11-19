@@ -1,7 +1,7 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { BuildKind, TeamRole } from '#lib/domain/types.ts';
 import { first, type DbOrTx } from './db';
-import { adminEmails, isPublicMode } from './config';
+import { adminEmails } from './config';
 import { builds, member, siteAdmin, user } from './db/schema';
 
 export class ApiError extends Error {
@@ -87,35 +87,26 @@ export async function buildAccess(
 export interface SiteAdminCandidate {
 	id: string;
 	email?: string | null;
-	/** Required `true` in public mode; pass the session user (it carries it). */
+	/** Required `true`; pass the session user (it carries it). */
 	emailVerified?: boolean | null;
 }
 
 /**
  * Site admins manage install-wide things (template kits, 3D models, who else is an admin).
- * A user is a site admin through exactly one of these sources, checked in this order:
+ * A user is a site admin through exactly one of these sources, checked in this order, and only with
+ * a provider-verified email (`emailVerified`), so an unverified address can never inherit the role:
  * 1. `config`: the email is in `ADMIN_EMAILS` (comma-separated, case-insensitive). The environment
  *    is authoritative and additive: it can never be revoked in the app and never needs a row.
  * 2. `granted`: the user has a `site_admin` row (granted by another site admin).
- * 3. `first` (self-hosted only): the earliest-created account, only while BOTH hold: no
- *    `site_admin` row exists AND no existing account's email is in `ADMIN_EMAILS`. The first grant
- *    ends this rule, and so does an `ADMIN_EMAILS` admin having an account (revoking the last
- *    granted row, or the earliest account being deleted, never promotes anyone by accident).
- *    `ADMIN_EMAILS` naming an address with no account yet does not end it: the first account stays
- *    admin until that person signs up. So that granting never removes the original admin's own
- *    access, `grantSiteAdmin` writes a row for the granter too when they were admin by this rule.
- * Public mode (SSO-only): every source also needs a provider-verified email (`emailVerified`),
- * and there is no `first` source, no "first user".
- * Self-hosted emails are unverified: whoever registers a listed address gets the role.
+ * There is no "first user" admin, and demo users (never verified) cannot be admins.
  */
-export type SiteAdminSource = 'config' | 'granted' | 'first';
+export type SiteAdminSource = 'config' | 'granted';
 
 export async function siteAdminSource(
 	db: DbOrTx,
 	u: SiteAdminCandidate
 ): Promise<SiteAdminSource | null> {
-	const publicMode = isPublicMode();
-	if (publicMode && u.emailVerified !== true) return null;
+	if (u.emailVerified !== true) return null;
 	const email = (u.email ?? '').trim().toLowerCase();
 	if (email && adminEmails().includes(email)) return 'config';
 	if (
@@ -124,23 +115,7 @@ export async function siteAdminSource(
 		)
 	)
 		return 'granted';
-	if (publicMode) return null;
-	if (await first(db.select({ id: siteAdmin.userId }).from(siteAdmin).limit(1))) return null;
-	const envEmails = adminEmails();
-	// One indexed lookup (Better Auth stores emails lower-case).
-	if (
-		envEmails.length &&
-		(await first(
-			db.select({ id: user.id }).from(user).where(inArray(user.email, envEmails)).limit(1)
-		))
-	)
-		return null;
-	// The rule is computed on read, never stored, so two simultaneous sign-ups cannot both become
-	// admin: the earliest `created_at` wins, ties broken by id (stable, arbitrary).
-	const firstUser = await first(
-		db.select({ id: user.id }).from(user).orderBy(asc(user.createdAt), asc(user.id)).limit(1)
-	);
-	return firstUser?.id === u.id ? 'first' : null;
+	return null;
 }
 
 export async function isSiteAdmin(db: DbOrTx, u: SiteAdminCandidate): Promise<boolean> {
@@ -150,4 +125,34 @@ export async function isSiteAdmin(db: DbOrTx, u: SiteAdminCandidate): Promise<bo
 /** Guard for site-admin endpoints and pages (caller must already be signed in): 404 for everyone else (does not reveal the admin area). */
 export async function requireSiteAdmin(db: DbOrTx, u: SiteAdminCandidate): Promise<void> {
 	if (!(await isSiteAdmin(db, u))) throw new ApiError(404, 'Not found');
+}
+
+// ---- demo sandbox users (see `server/demo`)
+
+/** Anything with a user id; `isDemo` is on the session user (a Better Auth additional field). */
+export interface DemoCandidate {
+	id: string;
+	isDemo?: boolean | null;
+}
+
+export const DEMO_REFUSAL = 'This is not available in the demo. Sign in to use your own account.';
+
+/** True for a demo sandbox user. Read from the session user (loaded from the database on every request). */
+export function isDemoUser(u: DemoCandidate | null | undefined): boolean {
+	return !!u && u.isDemo === true;
+}
+
+/**
+ * Refuse (403) when the user is a demo sandbox user: no uploads, printers, teams or invitations,
+ * gallery sharing or account export. Call it at the top of every server endpoint or action for
+ * such a thing, before reading a request body, so the refusal is server-side whatever the UI shows.
+ */
+export function requireNotDemo(u: DemoCandidate | null | undefined): void {
+	if (isDemoUser(u)) throw new ApiError(403, DEMO_REFUSAL);
+}
+
+/** Same check for code that only has a user id (loads the flag from the database). */
+export async function requireNotDemoId(db: DbOrTx, userId: string): Promise<void> {
+	const row = await first(db.select({ isDemo: user.isDemo }).from(user).where(eq(user.id, userId)));
+	if (row?.isDemo) throw new ApiError(403, DEMO_REFUSAL);
 }

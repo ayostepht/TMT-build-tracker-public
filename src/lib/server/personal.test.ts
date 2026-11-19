@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { createAuth, type Auth } from './auth';
+import { enableTestSignIn, signInTestUser } from './auth-test-helpers';
 import { ApiError } from './access';
 import { moveBuild } from './builds/actions';
 import { createBuild } from './builds/create';
@@ -15,17 +16,7 @@ let db: Db;
 let auth: Auth;
 let templateId: string;
 
-async function signUp(name: string, email: string) {
-	const res = await auth.api.signUpEmail({
-		body: { name, email, password: 'correct-horse-battery' },
-		returnHeaders: true
-	});
-	const cookie = res.headers
-		.getSetCookie()
-		.map((c) => c.split(';')[0])
-		.join('; ');
-	return { id: res.response.user.id, headers: new Headers({ cookie }) };
-}
+const signUp = (name: string, email: string) => signInTestUser(auth, name, email);
 
 async function addChapter(id: string, userId: string, role: string) {
 	await db
@@ -36,12 +27,16 @@ async function addChapter(id: string, userId: string, role: string) {
 		.values({ id: `m-${id}-${userId}`, organizationId: id, userId, role, createdAt: new Date() });
 }
 
-afterEach(() => dropTestDb(db));
+afterEach(() => {
+	vi.unstubAllEnvs();
+	return dropTestDb(db);
+});
 
 beforeEach(async () => {
 	db = await createTestDb();
 	await seedTemplates(db, templateSeeds);
 	templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
+	enableTestSignIn();
 	auth = createAuth(db);
 });
 

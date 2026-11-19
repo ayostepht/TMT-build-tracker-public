@@ -125,7 +125,7 @@ describe('builds and drafts', () => {
 	});
 
 	it('is unlimited with a null limit and never runs the count', async () => {
-		vi.stubEnv('TMT_MODE', 'selfhost');
+		vi.stubEnv('QUOTA_BUILDS_PER_WORKSPACE', 'off');
 		for (let i = 0; i < 15; i++) await mk();
 		const count = vi.fn(() => 999);
 		await assertUnder(db, 'buildsPerWorkspace', count, { userId: 'u1' });

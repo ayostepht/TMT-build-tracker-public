@@ -1,5 +1,5 @@
 import { shareLinkFor } from '#lib/printers/share-link.ts';
-import { ApiError, requireEditor } from '#lib/server/access.ts';
+import { ApiError, requireEditor, requireNotDemo } from '#lib/server/access.ts';
 import { readJson, requireUserId, respond } from '#lib/server/api.ts';
 import { getDb } from '#lib/server/db/index.ts';
 import { resolveAllowed } from '#lib/server/printers/outbound.ts';
@@ -17,6 +17,7 @@ export const POST: RequestHandler = (event) =>
 	respond(async () => {
 		const db = getDb();
 		const userId = requireUserId(event);
+		requireNotDemo(event.locals.user);
 		const body = (await readJson(event)) as Record<string, unknown>;
 		const org = typeof body?.organizationId === 'string' ? body.organizationId : '';
 		if (!org) throw new ApiError(400, 'organizationId is required');

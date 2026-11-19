@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, afterEach } from 'vitest';
+import { beforeEach, describe, expect, it, afterEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { ApiError } from '../access';
 import { first, type Db } from '../db';
@@ -68,7 +68,10 @@ async function addRuns(
 	);
 }
 
-afterEach(() => dropTestDb(db));
+afterEach(() => {
+	vi.unstubAllEnvs();
+	return dropTestDb(db);
+});
 
 beforeEach(async () => {
 	db = await createTestDb();
@@ -155,6 +158,7 @@ describe('loadWorkspaceStats', () => {
 	});
 
 	it('handles 50 builds with 500 runs each', async () => {
+		vi.stubEnv('QUOTA_BUILDS_PER_WORKSPACE', 'off');
 		for (let i = 0; i < 50; i++) await addRuns(await mk('org1', `Build ${i}`), 500);
 		// Warm up once (statement preparation, JIT) so the timings are the steady cost.
 		await loadWorkspaceStats(db, 'org1', 'viewer', { now: NOW });

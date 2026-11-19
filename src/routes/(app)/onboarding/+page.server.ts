@@ -2,7 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { and, eq, gt } from 'drizzle-orm';
 import { getAuth } from '#lib/server/auth-instance.ts';
 import { mayUseInvitations } from '#lib/server/auth-policy.ts';
-import { appMode, signupMode } from '#lib/server/config.ts';
+import { ApiError, requireNotDemo } from '#lib/server/access.ts';
 import { first, getDb } from '#lib/server/db/index.ts';
 import { invitation, organization, user } from '#lib/server/db/schema.ts';
 import { slugify } from '#lib/server/teams.ts';
@@ -10,11 +10,8 @@ import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const email = locals.user!.email.toLowerCase();
-	// Public mode: only a provider-verified email may see or accept invitations.
-	if (
-		!mayUseInvitations({ publicMode: appMode() === 'public', signup: signupMode() }, locals.user!)
-	)
-		return { invitations: [] };
+	// Only a provider-verified email (never the demo) may see or accept invitations.
+	if (!mayUseInvitations(locals.user!)) return { invitations: [] };
 	const invitations = (
 		await getDb()
 			.select({
@@ -35,6 +32,12 @@ export const load: PageServerLoad = async ({ locals }) => {
 export const actions: Actions = {
 	create: async ({ request, locals }) => {
 		if (!locals.user) redirect(303, '/login');
+		try {
+			requireNotDemo(locals.user);
+		} catch (e) {
+			if (e instanceof ApiError) return fail(e.status, { error: e.message });
+			throw e;
+		}
 		const name = String((await request.formData()).get('name') ?? '').trim();
 		if (!name) return fail(400, { error: 'Give your chapter a name' });
 		const db = getDb();

@@ -285,23 +285,26 @@ describe('variants in the build view', () => {
 });
 
 describe('site admin', () => {
-	it('is the earliest user, or anyone in ADMIN_EMAILS (case-insensitive)', async () => {
+	it('is anyone with a verified email in ADMIN_EMAILS (case-insensitive), nobody else', async () => {
 		const empty = await createTestDb();
 		const add = async (id: string, email: string, t: number) =>
-			await empty.insert(user).values({ id, name: id, email, createdAt: new Date(t) });
+			await empty
+				.insert(user)
+				.values({ id, name: id, email, emailVerified: true, createdAt: new Date(t) });
 		await add('second', 'second@x.test', 2000);
 		await add('first', 'first@x.test', 1000);
 		await add('third', 'Third@X.test', 3000);
 		const prev = process.env.ADMIN_EMAILS;
 		try {
 			delete process.env.ADMIN_EMAILS;
-			expect(await isSiteAdmin(empty, { id: 'first', email: 'first@x.test' })).toBe(true);
-			expect(await isSiteAdmin(empty, { id: 'second', email: 'second@x.test' })).toBe(false);
-			await expect(
-				requireSiteAdmin(empty, { id: 'second', email: 'second@x.test' })
-			).rejects.toThrow(ApiError);
+			// No "first user" admin.
+			const first = { id: 'first', email: 'first@x.test', emailVerified: true };
+			expect(await isSiteAdmin(empty, first)).toBe(false);
+			await expect(requireSiteAdmin(empty, first)).rejects.toThrow(ApiError);
 			process.env.ADMIN_EMAILS = ' THIRD@x.test , other@x.test';
-			expect(await isSiteAdmin(empty, { id: 'third', email: 'Third@X.test' })).toBe(true);
+			const third = { id: 'third', email: 'Third@X.test', emailVerified: true };
+			expect(await isSiteAdmin(empty, third)).toBe(true);
+			expect(await isSiteAdmin(empty, { ...third, emailVerified: false })).toBe(false);
 			expect(await isSiteAdmin(empty, { id: 'second', email: 'second@x.test' })).toBe(false);
 		} finally {
 			if (prev === undefined) delete process.env.ADMIN_EMAILS;

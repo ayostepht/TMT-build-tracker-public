@@ -62,6 +62,7 @@ CREATE TABLE "user" (
 	"email" text NOT NULL,
 	"email_verified" boolean DEFAULT false NOT NULL,
 	"image" text,
+	"is_demo" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "user_email_unique" UNIQUE("email")
@@ -514,6 +515,7 @@ CREATE INDEX "member_organizationId_idx" ON "member" USING btree ("organization_
 CREATE INDEX "member_userId_idx" ON "member" USING btree ("user_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "organization_slug_uidx" ON "organization" USING btree ("slug");--> statement-breakpoint
 CREATE INDEX "session_userId_idx" ON "session" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "user_demo_created_idx" ON "user" USING btree ("is_demo","created_at");--> statement-breakpoint
 CREATE INDEX "verification_identifier_idx" ON "verification" USING btree ("identifier");--> statement-breakpoint
 CREATE INDEX "activity_build_idx" ON "activity" USING btree ("build_id","at");--> statement-breakpoint
 CREATE INDEX "build_photos_build_idx" ON "build_photos" USING btree ("build_id","created_at");--> statement-breakpoint

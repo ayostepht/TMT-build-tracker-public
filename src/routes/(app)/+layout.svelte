@@ -7,16 +7,20 @@
 	import { clearPrivateCaches } from '#lib/client/pwa.ts';
 	import AppMark from '#lib/components/AppMark.svelte';
 	import Toast from '#lib/components/Toast.svelte';
+	import DemoBanner from '#lib/components/demo/DemoBanner.svelte';
 	import { authClient } from '#lib/auth-client.ts';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
 
 	async function signOut() {
+		// Signing out of a demo deletes it on the server (see auth.ts).
+		const wasDemo = data.isDemo;
 		await authClient.signOut();
 		await clearPrivateCaches().catch(() => {});
 		await invalidateAll();
-		await goto(resolve('/login'));
+		// eslint-disable-next-line svelte/no-navigation-without-resolve
+		await goto(wasDemo ? '/login?notice=demo-ended' : resolve('/login'));
 	}
 
 	const showSwitcher = $derived(data.teams.length > 1 || data.invitationCount > 0);
@@ -173,6 +177,8 @@
 
 <div class="navprogress" class:on={progress} aria-hidden="true"></div>
 
+{#if data.isDemo && data.demoEndsAt}<DemoBanner endsAt={data.demoEndsAt} />{/if}
+
 <div class="wrap shell" class:has-tabs={!!current && !onSetup}>
 	<header class="topbar" bind:this={topbar} onfocusout={onTopbarFocusOut}>
 		<a class="brand shell-brand" href={resolve('/(app)/workspace')}
@@ -190,7 +196,7 @@
 						{/if}
 					</select>
 				</label>
-			{:else}
+			{:else if !data.isDemo}
 				<a class="btn sm create-chapter" href={resolve('/(app)/onboarding')}>Create a chapter</a>
 			{/if}
 		</div>
@@ -276,6 +282,12 @@
 					data-testid="nav-designs"
 					aria-current={page.url.pathname.startsWith('/designs') ? 'page' : undefined}>Designs</a
 				>
+				<a
+					class="navlink gallery-wide"
+					href="/gallery"
+					data-testid="nav-gallery"
+					aria-current={page.url.pathname.startsWith('/gallery') ? 'page' : undefined}>Gallery</a
+				>
 				<!-- eslint-enable svelte/no-navigation-without-resolve -->
 				{#if printersHref}
 					<a
@@ -345,14 +357,18 @@
 				{#if open === 'account'}
 					<div class="menu account" id="menu-account">
 						{#if data.user}<div class="menu-h">{data.user.email}</div>{/if}
-						{#if !showSwitcher}
+						{#if !showSwitcher && !data.isDemo}
 							<a class="phone-only" href={resolve('/(app)/onboarding')}>Create a chapter</a>
 						{/if}
 						{#if data.siteAdmin}
 							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 							<a href={resolve('/(app)/admin/templates') + fromQuery}>Kit admin</a>
 						{/if}
-						<a href={resolve('/(app)/account')} data-testid="account-link">Account</a>
+						<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+						<a class="gallery-narrow" href="/gallery">Gallery</a>
+						{#if !data.isDemo}<a href={resolve('/(app)/account')} data-testid="account-link"
+								>Account</a
+							>{/if}
 						<button type="button" onclick={signOut}>Sign out</button>
 					</div>
 				{/if}
@@ -652,6 +668,10 @@
 	.phone-only {
 		display: none !important;
 	}
+	/* The Gallery link sits in the top bar; on a narrow desktop bar it moves into the account menu. */
+	.gallery-narrow {
+		display: none;
+	}
 	.chapter select {
 		max-width: 170px;
 	}
@@ -732,6 +752,14 @@
 				overflow: hidden;
 				clip-path: inset(50%);
 				white-space: nowrap;
+			}
+		}
+		@container topbar (max-width: 800px) {
+			.gallery-wide {
+				display: none;
+			}
+			.gallery-narrow {
+				display: block;
 			}
 		}
 		@container topbar (max-width: 780px) {

@@ -25,21 +25,17 @@
 		{#if data.invitation.status !== 'pending'}
 			<p class="muted">This invitation is {data.invitation.status}.</p>
 		{:else if !data.signedIn}
-			{#if data.publicMode}
-				<p class="muted">
-					Sign in with the Google or GitHub account that uses the invited email address.
-				</p>
-				<a class="btn primary" href={resolve(`/login?redirect=${back}`)}>Sign in</a>
-			{:else if data.signup === 'closed'}
-				<p class="muted">
-					Sign in with the email address that was invited. Sign-up is closed on this server.
-				</p>
-				<a class="btn primary" href={resolve(`/login?redirect=${back}`)}>Sign in</a>
-			{:else}
-				<p class="muted">Sign in or create an account with the email address that was invited.</p>
-				<a class="btn primary" href={resolve(`/login?redirect=${back}`)}>Sign in</a>
-				<a class="btn" href={resolve(`/signup?redirect=${back}`)}>Create account</a>
-			{/if}
+			<p class="muted">
+				Sign in with the Google, GitHub or Discord account that uses the invited email address. You
+				come back to this page afterwards.
+			</p>
+			<a class="btn primary" href={resolve(`/login?redirect=${back}`)}>Sign in</a>
+		{:else if data.isDemo}
+			<div class="error" role="alert">
+				You are in the demo, which cannot join teams. Sign in with your own account to accept this
+				invitation.
+			</div>
+			<a class="btn primary" href={resolve(`/login?redirect=${back}`)}>Sign in</a>
 		{:else if data.needsVerifiedEmail}
 			<div class="error" role="alert">
 				Your email address is not verified by your sign-in provider, so this invitation cannot be

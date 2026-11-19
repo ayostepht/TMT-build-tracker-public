@@ -57,7 +57,7 @@ beforeEach(async () => {
 });
 
 describe('cleanupAuthData', () => {
-	it('clears IPs and tokens, keeps OIDC id token, password and scope', async () => {
+	it('clears IPs, tokens and id tokens, keeps password and scope', async () => {
 		expect(await cleanupAuthData(db)).toEqual({ sessions: 1, accounts: 3 });
 		const s = Object.fromEntries((await db.select().from(session)).map((r) => [r.id, r.ipAddress]));
 		expect(s).toEqual({ s1: '', s2: '', s3: null });
@@ -68,7 +68,7 @@ describe('cleanupAuthData', () => {
 			refreshToken: null,
 			accessTokenExpiresAt: null,
 			refreshTokenExpiresAt: null,
-			idToken: 'fake-id',
+			idToken: null,
 			scope: 'openid,email',
 			providerId: 'oidc',
 			accountId: 'acc-a2'

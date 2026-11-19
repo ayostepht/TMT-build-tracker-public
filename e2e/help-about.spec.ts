@@ -57,6 +57,7 @@ test('login and signup have no app footer', async ({ page }) => {
 	await page.goto('/login');
 	await expect(page.getByTestId('app-footer')).toHaveCount(0);
 	await page.goto('/signup');
+	await expect(page).toHaveURL(/\/login$/);
 	await expect(page.getByTestId('app-footer')).toHaveCount(0);
 });
 

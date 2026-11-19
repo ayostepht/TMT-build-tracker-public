@@ -3,18 +3,27 @@ import { boolean, index, pgTable, text, timestamp, uniqueIndex } from 'drizzle-o
 
 const TS = { withTimezone: true, mode: 'date' } as const;
 
-export const user = pgTable('user', {
-	id: text('id').primaryKey(),
-	name: text('name').notNull(),
-	email: text('email').notNull().unique(),
-	emailVerified: boolean('email_verified').default(false).notNull(),
-	image: text('image'),
-	createdAt: timestamp('created_at', TS).defaultNow().notNull(),
-	updatedAt: timestamp('updated_at', TS)
-		.defaultNow()
-		.$onUpdate(() => /* @__PURE__ */ new Date())
-		.notNull()
-});
+export const user = pgTable(
+	'user',
+	{
+		id: text('id').primaryKey(),
+		name: text('name').notNull(),
+		email: text('email').notNull().unique(),
+		emailVerified: boolean('email_verified').default(false).notNull(),
+		image: text('image'),
+		/**
+		 * Throwaway demo sandbox user (see `server/demo`): created by the server only (the Better Auth
+		 * field is `input: false`), never counted as an account, deleted after `DEMO_TTL_HOURS`.
+		 */
+		isDemo: boolean('is_demo').default(false).notNull(),
+		createdAt: timestamp('created_at', TS).defaultNow().notNull(),
+		updatedAt: timestamp('updated_at', TS)
+			.defaultNow()
+			.$onUpdate(() => /* @__PURE__ */ new Date())
+			.notNull()
+	},
+	(table) => [index('user_demo_created_idx').on(table.isDemo, table.createdAt)]
+);
 
 export const session = pgTable(
 	'session',

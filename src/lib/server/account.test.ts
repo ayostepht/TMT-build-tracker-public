@@ -6,6 +6,7 @@ import { and, eq } from 'drizzle-orm';
 import { createAuth, type Auth } from './auth';
 import { ApiError } from './access';
 import { decideNewUser } from './auth-policy';
+import { enableTestSignIn, signInTestUser } from './auth-test-helpers';
 import { deleteAccount, exportAccountData, planAccountDeletion } from './account';
 import { createBuild } from './builds/create';
 import { first, type Db } from './db';
@@ -37,7 +38,10 @@ beforeEach(async () => {
 	dir = mkdtempSync(join(tmpdir(), 'tmt-account-'));
 	vi.stubEnv('DATA_DIR', dir);
 	vi.stubEnv('BETTER_AUTH_SECRET', 'a'.repeat(40));
-	for (const k of ['TMT_MODE', 'PUBLIC_URL', 'ADMIN_EMAILS', 'SIGNUP']) vi.stubEnv(k, '');
+	for (const k of ['TMT_MODE', 'PUBLIC_URL']) vi.stubEnv(k, '');
+	// The site admin of these tests (a verified address in ADMIN_EMAILS).
+	vi.stubEnv('ADMIN_EMAILS', 'admin@example.test');
+	enableTestSignIn();
 	db = await createTestDb();
 	await seedTemplates(db, templateSeeds);
 	templateId = (await first(db.select({ id: templates.id }).from(templates)))!.id;
@@ -49,15 +53,8 @@ afterEach(async () => {
 });
 
 async function signUp(name: string, email: string) {
-	const res = await auth.api.signUpEmail({
-		body: { name, email, password: 'correct-horse-battery' },
-		returnHeaders: true
-	});
-	const cookie = res.headers
-		.getSetCookie()
-		.map((c) => c.split(';')[0])
-		.join('; ');
-	return { id: res.response.user.id, cookie };
+	const u = await signInTestUser(auth, name, email);
+	return { id: u.id, cookie: u.headers.get('cookie')! };
 }
 
 /** A real request through Better Auth's handler, as the browser would send it. */
@@ -73,7 +70,7 @@ function post(path: string, cookie: string, body: unknown) {
 
 describe('organization quotas through the plugin endpoints', () => {
 	it('chaptersPerUser refuses the second chapter with a sentence; personal does not count', async () => {
-		await signUp('Admin', 'admin@example.test'); // first user is the site admin: exempt
+		await signUp('Admin', 'admin@example.test'); // a site admin is exempt
 		const u = await signUp('Pat', 'pat@example.test');
 		vi.stubEnv('QUOTA_CHAPTERS_PER_USER', '1');
 		const a = await post('/organization/create', u.cookie, { name: 'One', slug: 'one' });
@@ -165,56 +162,44 @@ describe('organization quotas through the plugin endpoints', () => {
 });
 
 describe('account caps', () => {
-	it('refuses new accounts at accountsTotal but lets admins and existing users in', async () => {
+	const verified = (email: string) => ({ email, emailVerified: true });
+
+	it('refuses new accounts at accountsTotal but lets admins in', async () => {
 		await signUp('First', 'first@example.test');
 		vi.stubEnv('QUOTA_ACCOUNTS_TOTAL', '1');
-		const cfg = { publicMode: false, signup: 'open' as const };
-		const d = await decideNewUser(db, { email: 'new@example.test' }, cfg);
+		const d = await decideNewUser(db, verified('new@example.test'));
 		expect(d).toMatchObject({ ok: false, code: 'signups_paused' });
 		expect(d.ok ? '' : d.message).toBe('This server is not taking new accounts right now.');
-		await expect(
-			auth.api.signUpEmail({
-				body: { name: 'New', email: 'new@example.test', password: 'correct-horse-battery' }
-			})
-		).rejects.toThrow('This server is not taking new accounts right now.');
-		// existing user still signs in
-		await expect(
-			auth.api.signInEmail({
-				body: { email: 'first@example.test', password: 'correct-horse-battery' }
-			})
-		).resolves.toBeTruthy();
 		vi.stubEnv('ADMIN_EMAILS', 'boss@example.test');
-		expect((await decideNewUser(db, { email: 'boss@example.test' }, cfg)).ok).toBe(true);
+		expect((await decideNewUser(db, verified('boss@example.test'))).ok).toBe(true);
+	});
+
+	it('demo users are not accounts: they neither count nor are refused by the caps', async () => {
+		vi.stubEnv('QUOTA_ACCOUNTS_TOTAL', '1');
+		await signUp('First', 'first@example.test');
+		await db.insert(user).values({ id: 'demo1', name: 'D', email: 'd@demo.invalid', isDemo: true });
+		expect((await decideNewUser(db, { isDemo: true })).ok).toBe(true);
+		// the demo row does not use up the cap for real people either
+		vi.stubEnv('QUOTA_ACCOUNTS_TOTAL', '2');
+		expect((await decideNewUser(db, verified('new@example.test'))).ok).toBe(true);
 	});
 
 	it('signupsPerDay counts only the last 24 hours', async () => {
 		await signUp('First', 'first@example.test');
 		vi.stubEnv('QUOTA_SIGNUPS_PER_DAY', '1');
-		const cfg = { publicMode: false, signup: 'open' as const };
-		expect((await decideNewUser(db, { email: 'n@example.test' }, cfg)).ok).toBe(false);
+		expect((await decideNewUser(db, verified('n@example.test'))).ok).toBe(false);
 		expect(
-			(
-				await decideNewUser(
-					db,
-					{ email: 'n@example.test' },
-					cfg,
-					new Date(Date.now() + 25 * 3600 * 1000)
-				)
-			).ok
+			(await decideNewUser(db, verified('n@example.test'), new Date(Date.now() + 25 * 3600 * 1000)))
+				.ok
 		).toBe(true);
 	});
 
-	it('public mode keeps requiring verified emails, caps apply after', async () => {
+	it('requires a verified email, caps apply after', async () => {
 		vi.stubEnv('QUOTA_ACCOUNTS_TOTAL', '0');
-		const cfg = { publicMode: true, signup: 'open' as const };
 		expect(
-			await decideNewUser(db, { email: 'a@example.test', emailVerified: false }, cfg)
-		).toMatchObject({
-			code: 'email_not_verified'
-		});
-		expect(
-			await decideNewUser(db, { email: 'a@example.test', emailVerified: true }, cfg)
-		).toMatchObject({
+			await decideNewUser(db, { email: 'a@example.test', emailVerified: false })
+		).toMatchObject({ code: 'email_not_verified' });
+		expect(await decideNewUser(db, verified('a@example.test'))).toMatchObject({
 			code: 'signups_paused'
 		});
 	});
@@ -582,7 +567,7 @@ describe('last site admin', () => {
 	it('lets them go once another account is a site admin (ADMIN_EMAILS)', async () => {
 		const admin = await signUp('Admin', 'admin@example.test');
 		await signUp('Pat', 'pat@example.test');
-		vi.stubEnv('ADMIN_EMAILS', 'pat@example.test');
+		vi.stubEnv('ADMIN_EMAILS', 'admin@example.test, pat@example.test');
 		await expect(deleteAccount(db, admin.id)).resolves.toBeTruthy();
 	});
 
@@ -591,8 +576,7 @@ describe('last site admin', () => {
 		await expect(deleteAccount(db, only.id)).rejects.toMatchObject({ code: 'only_account' });
 	});
 
-	it('public mode: an unverified listed email is not an admin, so it is not the last one', async () => {
-		vi.stubEnv('TMT_MODE', 'public');
+	it('an unverified listed email is not an admin, so it is not the last one', async () => {
 		vi.stubEnv('ADMIN_EMAILS', 'boss@example.test, real@example.test');
 		const mk = async (id: string, verified: boolean) =>
 			await db

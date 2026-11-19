@@ -33,7 +33,15 @@ async function load(vars: Record<string, string | undefined> = {}) {
 		'OIDC_CLIENT_SECRET',
 		'BETTER_AUTH_SECRET',
 		'TMT_MODE',
-		'SIGNUP',
+		'TRUST_CLOUDFLARE',
+		'E2E_AUTH',
+		'DATABASE_URL',
+		'DISCORD_CLIENT_ID',
+		'DISCORD_CLIENT_SECRET',
+		'DEMO_MAX_LIVE',
+		'DEMO_PER_IP_PER_HOUR',
+		'DEMO_TTL_HOURS',
+		'DEMO_BUILDS',
 		'GOOGLE_CLIENT_ID',
 		'GOOGLE_CLIENT_SECRET',
 		'GITHUB_CLIENT_ID',
@@ -65,15 +73,12 @@ afterEach(() => {
 const GOOD_SECRET = 'a3f1c9d2e47b58061f2a9c3d7e8b4a50c1d2e3f4a5b6c7d8e9f00112233445566';
 
 describe('appMode', () => {
-	it('defaults to selfhost', async () => {
-		const c = await load();
-		expect(c.appMode()).toBe('selfhost');
-		expect(c.isPublicMode()).toBe(false);
-	});
-	it('accepts public', async () => {
-		const c = await load({ TMT_MODE: 'public' });
-		expect(c.appMode()).toBe('public');
-		expect(c.isPublicMode()).toBe(true);
+	it('is always public: unset and the old selfhost value both behave as the hosted app', async () => {
+		for (const v of [undefined, '', 'selfhost', 'public']) {
+			const c = await load(v === undefined ? {} : { TMT_MODE: v });
+			expect(c.appMode()).toBe('public');
+			expect(c.isPublicMode()).toBe(true);
+		}
 	});
 	it('throws on an unknown value', async () => {
 		const c = await load({ TMT_MODE: 'hosted' });
@@ -81,20 +86,22 @@ describe('appMode', () => {
 	});
 });
 
-describe('signupMode', () => {
-	it('defaults to open and accepts the three values', async () => {
-		expect((await load()).signupMode()).toBe('open');
-		expect((await load({ SIGNUP: 'invite' })).signupMode()).toBe('invite');
-		expect((await load({ SIGNUP: 'closed' })).signupMode()).toBe('closed');
-	});
-	it('throws on an invalid value', async () => {
-		await expect(load({ SIGNUP: 'maybe' }).then((c) => c.signupMode())).rejects.toThrow(/SIGNUP/);
-	});
-});
-
 describe('socialProviders', () => {
 	it('is empty when nothing is set', async () => {
 		expect((await load()).socialProviders()).toEqual({});
+	});
+	it('enables Discord when both of its variables are set, in a fixed order', async () => {
+		const c = await load({
+			DISCORD_CLIENT_ID: 'd',
+			DISCORD_CLIENT_SECRET: 'e',
+			GITHUB_CLIENT_ID: 'g',
+			GITHUB_CLIENT_SECRET: 'h'
+		});
+		expect(c.enabledProviderIds()).toEqual(['github', 'discord']);
+		expect(c.socialProviders().discord).toEqual({ clientId: 'd', clientSecret: 'e' });
+		await expect(load({ DISCORD_CLIENT_ID: 'd' }).then((x) => x.socialProviders())).rejects.toThrow(
+			/Discord sign-in is half configured/
+		);
 	});
 	it('returns complete pairs', async () => {
 		const c = await load({
@@ -162,7 +169,6 @@ describe('publicUrl', () => {
 });
 
 const PUBLIC_OK = {
-	TMT_MODE: 'public',
 	PUBLIC_URL: 'https://tmt.example.com',
 	GOOGLE_CLIENT_ID: 'a',
 	GOOGLE_CLIENT_SECRET: 'b',
@@ -171,24 +177,39 @@ const PUBLIC_OK = {
 };
 
 describe('validatePublicMode', () => {
-	it('is empty outside public mode', async () => {
-		expect((await load()).validatePublicMode()).toEqual([]);
+	it('is relaxed in development and test: nothing is required', async () => {
+		for (const NODE_ENV of ['development', 'test'])
+			expect((await load({ NODE_ENV })).validatePublicMode()).toEqual([]);
 	});
-	it('lists every problem when nothing is set', async () => {
-		const p = (await load({ TMT_MODE: 'public' })).validatePublicMode();
+	it('lists every problem when nothing is set in production', async () => {
+		const p = (await load({ NODE_ENV: 'production' })).validatePublicMode();
 		expect(p.join('\n')).toMatch(/PUBLIC_URL must be set/);
 		expect(p.join('\n')).toMatch(/GOOGLE_CLIENT_ID/);
 		expect(p.join('\n')).toMatch(/trusted reverse proxy/);
 		expect(p.join('\n')).toMatch(/ADMIN_EMAILS/);
 	});
 	it('is clean with everything set', async () => {
-		expect((await load(PUBLIC_OK)).validatePublicMode()).toEqual([]);
+		expect((await load({ ...PUBLIC_OK, NODE_ENV: 'production' })).validatePublicMode()).toEqual([]);
+		expect(
+			(
+				await load({
+					...PUBLIC_OK,
+					DISCORD_CLIENT_ID: 'd',
+					DISCORD_CLIENT_SECRET: 'e',
+					GOOGLE_CLIENT_ID: undefined,
+					GOOGLE_CLIENT_SECRET: undefined,
+					NODE_ENV: 'production'
+				})
+			).validatePublicMode()
+		).toEqual([]);
 	});
 	it('requires https and names the variable the origin came from', async () => {
 		const { PUBLIC_URL: _drop, ...rest } = PUBLIC_OK;
 		void _drop;
-		const p = (await load({ ...rest, ORIGIN: 'http://tmt.example.com' })).validatePublicMode();
-		expect(p).toEqual(['ORIGIN must be an https:// address in public mode.']);
+		const p = (
+			await load({ ...rest, NODE_ENV: 'production', ORIGIN: 'http://tmt.example.com' })
+		).validatePublicMode();
+		expect(p).toEqual(['ORIGIN must be an https:// address.']);
 	});
 	it('rejects credentials, a path, localhost and IP literals', async () => {
 		const cases: [string, RegExp][] = [
@@ -202,18 +223,24 @@ describe('validatePublicMode', () => {
 			['https://[2001:db8::1]', /IP address/]
 		];
 		for (const [url, re] of cases) {
-			const p = (await load({ ...PUBLIC_OK, PUBLIC_URL: url })).validatePublicMode();
+			const p = (
+				await load({ ...PUBLIC_OK, NODE_ENV: 'production', PUBLIC_URL: url })
+			).validatePublicMode();
 			expect(p.join('\n')).toMatch(re);
 			expect(p.join('\n')).not.toContain('pw@');
 		}
 	});
 	it('allows a trailing slash', async () => {
-		const c = await load({ ...PUBLIC_OK, PUBLIC_URL: 'https://tmt.example.com/' });
+		const c = await load({
+			...PUBLIC_OK,
+			NODE_ENV: 'production',
+			PUBLIC_URL: 'https://tmt.example.com/'
+		});
 		expect(c.validatePublicMode()).toEqual([]);
 	});
 	it('rejects generic OIDC', async () => {
 		const p = (
-			await load({ ...PUBLIC_OK, OIDC_ISSUER: 'https://sso.example.com' })
+			await load({ ...PUBLIC_OK, NODE_ENV: 'production', OIDC_ISSUER: 'https://sso.example.com' })
 		).validatePublicMode();
 		expect(p).toHaveLength(1);
 		expect(p[0]).toMatch(/OIDC/);
@@ -221,30 +248,42 @@ describe('validatePublicMode', () => {
 	it('requires a trusted proxy and an admin', async () => {
 		const { ADDRESS_HEADER: _a, ...noProxy } = PUBLIC_OK;
 		void _a;
-		expect((await load(noProxy)).validatePublicMode()[0]).toMatch(/trusted reverse proxy/);
+		expect((await load({ ...noProxy, NODE_ENV: 'production' })).validatePublicMode()[0]).toMatch(
+			/trusted reverse proxy/
+		);
+		expect(
+			(
+				await load({ ...noProxy, NODE_ENV: 'production', TRUST_CLOUDFLARE: '1' })
+			).validatePublicMode()
+		).toEqual([]);
 		const { ADMIN_EMAILS: _b, ...noAdmin } = PUBLIC_OK;
 		void _b;
-		expect((await load(noAdmin)).validatePublicMode()[0]).toMatch(/ADMIN_EMAILS/);
+		expect((await load({ ...noAdmin, NODE_ENV: 'production' })).validatePublicMode()[0]).toMatch(
+			/ADMIN_EMAILS/
+		);
 	});
 	it('reports a half-configured provider and a bad depth as problems instead of throwing', async () => {
 		const p = (
-			await load({ ...PUBLIC_OK, GOOGLE_CLIENT_SECRET: undefined, XFF_DEPTH: 'x' })
+			await load({
+				...PUBLIC_OK,
+				NODE_ENV: 'production',
+				GOOGLE_CLIENT_SECRET: undefined,
+				XFF_DEPTH: 'x'
+			})
 		).validatePublicMode();
 		expect(p.join('\n')).toMatch(/half configured/);
 		expect(p.join('\n')).toMatch(/XFF_DEPTH/);
 	});
 	it('reports malformed write rate values, accepts digits and off', async () => {
 		const bad = (
-			await load({ BETTER_AUTH_SECRET: GOOD_SECRET, WRITE_RATE_PER_MIN: 'fast' })
+			await load({ NODE_ENV: 'development', WRITE_RATE_PER_MIN: 'fast' })
 		).bootProblems();
 		expect(bad.join('\n')).toMatch(/WRITE_RATE_PER_MIN/);
-		const bad2 = (
-			await load({ BETTER_AUTH_SECRET: GOOD_SECRET, WRITE_RATE_BURST: '-1' })
-		).bootProblems();
+		const bad2 = (await load({ NODE_ENV: 'development', WRITE_RATE_BURST: '-1' })).bootProblems();
 		expect(bad2.join('\n')).toMatch(/WRITE_RATE_BURST/);
 		const ok = (
 			await load({
-				BETTER_AUTH_SECRET: GOOD_SECRET,
+				NODE_ENV: 'development',
 				WRITE_RATE_PER_MIN: 'off',
 				WRITE_RATE_BURST: '30'
 			})
@@ -271,10 +310,6 @@ describe('authSecret', () => {
 		expect(() => c.authSecret()).toThrow();
 		const d = await load({ npm_lifecycle_event: 'build' });
 		expect(() => d.authSecret()).toThrow();
-	});
-	it('is always enforced in public mode, even in development', async () => {
-		const c = await load({ NODE_ENV: 'development', TMT_MODE: 'public' });
-		expect(() => c.authSecret()).toThrow();
 	});
 	it('rejects a short secret without echoing it', async () => {
 		const c = await load({ ...prod, BETTER_AUTH_SECRET: 'tooshortvalue' });
@@ -330,8 +365,9 @@ describe('bootProblems', () => {
 	});
 	it('reports a missing secret when NODE_ENV is unset, without echoing', async () => {
 		const p = (await load()).bootProblems();
-		expect(p).toHaveLength(1);
 		expect(p[0]).toMatch(/BETTER_AUTH_SECRET/);
+		expect(p.join('\n')).toMatch(/PUBLIC_URL/);
+		expect(p.join('\n')).toMatch(/ADMIN_EMAILS/);
 	});
 	it('never contains the secret', async () => {
 		const p = (await load({ BETTER_AUTH_SECRET: 'change-me' })).bootProblems();
@@ -339,37 +375,52 @@ describe('bootProblems', () => {
 		expect(p.join('\n')).not.toContain('change-me');
 	});
 	it('is empty with a strong secret', async () => {
-		expect((await load({ BETTER_AUTH_SECRET: GOOD_SECRET })).bootProblems()).toEqual([]);
+		expect(
+			(
+				await load({ ...PUBLIC_OK, BETTER_AUTH_SECRET: GOOD_SECRET, NODE_ENV: 'production' })
+			).bootProblems()
+		).toEqual([]);
 	});
 	it('lists public-mode problems alongside the secret', async () => {
-		const p = (await load({ TMT_MODE: 'public' })).bootProblems();
+		const p = (await load({ NODE_ENV: 'production' })).bootProblems();
 		expect(p.length).toBeGreaterThanOrEqual(5);
 	});
-	it('reports invalid mode, signup and depth values', async () => {
-		expect(
-			(await load({ TMT_MODE: 'x', BETTER_AUTH_SECRET: GOOD_SECRET })).bootProblems()[0]
-		).toMatch(/TMT_MODE/);
+	it('reports invalid mode and depth values', async () => {
+		expect((await load({ TMT_MODE: 'x', NODE_ENV: 'development' })).bootProblems()[0]).toMatch(
+			/TMT_MODE/
+		);
 		const p = (
 			await load({
-				BETTER_AUTH_SECRET: GOOD_SECRET,
-				SIGNUP: 'maybe',
+				NODE_ENV: 'development',
 				ADDRESS_HEADER: 'x-forwarded-for',
 				XFF_DEPTH: '2abc'
 			})
 		).bootProblems();
-		expect(p.join('\n')).toMatch(/SIGNUP/);
 		expect(p.join('\n')).toMatch(/XFF_DEPTH/);
+	});
+	it('refuses the test sign-in seam outside NODE_ENV=test and a _e2e or _test database', async () => {
+		const p = (name: string, env: Record<string, string>) =>
+			load({ NODE_ENV: 'development', E2E_AUTH: '1', ...env }).then((c) =>
+				c.bootProblems().join('\n')
+			);
+		expect(await p('prod', { NODE_ENV: 'production' })).toMatch(/only with NODE_ENV=test/);
+		expect(await p('dev', {})).toMatch(/only with NODE_ENV=test/);
+		expect(
+			await p('db', { NODE_ENV: 'test', DATABASE_URL: 'postgres://u:p@h:5432/tmt_prod' })
+		).toMatch(/ends in _e2e or _test/);
+		expect(await p('bad', { NODE_ENV: 'test', E2E_AUTH: 'yes' })).toMatch(/E2E_AUTH must be 1/);
+		expect(
+			await p('ok', { NODE_ENV: 'test', DATABASE_URL: 'postgres://u:p@h:5432/tmt_e2e' })
+		).not.toMatch(/E2E_AUTH/);
+		const off = await load({ NODE_ENV: 'production', E2E_AUTH: '0' });
+		expect(off.e2eAuthEnabled()).toBe(false);
 	});
 });
 
 describe('quotas', () => {
-	it('has no limits in selfhost mode', async () => {
+	it('has finite defaults, also with the old selfhost value', async () => {
+		expect((await load({ TMT_MODE: 'selfhost' })).quotas().buildsPerWorkspace).toBe(10);
 		const q = (await load()).quotas();
-		expect(Object.values(q).every((v) => v === null)).toBe(true);
-	});
-
-	it('has finite defaults in public mode', async () => {
-		const q = (await load({ TMT_MODE: 'public' })).quotas();
 		expect(q).toEqual({
 			buildsPerWorkspace: 10,
 			draftsPerUser: 20,
@@ -391,10 +442,9 @@ describe('quotas', () => {
 		});
 	});
 
-	it('overrides a field with digits, 0 or off, in either mode', async () => {
+	it('overrides a field with digits, 0 or off', async () => {
 		const hosted = (
 			await load({
-				TMT_MODE: 'public',
 				QUOTA_BUILDS_PER_WORKSPACE: '40',
 				QUOTA_PHOTOS_PER_BUILD: 'off',
 				QUOTA_CHAPTERS_PER_USER: '0'
@@ -414,7 +464,7 @@ describe('quotas', () => {
 			(await load({ TMT_MODE: 'public', QUOTA_UPLOAD_MB_PER_USER: 'off' })).quotas()
 				.uploadBytesPerUser
 		).toBeNull();
-		expect(self.buildsPerWorkspace).toBeNull();
+		expect(self.buildsPerWorkspace).toBe(10);
 	});
 
 	it('treats an empty variable as unset', async () => {
@@ -487,9 +537,8 @@ describe('link printer totals and manual printer cap', () => {
 
 describe('maxThreeMfBytes', () => {
 	const MB = 1024 * 1024;
-	it('defaults to 1024 MB in selfhost and 256 MB in public mode; MAX_3MF_MB wins', async () => {
-		expect((await load()).maxThreeMfBytes()).toBe(1024 * MB);
-		expect((await load({ TMT_MODE: 'public' })).maxThreeMfBytes()).toBe(256 * MB);
+	it('defaults to 256 MB; MAX_3MF_MB wins', async () => {
+		expect((await load()).maxThreeMfBytes()).toBe(256 * MB);
 		expect((await load({ TMT_MODE: 'public', MAX_3MF_MB: '600' })).maxThreeMfBytes()).toBe(
 			600 * MB
 		);
@@ -499,9 +548,8 @@ describe('maxThreeMfBytes', () => {
 
 describe('minFreeDiskBytes and diskHasRoom', () => {
 	const MB = 1024 * 1024;
-	it('is off in selfhost and 2048 MB in public mode; the variable wins', async () => {
-		expect((await load()).minFreeDiskBytes()).toBe(0);
-		expect((await load({ TMT_MODE: 'public' })).minFreeDiskBytes()).toBe(2048 * MB);
+	it('is 2048 MB by default; the variable wins', async () => {
+		expect((await load()).minFreeDiskBytes()).toBe(2048 * MB);
 		expect((await load({ TMT_MODE: 'public', MIN_FREE_DISK_MB: '500' })).minFreeDiskBytes()).toBe(
 			500 * MB
 		);
@@ -542,10 +590,10 @@ describe('bodyLimitWarning', () => {
 	});
 
 	it('warns when BODY_SIZE_LIMIT is unset or below MAX_3MF_MB', async () => {
-		expect((await load({ NODE_ENV: 'production' })).bodyLimitWarning()).toMatch(/not set.*1025M/);
+		expect((await load({ NODE_ENV: 'production' })).bodyLimitWarning()).toMatch(/not set.*257M/);
 		expect(
 			(await load({ NODE_ENV: 'production', BODY_SIZE_LIMIT: '512K' })).bodyLimitWarning()
-		).toMatch(/at least 1025M/);
+		).toMatch(/at least 257M/);
 		expect(
 			(
 				await load({ NODE_ENV: 'production', BODY_SIZE_LIMIT: '1100M', MAX_3MF_MB: '2048' })

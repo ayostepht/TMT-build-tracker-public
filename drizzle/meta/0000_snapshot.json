@@ -1,5 +1,5 @@
 {
-  "id": "7034bae0-5e11-47fe-b24b-5e0b3ed76360",
+  "id": "71aa7bab-c3a2-4875-8227-487d3a1c8436",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -563,6 +563,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "is_demo": {
+          "name": "is_demo",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -578,7 +585,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "user_demo_created_idx": {
+          "name": "user_demo_created_idx",
+          "columns": [
+            {
+              "expression": "is_demo",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {

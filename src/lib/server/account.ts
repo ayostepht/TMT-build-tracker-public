@@ -252,7 +252,8 @@ export const ONLY_ACCOUNT_MESSAGE =
 export async function siteBlock(db: DbOrTx, userId: string): Promise<AccountDeletionError | null> {
 	const all = await db
 		.select({ id: user.id, email: user.email, emailVerified: user.emailVerified })
-		.from(user);
+		.from(user)
+		.where(eq(user.isDemo, false));
 	const me = all.find((x) => x.id === userId);
 	if (!me) return null;
 	const others = all.filter((x) => x.id !== userId);
@@ -286,18 +287,28 @@ export interface DeletionResult {
  * chapter that has other members. The caller has already checked who is asking (typed email,
  * fresh sign-in).
  */
-export async function deleteAccount(db: Db, userId: string): Promise<DeletionResult> {
+export async function deleteAccount(
+	db: Db,
+	userId: string,
+	opts: { demo?: boolean } = {}
+): Promise<DeletionResult> {
 	let plan = emptyPlan();
 	const result: DeletionResult = { deletedWorkspaces: [], leftChapters: [] };
 	let designIds: string[] = [];
 
 	await db.transaction(async (tx) => {
-		// Same lock as granting/revoking site admins: the last-admin check reads the whole admin set.
-		await advisoryLock(tx, 'site-admins');
 		const u = await first(tx.select().from(user).where(eq(user.id, userId)));
 		if (!u) throw new ApiError(404, 'Not found');
-		const site = await siteBlock(tx, userId);
-		if (site) throw site;
+		// The demo path only ever deletes demo users (checked on the row, never trusted from the caller),
+		// and a demo is never a site admin, so it skips the site-wide checks and their lock.
+		if (opts.demo) {
+			if (!u.isDemo) throw new ApiError(403, 'Not a demo account');
+		} else {
+			// Same lock as granting/revoking site admins: the last-admin check reads the whole admin set.
+			await advisoryLock(tx, 'site-admins');
+			const site = await siteBlock(tx, userId);
+			if (site) throw site;
+		}
 		const fates = await planAccountDeletion(tx, userId);
 		const blocked = fates.filter((f) => f.fate === 'blocked').map((f) => f.name);
 		if (blocked.length) throw new ApiError(409, blockedMessage(blocked));

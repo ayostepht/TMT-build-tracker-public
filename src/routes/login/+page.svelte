@@ -1,137 +1,174 @@
 <script lang="ts">
-	import AppMark from '#lib/components/AppMark.svelte';
-	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { authClient } from '#lib/auth-client.ts';
+	import ProviderMark from '#lib/components/demo/ProviderMark.svelte';
+	import SiteFooter from '#lib/components/site/SiteFooter.svelte';
+	import SiteHeader from '#lib/components/site/SiteHeader.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
-	let email = $state('');
-	let password = $state('');
+	let busy = $state<string | null>(null);
 	let error = $state('');
-	let busy = $state(false);
+
+	const NAMES = { google: 'Google', github: 'GitHub', discord: 'Discord' } as const;
 
 	// Failed round trips come back to this page with ?error=<code>.
 	const errorBack = $derived(
 		data.redirectTo ? `/login?redirect=${encodeURIComponent(data.redirectTo)}` : '/login'
 	);
 
-	async function submit(e: SubmitEvent) {
-		e.preventDefault();
-		busy = true;
+	async function signIn(provider: 'google' | 'github' | 'discord') {
+		busy = provider;
 		error = '';
-		const res = await authClient.signIn.email({ email, password });
-		busy = false;
-		if (res.error) {
-			error = res.error.message ?? 'Sign in failed';
-			return;
-		}
-		// Read the target before invalidating: the reload re-runs this page's load, which
-		// redirects (signed in) and replaces `data`, so reading it afterwards gave undefined.
-		const dest = data.redirectTo ?? resolve('/(app)/workspace');
-		await invalidateAll();
 		// redirectTo is validated server-side (same-origin relative path only)
-		// eslint-disable-next-line svelte/no-navigation-without-resolve
-		await goto(dest);
-	}
-
-	async function sso() {
-		await authClient.signIn.social({
-			provider: 'oidc',
-			callbackURL: data.redirectTo ?? '/workspace',
-			errorCallbackURL: errorBack
-		});
-	}
-
-	async function social(provider: 'google' | 'github') {
-		await authClient.signIn.social({
+		const res = await authClient.signIn.social({
 			provider,
 			callbackURL: data.redirectTo ?? '/workspace',
 			errorCallbackURL: errorBack
 		});
+		// On success the browser is already on its way to the provider.
+		if (res?.error) {
+			error = res.error.message ?? 'Sign-in did not start. Please try again.';
+			busy = null;
+		}
 	}
 </script>
 
 <svelte:head><title>Sign in · TMT Build Tracker</title></svelte:head>
 
-<main id="main" class="wrap" tabindex="-1">
-	<div class="card auth">
-		<div>
-			<div class="kicker auth-brand"><AppMark size={24} />TMT Build Tracker</div>
-			<h1>Sign in</h1>
-		</div>
-		{#if data.notice}<p role="status">{data.notice}</p>{/if}
-		{#if error}<div class="error" role="alert">{error}</div>{/if}
-		{#if data.accountsPaused}
-			<p class="muted" role="status" data-testid="accounts-paused">
-				This server is not taking new accounts right now. You can still sign in if you already have
-				one.
+<div class="login-page">
+	<SiteHeader signedIn={false} />
+	<main id="main" tabindex="-1" class="login-main">
+		<section class="login-card" aria-labelledby="login-h">
+			<p class="login-kicker">TMT Build Tracker</p>
+			<h1 id="login-h">Sign in</h1>
+			<p class="login-lede">
+				Keep one chair's build in one place: every part, every plate, from printed to assembled to
+				handed off, shared with your team.
 			</p>
-		{/if}
-		{#if data.authError}<div class="error" role="alert">{data.authError}</div>{/if}
-		{#if data.publicMode}
-			{#each data.providers as p (p)}
-				<button class="btn primary" onclick={() => social(p)}
-					>Continue with {p === 'google' ? 'Google' : 'GitHub'}</button
-				>
-			{:else}
-				<p class="muted">Sign-in is not configured on this server yet.</p>
-			{/each}
-			<p class="muted">New here? Signing in with Google or GitHub creates your account.</p>
-		{:else}
-			<form class="stack" onsubmit={submit}>
-				<label class="field"
-					>Email<input type="email" bind:value={email} required autocomplete="email" /></label
-				>
-				<label class="field"
-					>Password<input
-						type="password"
-						bind:value={password}
-						required
-						autocomplete="current-password"
-					/></label
-				>
-				<button class="btn primary" disabled={busy}>Sign in</button>
-			</form>
-			{#if data.sso}
-				<button class="btn" onclick={sso}>Sign in with {data.sso.providerName}</button>
+
+			{#if data.notice}<p class="login-note" role="status">{data.notice}</p>{/if}
+			{#if error}<div class="error" role="alert">{error}</div>{/if}
+			{#if data.authError}<div class="error" role="alert" data-testid="auth-error">
+					{data.authError}
+				</div>{/if}
+			{#if data.inDemo}
+				<p class="login-note" role="status">
+					You are in the demo. Signing in starts a fresh account; nothing from the demo moves over.
+				</p>
 			{/if}
-			{#if data.signup === 'open'}
-				<p class="muted">
-					No account? <a
-						href={resolve(
-							data.redirectTo
-								? `/signup?redirect=${encodeURIComponent(data.redirectTo)}`
-								: '/signup'
-						)}>Create one</a
+			{#if data.accountsPaused}
+				<p class="login-note" role="status" data-testid="accounts-paused">
+					This server is not taking new accounts right now. You can still sign in if you already
+					have one.
+				</p>
+			{/if}
+
+			<div class="login-buttons">
+				{#each data.providers as p (p)}
+					<button
+						type="button"
+						class="btn login-provider"
+						data-testid={`sign-in-${p}`}
+						disabled={busy !== null}
+						onclick={() => signIn(p)}
 					>
-				</p>
-			{:else if data.signup === 'invite'}
-				<p class="muted">
-					New accounts are by invitation only. Open the invitation link you were sent.
-				</p>
-			{:else}
-				<p class="muted">Sign-up is closed on this server.</p>
-			{/if}
-		{/if}
-		<p class="muted auth-legal">
-			By signing in or creating an account you agree to the <a
-				href={resolve('/(site)/terms')}
-				data-testid="terms-link">Terms</a
-			>
-			and
-			<a href={resolve('/(site)/privacy')} data-testid="privacy-link">Privacy</a> notes.
-		</p>
-	</div>
-</main>
+						<ProviderMark provider={p} />
+						<span>Continue with {NAMES[p]}</span>
+					</button>
+				{:else}
+					<p class="login-note" data-testid="no-providers">
+						Sign-in is not set up on this server yet.
+					</p>
+				{/each}
+			</div>
+
+			<p class="login-fine">
+				Signing in creates your account if you do not have one. We store your name, email address,
+				picture address and your provider's account id, nothing else from it.
+			</p>
+			<p class="login-demo">
+				Want a look around first? <a href={resolve('/(site)/demo')} data-testid="try-demo"
+					>Try the demo instead</a
+				>. No account needed.
+			</p>
+			<p class="login-fine">
+				By signing in you agree to the <a href={resolve('/(site)/terms')} data-testid="terms-link"
+					>Terms</a
+				>
+				and the <a href={resolve('/(site)/privacy')} data-testid="privacy-link">Privacy</a> notes.
+			</p>
+		</section>
+	</main>
+	<SiteFooter />
+</div>
 
 <style>
-	.auth-legal {
-		font-size: var(--fs-sm);
+	.login-page {
+		min-height: 100dvh;
+		display: flex;
+		flex-direction: column;
+		overflow-x: clip;
 	}
-	.auth-brand {
+	.login-main {
+		flex: 1;
+		width: 100%;
+		min-width: 0;
+		padding: 40px var(--sp-8) 0;
+		display: flex;
+		justify-content: center;
+		align-items: flex-start;
+	}
+	.login-card {
+		width: min(30rem, 100%);
+		display: grid;
+		gap: var(--sp-7);
+		padding: var(--sp-10, 24px);
+		background: var(--card);
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		min-width: 0;
+	}
+	.login-card h1 {
+		margin: 0;
+		font-size: var(--fs-3xl);
+		line-height: 1;
+	}
+	.login-card p {
+		margin: 0;
+	}
+	.login-kicker {
+		font: 500 var(--fs-xs) / 1.3 var(--f-mono);
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--muted);
+	}
+	.login-lede {
+		font-size: var(--fs-lg);
+		line-height: 1.5;
+	}
+	.login-buttons {
+		display: grid;
+		gap: var(--sp-5);
+	}
+	.login-provider {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		justify-content: center;
+		gap: var(--sp-5);
+		min-height: 48px;
+		width: 100%;
+		font-weight: 600;
+	}
+	.login-note {
+		color: var(--muted);
+	}
+	.login-fine {
+		font-size: var(--fs-md);
+		color: var(--muted);
+		line-height: 1.5;
+	}
+	.login-demo {
+		font-size: var(--fs-base);
 	}
 </style>

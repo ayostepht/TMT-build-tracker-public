@@ -4,7 +4,7 @@ import { buildAccess, isSiteAdmin } from '#lib/server/access.ts';
 import { recentBuilds } from '#lib/server/builds/list.ts';
 import { getAuth } from '#lib/server/auth-instance.ts';
 import { mayUseInvitations } from '#lib/server/auth-policy.ts';
-import { appMode, isPublicMode, signupMode } from '#lib/server/config.ts';
+import { demoConfig } from '#lib/server/config.ts';
 import { first, getDb } from '#lib/server/db/index.ts';
 import { printerCounts } from '#lib/server/printers/store.ts';
 import { builds } from '#lib/server/db/schema.ts';
@@ -22,6 +22,7 @@ export const load: LayoutServerLoad = async ({ locals, url, request }) => {
 		redirect(303, `/login?redirect=${encodeURIComponent(back)}`);
 	}
 	const db = getDb();
+	const isDemo = (locals.user as { isDemo?: boolean }).isDemo === true;
 	// Users from before personal workspaces existed get theirs on first visit.
 	if (!(await findPersonalWorkspace(db, locals.user.id)))
 		await ensurePersonalWorkspace(db, { id: locals.user.id, name: locals.user.name });
@@ -64,12 +65,12 @@ export const load: LayoutServerLoad = async ({ locals, url, request }) => {
 		activeTeamId,
 		/** Install-wide admin (first user or ADMIN_EMAILS): shows the "Kit admin" link. */
 		siteAdmin: await isSiteAdmin(db, locals.user),
-		/** Hosted site: printers are limited to OctoEverywhere links and not-connected ones. */
-		publicMode: isPublicMode(),
-		invitationCount: mayUseInvitations(
-			{ publicMode: appMode() === 'public', signup: signupMode() },
-			locals.user
-		)
+		/** Demo sandbox: the layout shows the banner (ends at `demoEndsAt`) and signing out deletes it. */
+		isDemo,
+		demoEndsAt: isDemo
+			? new Date(new Date(locals.user.createdAt).getTime() + demoConfig().ttlMs).toISOString()
+			: null,
+		invitationCount: mayUseInvitations(locals.user)
 			? await pendingInvitationCount(db, locals.user.email)
 			: 0,
 		/** Builds touched most recently across all workspaces, for the Builds menu. */

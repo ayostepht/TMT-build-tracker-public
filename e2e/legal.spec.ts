@@ -2,21 +2,18 @@ import { expect, test } from './fixtures';
 import { signUp, uniqueEmail } from './helpers';
 import type { Page } from '@playwright/test';
 
-// The public /privacy and /terms pages. Structure only: body sentences may change. The e2e server
-// runs in self-hosted mode.
+// The public /privacy and /terms pages. Structure only: body sentences may change.
 
 const PAGES = [
 	{
 		path: '/privacy',
 		title: 'Privacy',
-		marker: 'privacy-mode',
 		sibling: 'terms-link',
 		other: '/terms'
 	},
 	{
 		path: '/terms',
 		title: 'Terms',
-		marker: 'terms-mode',
 		sibling: 'privacy-link',
 		other: '/privacy'
 	}
@@ -32,7 +29,7 @@ async function overflowX(page: Page): Promise<number> {
 }
 
 for (const p of PAGES) {
-	test(`${p.path} signed out: structure, mode marker, back and sibling links`, async ({ page }) => {
+	test(`${p.path} signed out: structure, back and sibling links`, async ({ page }) => {
 		const res = await page.goto(p.path);
 		expect(res?.status()).toBe(200);
 		await settled(page);
@@ -40,8 +37,6 @@ for (const p of PAGES) {
 		await expect(page.locator('h1:visible')).toHaveCount(1);
 		await expect(page.getByRole('heading', { level: 1, name: p.title, exact: true })).toBeVisible();
 		await expect(page.locator('main')).toContainText('Last updated');
-		await expect(page.getByTestId(p.marker)).toHaveAttribute('data-mode', 'selfhost');
-		await expect(page.getByTestId(p.marker)).toBeHidden();
 
 		await expect(page.getByTestId('legal-back')).toHaveAttribute('href', /\/login/);
 		await page.getByTestId(p.sibling).click();
@@ -114,7 +109,7 @@ for (const path of ['/login', '/signup']) {
 	});
 }
 
-test('signing up still works with the agreement sentence on the page', async ({ page }) => {
+test('signing in still works with the agreement sentence on the page', async ({ page }) => {
 	await signUp(page, 'Sam Signup', uniqueEmail('legal-signup'));
 	await expect(page).toHaveURL(/\/teams\//);
 });

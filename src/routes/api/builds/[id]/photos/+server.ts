@@ -1,4 +1,4 @@
-import { ApiError } from '#lib/server/access.ts';
+import { ApiError, requireNotDemo } from '#lib/server/access.ts';
 import { getDb } from '#lib/server/db/index.ts';
 import { loadBuildView } from '#lib/server/builds/view.ts';
 import { addPhoto, MAX_PHOTO_BYTES, MAX_THUMB_BYTES } from '#lib/server/builds/photos.ts';
@@ -20,6 +20,7 @@ export const GET: RequestHandler = (event) =>
 export const POST: RequestHandler = (event) =>
 	respond(async () => {
 		const userId = requireUserId(event);
+		requireNotDemo(event.locals.user);
 		const declared = Number(event.request.headers.get('content-length') ?? '');
 		if (Number.isFinite(declared) && declared > MAX_PHOTO_BYTES + MAX_THUMB_BYTES + 65536)
 			throw new ApiError(413, 'The photo is larger than 8 MB');

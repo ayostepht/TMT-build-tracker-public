@@ -10,46 +10,52 @@
 <svelte:head><title>Privacy · TMT Build Tracker</title></svelte:head>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -->
-<LegalPage title="Privacy" updated="2026-11-11" signedIn={data.signedIn} other="terms">
-	<div data-testid="privacy-mode" data-mode={data.publicMode ? 'public' : 'selfhost'} hidden></div>
+<LegalPage title="Privacy" updated="2026-11-19" signedIn={data.signedIn} other="terms">
 	<p>
 		This page says what TMT Build Tracker stores about you and where it goes. It describes what the
-		software does.
-		{#if data.publicMode}
-			You are using the public instance, which the TMT Build Tracker project runs (the "operator").
-		{:else}
-			Whoever runs this server is the "operator", for example a team lead or the maker who set it
-			up. The project that wrote the software does not run your server and cannot see what is on it.
-		{/if}
-		The operator can reach everything stored on the server and any backups of it.
+		software does. You are using the public instance, which the TMT Build Tracker project runs (the
+		"operator"). The operator can reach everything stored on the server and any backups of it.
 	</p>
 	<p>The app is for adult makers. It does not ask your age.</p>
 
 	<h2>Your account</h2>
 	<ul>
-		<li>It stores your name and email address.</li>
-		{#if data.publicMode}
-			<li>
-				You sign in with Google or GitHub. No password is stored. The app keeps a link to your
-				sign-in account and the address of your profile picture there (stored, not shown). It keeps
-				none of the provider's sign-in tokens.
-			</li>
-		{:else}
-			<li>
-				With a password, only a scrambled (hashed) copy is stored, never the password itself. If the
-				operator set up single sign-on, the app instead keeps a link to your sign-in account and the
-				address of your profile picture there (stored, not shown). It keeps none of the provider's
-				sign-in tokens except its ID token (a signed statement containing your name, email address
-				and provider account ID), used only to sign you out at the provider.
-			</li>
-		{/if}
 		<li>
-			Cookies are used only to keep you signed in. For each sign-in the server keeps a session
-			record: when it started and expires and the browser identification (user agent) of the device.
-			No IP address is stored. A session ends 7 days after you last used the app. Signing out or
-			deleting your account removes it.
+			You sign in with Google, GitHub or Discord. No password is stored, and no email is ever sent.
+		</li>
+		<li>
+			Signing in creates your account. The app stores your <b>name</b>, your
+			<b>email address</b> (only if the provider says it is verified), the address of your
+			<b>profile picture</b> there (stored, not shown) and your <b>provider account id</b>. It keeps
+			none of the provider's sign-in tokens.
+		</li>
+		<li>
+			For each sign-in the server keeps a session record: when it started and expires and the
+			browser identification (user agent) of the device. No IP address is stored. A session ends 7
+			days after you last used the app. Signing out or deleting your account removes it.
 		</li>
 	</ul>
+
+	<h2>Cookies and analytics</h2>
+	<ul>
+		<li>
+			The only cookie is the sign-in session cookie, which keeps you signed in. In the demo it is a
+			demo session cookie that works the same way and ends within 24 hours. There are no advertising
+			or tracking cookies.
+		</li>
+		<li>
+			Visits may be counted with a cookieless analytics service chosen by the operator. It sets no
+			cookie and does not follow you across sites. If the operator has not set one up, there are no
+			analytics at all.
+		</li>
+	</ul>
+
+	<h2>The demo</h2>
+	<p>
+		The demo needs no account. It makes a private, throwaway workspace with a sample build under a
+		made-up name and address, and a session cookie. It is <b>deleted after 24 hours</b>, or when you
+		sign out of it, with everything in it. Nothing is carried over to an account.
+	</p>
 
 	<h2>What you put in builds</h2>
 	<ul>
@@ -82,44 +88,38 @@
 			and activity. Their role (owner, editor or viewer) decides who can change things.
 		</li>
 		<li>
-			Invitations are links you copy and send yourself. The app sends no email. The invited person's
-			email address is stored with the invitation. Cancelled, declined and expired invitations
-			beyond the newest 50 in a team are deleted when a new one is created; accepted ones are kept,
-			and deleting an account removes invitations sent by or addressed to it.
+			Invitations are links you copy and send yourself. The invited person's email address is stored
+			with the invitation. Cancelled, declined and expired invitations beyond the newest 50 in a
+			team are deleted when a new one is created; accepted ones are kept, and deleting an account
+			removes invitations sent by or addressed to it.
+		</li>
+		<li>
+			A color design you share to the gallery is visible to every signed-in user with its name and
+			colors.
 		</li>
 	</ul>
 
-	{#if data.publicMode}
-		<h2>Printers</h2>
-		<p>
-			Printer and Spoolman connections are switched off on the public instance, so no printer
-			details are stored here.
-		</p>
-	{:else}
-		<h2>Printers and integrations</h2>
-		<p>
-			If you add a printer, the app stores its name and address. Access codes, API keys and serial
-			numbers (and an OctoEverywhere share link) are stored encrypted and are never sent back to
-			your browser. The server connects to the address you enter, and only reads status; the same
-			goes for Spoolman.
-		</p>
-	{/if}
+	<h2>Printers</h2>
+	<p>
+		The only way to connect a printer is an OctoEverywhere shared link that you paste in. It is
+		stored encrypted and never sent back to your browser. The server reads the printer's status (and
+		camera picture) through OctoEverywhere. It makes no connection to anything on your own network
+		and does not use Spoolman. You can also add printers that are not connected, which only store a
+		name.
+	</p>
 
 	<h2>What leaves the server</h2>
 	<ul>
 		<li>
-			Nothing goes to analytics or advertising services: the app has none. Pages load their code,
-			fonts and images only from the app's own address, and the page security policy enforces it.
+			Nothing goes to advertising services. The cookieless analytics above is the only third-party
+			count, and only if the operator turned it on. Pages load their code, fonts and images from the
+			app's own address.
 		</li>
 		<li>No email is sent.</li>
-		{#if data.publicMode}
-			<li>Google or GitHub learn that you signed in, because you use them to do it.</li>
-		{:else}
-			<li>
-				If the operator set up single sign-on, that provider learns that you signed in. Printer and
-				Spoolman connections go to the addresses you set up.
-			</li>
-		{/if}
+		<li>
+			Google, GitHub or Discord learn that you signed in, because you use them to do it. For a
+			linked printer, OctoEverywhere answers the status requests.
+		</li>
 		<li>
 			The links to MakeGood, GitHub and the build guide are plain links; nothing is sent until you
 			click one.
@@ -148,12 +148,12 @@
 			On the account page, once you are signed in,
 		{/if}
 		you can download your data as one JSON file (your profile, teams, saved designs and the builds in
-		My builds; photos by file name only; team builds are not included) and delete your account. Deleting
-		removes your sign-in and everything in My builds, including photos, drafts, saved designs and custom
-		filaments, and your drafts in teams. Builds you made in a team stay with the team, and their activity
-		shows "Someone" instead of your name. A team where you are the only member is deleted with you. You
-		cannot delete your account while you are the only owner of a team that has other members, or if you
-		are the last site admin or the only account on the server.
+		My builds; photos by file name only; team builds are not included) and delete your account. You confirm
+		by typing your email address. Deleting removes your sign-in and everything in My builds, including
+		photos, drafts, saved designs and custom filaments, and your drafts in teams. Builds you made in a
+		team stay with the team, and their activity shows "Someone" instead of your name. A team where you
+		are the only member is deleted with you. You cannot delete your account while you are the only owner
+		of a team that has other members, or if you are the last site admin.
 	</p>
 	<p>
 		Backups are made and kept by the operator, not by the app, so a deleted account can still be in
@@ -162,14 +162,8 @@
 
 	<h2>Questions</h2>
 	<p>
-		{#if data.publicMode}
-			Open an issue on <a href={ISSUES_URL} target="_blank" rel="noopener noreferrer">GitHub</a>.
-			Please leave out personal details.
-		{:else}
-			Ask the operator of this server. For questions about the software itself, open an issue on
-			<a href={ISSUES_URL} target="_blank" rel="noopener noreferrer">GitHub</a>, without personal
-			details.
-		{/if}
+		Open an issue on <a href={ISSUES_URL} target="_blank" rel="noopener noreferrer">GitHub</a>.
+		Please leave out personal details.
 	</p>
 </LegalPage>
 <!-- eslint-enable svelte/no-navigation-without-resolve -->

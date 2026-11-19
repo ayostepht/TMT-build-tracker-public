@@ -17,14 +17,11 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('write rate limit', () => {
-	it('is off in selfhost and on in public mode', async () => {
-		vi.stubEnv('TMT_MODE', 'selfhost');
-		expect(writeRateConfig()).toBeNull();
-		expect(await writeRateResponse(u, 'POST', '/api/builds', () => false)).toBeNull();
-		vi.stubEnv('TMT_MODE', 'public');
+	it('is on by default and off with WRITE_RATE_PER_MIN=off', async () => {
 		expect(writeRateConfig()).toEqual({ perMin: 120, burst: 60 });
 		vi.stubEnv('WRITE_RATE_PER_MIN', 'off');
 		expect(writeRateConfig()).toBeNull();
+		expect(await writeRateResponse(u, 'POST', '/api/builds', () => false)).toBeNull();
 	});
 
 	it('allows the burst, then answers 429 with code rate and Retry-After', async () => {

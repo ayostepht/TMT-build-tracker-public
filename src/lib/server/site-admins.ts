@@ -1,7 +1,6 @@
 /** Who the site admins are, and the server-checked mutations that change it (rule: top of `access.ts`). */
-import { asc, eq, ilike, or } from 'drizzle-orm';
+import { and, asc, eq, ilike, or } from 'drizzle-orm';
 import { ApiError, isSiteAdmin, siteAdminSource, type SiteAdminSource } from './access';
-import { isPublicMode } from './config';
 import { advisoryLock, first, type Db, type DbOrTx } from './db';
 import { siteAdmin, user } from './db/schema';
 
@@ -31,6 +30,7 @@ const allUsers = (db: DbOrTx) =>
 			emailVerified: user.emailVerified
 		})
 		.from(user)
+		.where(eq(user.isDemo, false))
 		.orderBy(asc(user.name), asc(user.email));
 
 /** Current site admins with where their role comes from. */
@@ -61,7 +61,12 @@ export async function searchUsers(db: DbOrTx, actor: AdminActor, q: string) {
 			emailVerified: user.emailVerified
 		})
 		.from(user)
-		.where(term ? or(ilike(user.name, `%${term}%`), ilike(user.email, `%${term}%`)) : undefined)
+		.where(
+			and(
+				eq(user.isDemo, false),
+				term ? or(ilike(user.name, `%${term}%`), ilike(user.email, `%${term}%`)) : undefined
+			)
+		)
 		.orderBy(asc(user.name), asc(user.email))
 		.limit(USER_LIST_LIMIT);
 	const out = [];
@@ -71,16 +76,13 @@ export async function searchUsers(db: DbOrTx, actor: AdminActor, q: string) {
 			name: r.name,
 			email: r.email,
 			isAdmin: await isSiteAdmin(db, r),
-			// Public mode only grants to provider-verified emails.
-			canGrant: !isPublicMode() || r.emailVerified === true
+			// Only provider-verified emails can become site admins.
+			canGrant: r.emailVerified === true
 		});
 	return out;
 }
 
-/**
- * Make `targetId` a site admin. When the actor is admin only by the "first account" rule, they get
- * a row too (in the same transaction), because the first row ends that rule.
- */
+/** Make `targetId` a site admin (a verified, non-demo account). */
 export async function grantSiteAdmin(db: Db, actor: AdminActor, targetId: string): Promise<void> {
 	await db.transaction(async (tx) => {
 		// Serialise grants and revocations: the "first account" rule and the last-admin check both
@@ -94,15 +96,9 @@ export async function grantSiteAdmin(db: Db, actor: AdminActor, targetId: string
 				.where(eq(user.id, targetId))
 		);
 		if (!target) throw new ApiError(404, 'Account not found');
-		if (isPublicMode() && target.emailVerified !== true)
+		if (target.emailVerified !== true)
 			throw new ApiError(400, 'Only accounts with a verified email can become site admins');
 		if (await isSiteAdmin(tx, target)) return;
-		const actorSource = await siteAdminSource(tx, actor);
-		if (actorSource === 'first')
-			await tx
-				.insert(siteAdmin)
-				.values({ userId: actor.id, grantedBy: actor.id })
-				.onConflictDoNothing();
 		await tx
 			.insert(siteAdmin)
 			.values({ userId: target.id, grantedBy: actor.id })
