@@ -14,4 +14,7 @@ repository was split off on 2026-11-19) is in the sibling repository,
 
 ## 2026-11
 
-- No deploys yet. First deploy pending (see `docs/dev/HANDOFF.md`).
+- **2026-11-19, first deploy.** Image `sha-8eb3f1e` (`main` 8eb3f1e) on the maintainer's
+  server behind a Cloudflare Tunnel, Supabase Postgres. Empty database: baseline migration,
+  Supabase lockdown, seed and kit pack ran on first start; Google sign-in verified. Migration:
+  baseline applied (frozen from now on). Watch: the first users' sign-ups and demo use.

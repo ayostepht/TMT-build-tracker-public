@@ -19,21 +19,19 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   check, lint, 1901 unit tests, build, production start from an empty database twice, full
   e2e green. Two security reviews (2026-11-19): nothing high open.
 - **CI:** `.github/workflows/public-ci.yml` (test, e2e, image; `publish` on push to `main`
-  pushes `ghcr.io/ayostepht/tmt-build-tracker-public:latest` and `sha-<short>`). The first
-  run on this repository has not been confirmed yet.
-- **Deploy (pending):** Supabase project created, Google/GitHub/Discord OAuth apps created,
-  Cloudflare Tunnel connected on the maintainer's Unraid server. Waiting for the first
-  published image; then the first start against the empty Supabase database.
-- **Migrations:** one baseline, `drizzle/0000_baseline.sql`. It may still be regenerated
-  until the first deploy; from then on only new migrations.
+  pushes `ghcr.io/ayostepht/tmt-build-tracker-public:latest` and `sha-<short>`). First run on
+  this repository green (2026-11-19, `8eb3f1e`), image published.
+- **Live since 2026-11-19:** the maintainer's server runs `sha-8eb3f1e` (`:latest`) behind a
+  Cloudflare Tunnel against Supabase. First start clean (migrations, lockdown, seed, kit
+  pack); sign-in with Google verified; home page and demo checked. Supabase check after the
+  first start: 37 app tables, RLS on everywhere with no policies (the intended lockdown);
+  security advisor shows only that informational notice.
+- **Migrations:** one baseline, `drizzle/0000_baseline.sql`, applied to the live database on
+  2026-11-19. **Frozen from now on:** schema changes add `0001_…` and later; never edit or
+  regenerate the baseline.
 
 ## Waiting on the maintainer
 
-- First deploy: pull `:latest` on Unraid, start it against Supabase, sign in as the
-  `ADMIN_EMAILS` account, run the checks in `docs/guides/hosting.md` §8. Then record the
-  date here (it freezes the baseline migration).
-- Check the Supabase lockdown on the real project (REST access revoked for `anon` and
-  `authenticated`, RLS on); tested on plain Postgres only.
 - Choose an analytics provider (or leave it off) and set up the database backup schedule.
 - Repository settings for the new repo: branch protection on `main` (required `public-ci`
   checks, no force push), private vulnerability reporting, the `ghcr.io` package visibility,
@@ -47,6 +45,13 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 
 ## Open items
 
+- Supabase performance advisor (informational, fine at launch scale): duplicate unique index on
+  `organization.slug` (`organization_slug_uidx` and `organization_slug_unique`, drop one in a
+  new migration); about 20 foreign keys to `user` without a covering index (add when user
+  deletion or those joins get slow).
+- Team slugs (`teams.ts` `uniqueSlug`) have the same check-then-insert race the design slugs
+  had; give it the same advisory lock.
+
 - `preview:demo` (`scripts/preview-demo.mjs`, `scripts/preview/seed.mjs`) still signs up
   with email/password and runs with self-hosted settings; sign-up no longer exists, so the
   local preview needs porting (seed through the test sign-in or the demo) [app-shell].
@@ -58,7 +63,7 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   by unit tests only [printers, e2e-playwright].
 - `printers.host` only holds the placeholders `octoeverywhere` / `manual` now, and the
   `printers.kind` comment in `app.schema.ts` still lists `bambu-lan`; decide before the
-  baseline freezes whether to drop or rename the column [kit-and-startup, printers].
+  decide whether to drop or rename the column (a new migration now that the baseline is frozen) [kit-and-startup, printers].
 - Team quotas (members, pending invites, teams per user) run inside Better Auth hooks outside
   our transactions: best-effort under concurrency. Acceptable for launch [app-shell].
 - `pendingInvitationCount` loads every pending invitation per page (fine at launch scale).
