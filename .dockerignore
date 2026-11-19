@@ -18,3 +18,11 @@ test-results
 playwright-report
 e2e
 playwright.config.ts
+deploy
+docs
+.claude
+.vscode
+.idea
+*.log
+.DS_Store
+CLAUDE.local.md

@@ -16,6 +16,7 @@ import {
 	limitRequest,
 	tooLargeResponse
 } from '#lib/server/body-limits.ts';
+import { analyticsConfig, analyticsCspSources, analyticsProblems } from '#lib/server/analytics.ts';
 import { securityHeaders, withHeaders } from '#lib/server/security-headers.ts';
 import { writeRateResponse } from '#lib/server/write-rate.ts';
 
@@ -29,6 +30,7 @@ export const init: ServerInit = async () => {
 		for (const p of problems) console.error(`[tmt]   - ${p}`);
 		process.exit(1);
 	}
+	for (const p of analyticsProblems()) console.warn(`[tmt] ${p}`);
 	const warning = bodyLimitWarning();
 	if (warning) console.warn(`[tmt] ${warning}`);
 	await startup();
@@ -107,6 +109,9 @@ const handleLimited = async (
 	return compressResponse(event.request, await resolve(event));
 };
 
+// Read once: the environment does not change while the server runs.
+const analyticsSources = analyticsCspSources(analyticsConfig());
+
 export const handle: Handle = async (input) => {
 	if (building) return input.resolve(input.event);
 	const res = await handleRequest(input);
@@ -117,7 +122,9 @@ export const handle: Handle = async (input) => {
 			// proxy-origin.mjs makes the URL's scheme the PUBLIC_URL scheme or the proxy's X-Forwarded-Proto.
 			https: input.event.url.protocol === 'https:',
 			contentType: res.headers.get('content-type'),
-			hasCsp: res.headers.has('content-security-policy')
+			hasCsp: res.headers.has('content-security-policy'),
+			existingCsp: res.headers.get('content-security-policy'),
+			extraSources: analyticsSources.scriptSrc.length ? analyticsSources : undefined
 		})
 	);
 };

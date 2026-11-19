@@ -1,0 +1,98 @@
+# TMT Build Tracker, hosted setup: the app container, optionally a Cloudflare Tunnel in front.
+# The database is a Supabase Postgres project (DATABASE_URL); see docs/guides/hosting.md.
+#
+#   cp .env.example deploy/.env        # then fill it in (never commit it)
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+#
+# Secrets live in deploy/.env (or your host's secret store), never in this file.
+
+services:
+  app:
+    # Build from source, or pull a published image once one exists:
+    #   image: ghcr.io/ayostepht/tmt-build-tracker:latest
+    build:
+      context: ..
+    restart: unless-stopped
+    # With the tunnel below nothing needs to be published: Cloudflare reaches the app over the
+    # compose network. Without the tunnel, publish the port and put your own proxy in front
+    # (bind it to localhost, "127.0.0.1:3000:3000", if the proxy runs on this machine).
+    # ports:
+    #   - '127.0.0.1:3000:3000'
+    expose:
+      - '3000'
+    environment:
+      TMT_MODE: public
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in deploy/.env}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in deploy/.env}
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in deploy/.env}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:?set ADMIN_EMAILS in deploy/.env}
+      # Sign-in providers: set the pairs you created (each provider needs both values).
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      # 1 only because every request reaches the app through Cloudflare (the tunnel below, or a
+      # firewall that admits Cloudflare only). With 1, the client address is CF-Connecting-IP.
+      TRUST_CLOUDFLARE: ${TRUST_CLOUDFLARE:-1}
+      ANALYTICS_PROVIDER: ${ANALYTICS_PROVIDER:-}
+      PLAUSIBLE_DOMAIN: ${PLAUSIBLE_DOMAIN:-}
+      PLAUSIBLE_SCRIPT_URL: ${PLAUSIBLE_SCRIPT_URL:-}
+      UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
+      UMAMI_SCRIPT_URL: ${UMAMI_SCRIPT_URL:-}
+      CF_ANALYTICS_TOKEN: ${CF_ANALYTICS_TOKEN:-}
+    volumes:
+      # Uploads (photos, 3MF files, converted models). The kit pack is inside the image.
+      - tmt-data:/data
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # Cloudflare Tunnel: outbound-only connection to Cloudflare, so no port is open on your
+  # network. Create the tunnel in Cloudflare Zero Trust (Networks > Tunnels), point its public
+  # hostname at http://app:3000 and paste the token into deploy/.env as TUNNEL_TOKEN.
+  # Remove this service if you use another way in.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in deploy/.env}
+    depends_on:
+      app:
+        condition: service_healthy
+
+  # Optional: a local Postgres instead of Supabase (for trying things out, or a fully
+  # self-contained install). Uncomment this block, set DATABASE_URL in deploy/.env to
+  # postgres://tmt:<POSTGRES_PASSWORD>@db:5432/tmt (no sslmode on the private network), and add
+  #   depends_on: { db: { condition: service_healthy } }
+  # to the app service. Back it up with pg_dump (docs/guides/hosting.md).
+  #
+  # db:
+  #   image: postgres:16
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: tmt
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+  #     POSTGRES_DB: tmt
+  #   volumes:
+  #     - tmt-db:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ['CMD-SHELL', 'pg_isready -U tmt -d tmt']
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+volumes:
+  tmt-data:
+  # tmt-db:

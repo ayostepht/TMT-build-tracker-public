@@ -4,6 +4,12 @@ A self-hostable web app for makers 3D-printing the MakeGood 3D TMT (toddler mobi
 
 > **Status:** Pre-release, in public testing (see the [changelog](CHANGELOG.md) for the current version). Data formats are stable, but details may change before the first stable release. The Klipper, OctoPrint and Bambu Lab printer connections have not been run against real printers yet. The image is public: `docker pull ghcr.io/ayostepht/tmt-build-tracker:latest` (the newest release). See [Feedback and beta testing](#feedback-and-beta-testing) for how to help.
 
+## Hosted version
+
+The tracker's job is to plan and follow a build across a team: the parts, the print plates, what is printed and what is assembled, and the hand-off to the family. Alongside that it has a color design studio and a shared design gallery, so everything is under one roof.
+
+This branch is the public, hosted flavor: one Node container plus a Postgres database (Supabase), Cloudflare in front, sign-in with Google, GitHub or Discord. Everything needed to run it is in the [hosting guide](docs/guides/hosting.md): creating the database and the sign-in apps, deploying to Fly.io, Railway or your own server through a Cloudflare Tunnel, backups and a security checklist. Expect roughly 5 USD a month for a small Fly.io or Railway machine (or nothing on a server you already run); the Supabase and Cloudflare free tiers are enough for a small site. Settings are listed in [`.env.example`](.env.example). Known gaps are listed in the guide, for example that the client address used for rate limits can be forged if the app is reachable without going through Cloudflare.
+
 ## Screenshots
 
 ![The color designer: a 3D toddler chair in navy and sky blue next to a list of color slots, each with its filament, part count and the weight it needs against your stock](docs/images/screenshot-color-designer.png)
@@ -38,7 +44,7 @@ The git repository itself contains only data about the kit (part names, settings
 
 ## Quick start (about 5 minutes)
 
-You need an always-on machine with Docker (a NAS, a mini PC or a desktop; the image is published for x86-64 and arm64; only x86-64 has been run by the project, so arm64 reports are welcome). On Unraid use the [Unraid guide](docs/guides/unraid.md) instead. The image is public: `docker pull ghcr.io/ayostepht/tmt-build-tracker:latest` needs no login. Tags: `latest` is the newest release; `X.Y.Z` and `X.Y` are specific releases (git tag `vX.Y.Z`); `edge` is the `edge` branch, where pull requests land first and the maintainer reviews them before they reach `main` and a release, for people who want to test unreleased changes and accept that it can break (back up first, and do not expect to go back from `edge` to an older release without restoring that backup if a migration ran); `sha-<short commit>` is one exact build (published for every `main` and `edge` build). You can also build it from source with `docker build -t tmt-build-tracker .` (see [CONTRIBUTING.md](CONTRIBUTING.md)). Allow about 0.5 GB of disk for the image and about 150 MB for the data folder (the installed kit pack).
+You need an always-on machine with Docker (a NAS, a mini PC or a desktop; the image is published for x86-64 and arm64; only x86-64 has been run by the project, so arm64 reports are welcome). To run it on your own server (Unraid included) behind a Cloudflare Tunnel, follow the [hosting guide](docs/guides/hosting.md). The image is public: `docker pull ghcr.io/ayostepht/tmt-build-tracker:latest` needs no login. Tags: `latest` is the newest release; `X.Y.Z` and `X.Y` are specific releases (git tag `vX.Y.Z`); `edge` is the `edge` branch, where pull requests land first and the maintainer reviews them before they reach `main` and a release, for people who want to test unreleased changes and accept that it can break (back up first, and do not expect to go back from `edge` to an older release without restoring that backup if a migration ran); `sha-<short commit>` is one exact build (published for every `main` and `edge` build). You can also build it from source with `docker build -t tmt-build-tracker .` (see [CONTRIBUTING.md](CONTRIBUTING.md)). Allow about 0.5 GB of disk for the image and about 150 MB for the data folder (the installed kit pack).
 
 ### 1. Prepare a data folder and a secret
 
@@ -108,7 +114,7 @@ The image is public and is pulled without logging in. If a pull fails with `unau
 
 | Guide                                                             | What is in it                                                                                                                                                 |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Unraid](docs/guides/unraid.md)                                   | Template or manual install, settings, first start, updating, backups, uninstall                                                                               |
+| [Hosting](docs/guides/hosting.md)                                 | Supabase, sign-in apps, Fly.io, Railway or your own server with a Cloudflare Tunnel, backups, security checklist                                              |
 | [Reverse proxy](docs/guides/reverse-proxy.md)                     | `PUBLIC_URL`, Nginx Proxy Manager, Caddy, Traefik, security headers, upload size, live updates                                                                |
 | [Single sign-on](docs/guides/sso.md)                              | Generic OpenID Connect, Authentik, Google and GitHub (public mode), who may sign up                                                                           |
 | [Backup and upgrade](docs/guides/backup-and-upgrade.md)           | What to back up, restore, updating the image, password reset links                                                                                            |

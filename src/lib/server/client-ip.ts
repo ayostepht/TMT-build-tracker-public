@@ -17,16 +17,10 @@ import { isIP } from 'node:net';
  */
 export function authRequestHeaders(
 	inbound: Headers,
-	getClientAddress: () => string
+	getClientAddress: () => string,
+	env: Record<string, string | undefined> = process.env
 ): Headers | null {
-	let address: string;
-	try {
-		address = getClientAddress();
-	} catch {
-		return null;
-	}
-	if (typeof address !== 'string') return null;
-	const clean = normaliseClientAddress(address);
+	const clean = clientAddress(inbound, getClientAddress, env);
 	if (!clean) return null;
 	const headers = new Headers(inbound);
 	headers.delete('x-forwarded-for');
@@ -50,6 +44,36 @@ export function normaliseClientAddress(raw: string): string | null {
 	return address;
 }
 
+/** `TRUST_CLOUDFLARE=1` (or `true`): the origin is only reachable through Cloudflare, so `CF-Connecting-IP` is the client. */
+export function trustCloudflare(env: Record<string, string | undefined> = process.env): boolean {
+	return /^(1|true)$/i.test((env.TRUST_CLOUDFLARE ?? '').trim());
+}
+
+/**
+ * The client address for a request: with `TRUST_CLOUDFLARE`, the single `CF-Connecting-IP`
+ * value Cloudflare sets (it overwrites any client copy); otherwise `getClientAddress()` (the
+ * `ADDRESS_HEADER` / `XFF_DEPTH` / socket logic of adapter-node). Cloudflare mode never falls
+ * back to `X-Forwarded-For` or the socket: a request without a valid header returns null (fail
+ * closed) instead of sharing a bucket with, or impersonating, someone else.
+ * Only safe when the origin cannot be reached except through Cloudflare (Tunnel, or a firewall
+ * that admits Cloudflare ranges only): otherwise any client can send this header.
+ */
+export function clientAddress(
+	inbound: Headers,
+	getClientAddress: () => string,
+	env: Record<string, string | undefined> = process.env
+): string | null {
+	if (trustCloudflare(env)) {
+		const raw = inbound.get('cf-connecting-ip');
+		return raw ? normaliseClientAddress(raw) : null;
+	}
+	try {
+		const address = getClientAddress();
+		return typeof address === 'string' ? normaliseClientAddress(address) : null;
+	} catch {
+		return null;
+	}
+}
 /**
  * Set by `scripts/proxy-origin.mjs` (after stripping any client copy) when the incoming
  * request really carried forwarding headers. That script rewrites `x-forwarded-proto` on

@@ -15,6 +15,22 @@ import { installResponseDefaults } from './response-defaults.mjs';
 // Static files and error pages never reach hooks.server.ts: give them the security headers too.
 installResponseDefaults(http.ServerResponse.prototype);
 
+// TRUST_CLOUDFLARE=1: the origin is reachable only through Cloudflare, which sets CF-Connecting-IP to
+// the real client and overwrites any copy the client sent. adapter-node then reads that header for
+// getClientAddress() (everything that rate-limits per client uses it), and a request without it
+// fails closed. It wins over ADDRESS_HEADER / XFF_DEPTH. Never set it when the port is also open
+// to the internet: anyone could then pick their own address.
+if (/^(1|true)$/i.test((process.env.TRUST_CLOUDFLARE ?? '').trim())) {
+	const other = (process.env.ADDRESS_HEADER ?? '').trim().toLowerCase();
+	if (other && other !== 'cf-connecting-ip') {
+		console.warn(
+			'[tmt] TRUST_CLOUDFLARE is set: ADDRESS_HEADER is ignored, CF-Connecting-IP is used.'
+		);
+	}
+	process.env.ADDRESS_HEADER = 'cf-connecting-ip';
+	delete process.env.XFF_DEPTH;
+}
+
 process.env.PROTOCOL_HEADER ??= 'x-forwarded-proto';
 process.env.HOST_HEADER ??= 'x-forwarded-host';
 

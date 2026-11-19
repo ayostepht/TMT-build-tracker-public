@@ -1,0 +1,57 @@
+# Fly.io: one always-on machine with a volume for uploads. See docs/guides/hosting.md.
+#
+#   fly launch --no-deploy --copy-config --config deploy/fly.toml   (choose your own app name)
+#   fly volumes create tmt_data --size 3 --region <region> --config deploy/fly.toml
+#   fly secrets set DATABASE_URL=... BETTER_AUTH_SECRET=... ADMIN_EMAILS=... ... --config deploy/fly.toml
+#   fly deploy --config deploy/fly.toml --dockerfile Dockerfile
+#
+# Secrets (DATABASE_URL, BETTER_AUTH_SECRET, OAuth keys, analytics tokens) are set with
+# `fly secrets set`, never in this file.
+
+app = 'tmt-build-tracker-change-me'
+primary_region = 'ams'
+
+[build]
+dockerfile = '../Dockerfile'
+
+[env]
+TMT_MODE = 'public'
+PORT = '3000'
+# Set to your real address: https, no trailing slash. Needed for sign-in callbacks.
+PUBLIC_URL = 'https://tmt.example.com'
+# Client address for rate limits: Fly's own proxy sets Fly-Client-IP and cannot be forged, so this
+# is safe even though <app>.fly.dev is public. If you put Cloudflare IN FRONT of Fly (proxied
+# DNS), every visitor would look like a Cloudflare address: then replace this line with
+# TRUST_CLOUDFLARE = '1' and read the spoofing caveat in "Security checklist" in docs/guides/hosting.md.
+ADDRESS_HEADER = 'Fly-Client-IP'
+
+[[mounts]]
+source = 'tmt_data'
+destination = '/data'
+initial_size = '3gb'
+
+[http_service]
+internal_port = 3000
+force_https = true
+# The app keeps live-update (SSE) connections and printer status polling running, and its first
+# request after a stop would be slow: keep exactly one machine up.
+auto_stop_machines = 'off'
+auto_start_machines = false
+min_machines_running = 1
+
+[http_service.concurrency]
+type = 'connections'
+hard_limit = 200
+soft_limit = 150
+
+[[http_service.checks]]
+grace_period = '30s'
+interval = '30s'
+timeout = '5s'
+method = 'GET'
+path = '/api/health'
+
+# One machine only: uploads live on its volume and live updates are held in memory.
+[[vm]]
+size = 'shared-cpu-1x'
+memory = '1gb'
