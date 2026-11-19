@@ -1,1 +1,0 @@
-ALTER TABLE `build_filaments` ADD `spool_adds` text DEFAULT '[]' NOT NULL;

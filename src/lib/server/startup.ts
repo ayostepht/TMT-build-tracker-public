@@ -1,7 +1,7 @@
 import { backfillBuildParts } from './builds/backfill';
 import { repairTwinPlates } from './builds/twin-repair';
 import { failStaleModelJobs, kickQueue } from './models/jobs';
-import { getDb, runMigrations } from './db';
+import { getDb, runMigrations, type Db } from './db';
 import { templateSeeds } from './seed';
 import { seedTemplates } from './seed/run';
 import { startSupervisor } from './printers/supervisor';
@@ -9,34 +9,60 @@ import { sweepImportsDir } from './imports-sweep';
 import { installKitPacks } from './kitpack/install';
 import { cleanupAuthDataAtStartup } from './auth-cleanup';
 
-let done = false;
+// The helpers imported from outside the db/seed/kit-pack area (backfill, twin repair, auth cleanup,
+// imports sweep, printer supervisor) are still synchronous until the async port lands; every call
+// below is `await`ed so it keeps working once they return promises.
 
-/** Run migrations, reconcile template seeds, then backfill build rows. Safe to call repeatedly. */
-export function startup(): void {
-	if (done) return;
+let started: Promise<void> | null = null;
+
+/**
+ * Run migrations, reconcile template seeds, then backfill build rows. Idempotent and safe to
+ * call repeatedly or concurrently (callers share one run). Two containers starting together are
+ * serialised by advisory locks in `runMigrations` and `seedTemplates`. Rejects when the database
+ * is unreachable or a migration fails; the caller should exit then.
+ */
+export function startup(): Promise<void> {
+	return (started ??= run().catch((e) => {
+		started = null;
+		throw e;
+	}));
+}
+
+/**
+ * The database part of startup: migrate, then reconcile the template seeds. Idempotent; an empty
+ * database ends up migrated and seeded, a second call changes nothing.
+ */
+export async function initDatabase(
+	db: Db,
+	seeds = templateSeeds
+): Promise<{ inserted: string[]; updated: string[] }> {
+	await runMigrations(db);
+	const result = await seedTemplates(db, seeds);
+	if (result.inserted.length) console.log(`[tmt] seeded templates: ${result.inserted.join(', ')}`);
+	if (result.updated.length) console.log(`[tmt] updated templates: ${result.updated.join(', ')}`);
+	return result;
+}
+
+async function run(): Promise<void> {
 	const db = getDb();
-	runMigrations(db);
-	cleanupAuthDataAtStartup(db);
-	const { inserted, updated } = seedTemplates(db, templateSeeds);
-	if (inserted.length) console.log(`[tmt] seeded templates: ${inserted.join(', ')}`);
-	if (updated.length) console.log(`[tmt] updated templates: ${updated.join(', ')}`);
-	const added = backfillBuildParts(db);
+	await initDatabase(db);
+	await cleanupAuthDataAtStartup(db);
+	const added = await backfillBuildParts(db);
 	if (added) console.log(`[tmt] added ${added} part rows to existing builds`);
 	try {
-		const fixed = repairTwinPlates(db);
+		const fixed = await repairTwinPlates(db);
 		if (fixed.length)
 			console.log(`[tmt] repaired ${fixed.length} uploaded plate(s) with twin parts`);
 	} catch (e) {
 		console.error('[tmt] twin plate repair failed', e);
 	}
-	const stale = failStaleModelJobs(db);
+	const stale = await failStaleModelJobs(db);
 	if (stale) console.log(`[tmt] marked ${stale} interrupted 3D model job(s) as failed`);
-	sweepImportsDir(db)
+	Promise.resolve(sweepImportsDir(db))
 		.then((n) => n && console.log(`[tmt] removed ${n} stale upload leftover(s) from imports`))
 		.catch(() => {});
 	kickQueue(db);
 	// MakeGood's kit (CC0, one community part under CC BY-NC) from the baked-in or downloaded kit pack; in the background, never blocks start.
 	installKitPacks(db).catch((e) => console.error('[tmt] kit pack install error', e));
-	if (process.env.TMT_PRINTERS !== 'off') startSupervisor(db);
-	done = true;
+	if (process.env.TMT_PRINTERS !== 'off') await startSupervisor(db);
 }

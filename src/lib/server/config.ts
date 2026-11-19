@@ -1,14 +1,23 @@
 import { statfsSync } from 'node:fs';
 import { isIP } from 'node:net';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 // Runtime configuration read from environment variables. Kept free of SvelteKit
 // imports so it can be used from tests and tooling.
 const env = process.env;
 const isProd = env.NODE_ENV === 'production';
 
+/**
+ * Postgres connection string. Dev default is the local cluster from `scripts/dev-postgres.sh`;
+ * production must set it (Supabase: add `?sslmode=require`, use the transaction pooler URL).
+ */
 export function databaseUrl(): string {
-	return env.DATABASE_URL || (isProd ? '/data/tmt.db' : './data/tmt.db');
+	return env.DATABASE_URL || (isProd ? '' : 'postgres://tmt:tmt@localhost:5432/tmt_dev');
+}
+
+/** Connections held by this process (`DATABASE_POOL_MAX`, default 10, clamped to 1-100). */
+export function databasePoolMax(): number {
+	const n = Number.parseInt(env.DATABASE_POOL_MAX ?? '', 10);
+	return Number.isFinite(n) ? Math.min(100, Math.max(1, n)) : 10;
 }
 
 const PUBLIC_URL_VARS = ['PUBLIC_URL', 'BETTER_AUTH_URL', 'ORIGIN'] as const;
@@ -307,10 +316,9 @@ export function oidcConfig(): OidcConfig | null {
 	};
 }
 
-/** Directory holding the database file (the `/data` volume in Docker). `:memory:` databases use the OS temp dir. */
+/** Directory for files on disk (uploads, kit pack): `DATA_DIR`, else `/data` in production, `./data` in dev. */
 export function dataDir(): string {
-	const url = databaseUrl();
-	return url === ':memory:' ? tmpdir() : dirname(resolve(url));
+	return resolve(env.DATA_DIR || (isProd ? '/data' : './data'));
 }
 
 /** Where user-imported files live (never in git): `<dataDir>/uploads`. */

@@ -1,1 +1,0 @@
-ALTER TABLE `builds` ADD `kind` text DEFAULT 'build' NOT NULL;

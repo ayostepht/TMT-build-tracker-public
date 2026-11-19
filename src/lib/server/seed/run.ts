@@ -1,5 +1,5 @@
-import { and, eq } from 'drizzle-orm';
-import type { Db } from '../db';
+import { and, eq, sql } from 'drizzle-orm';
+import { first, one, type Db, type Tx } from '../db';
 import {
 	colorDesigns,
 	templateAssemblySteps,
@@ -43,7 +43,7 @@ export function shouldUpdatePlacement(
 const sameNumbers = (a: number[], b: number[]) =>
 	a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 1e-9);
 
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+const SEED_LOCK_KEY = 7_346_201_002;
 
 export interface SeedResult {
 	/** Slugs of templates created from scratch. */
@@ -64,23 +64,33 @@ export interface SeedResult {
  *   `backfillBuildParts`), and a placement is updated from the seed only while no admin has
  *   edited it (`updated_by IS NULL`); admin edits are never overwritten.
  */
-export function seedTemplates(db: Db, seeds: TemplateSeed[]): SeedResult {
+export async function seedTemplates(db: Db, seeds: TemplateSeed[]): Promise<SeedResult> {
 	const inserted: string[] = [];
 	const updated: string[] = [];
 	for (const s of seeds) {
-		const existing = db
-			.select({ id: templates.id })
-			.from(templates)
-			.where(eq(templates.slug, s.slug))
-			.get();
-		const changed = db.transaction((tx) => reconcileTemplate(tx, s, existing?.id ?? null));
-		if (!existing) inserted.push(s.slug);
+		// Per-template transaction behind an advisory lock: two containers starting together
+		// reconcile one after the other instead of both inserting the same slug.
+		const { existed, changed } = await db.transaction(async (tx) => {
+			await tx.execute(sql`select pg_advisory_xact_lock(${SEED_LOCK_KEY})`);
+			const existing = await first(
+				tx.select({ id: templates.id }).from(templates).where(eq(templates.slug, s.slug))
+			);
+			return {
+				existed: !!existing,
+				changed: await reconcileTemplate(tx, s, existing?.id ?? null)
+			};
+		});
+		if (!existed) inserted.push(s.slug);
 		else if (changed) updated.push(s.slug);
 	}
 	return { inserted, updated };
 }
 
-function reconcileTemplate(tx: Tx, s: TemplateSeed, existingId: string | null): boolean {
+async function reconcileTemplate(
+	tx: Tx,
+	s: TemplateSeed,
+	existingId: string | null
+): Promise<boolean> {
 	let changed = false;
 	const row = {
 		name: s.name,
@@ -94,59 +104,61 @@ function reconcileTemplate(tx: Tx, s: TemplateSeed, existingId: string | null): 
 	let templateId: string;
 	if (existingId) {
 		templateId = existingId;
-		const cur = tx.select().from(templates).where(eq(templates.id, templateId)).get()!;
-		if (JSON.stringify(pick(cur, row)) !== JSON.stringify(row)) {
-			tx.update(templates).set(row).where(eq(templates.id, templateId)).run();
+		const cur = await one(
+			tx.select().from(templates).where(eq(templates.id, templateId)),
+			'template'
+		);
+		if (canon(pick(cur, row)) !== canon(row)) {
+			await tx.update(templates).set(row).where(eq(templates.id, templateId));
 			changed = true;
 		}
 	} else {
-		templateId = tx
-			.insert(templates)
-			.values({ slug: s.slug, ...row })
-			.returning({ id: templates.id })
-			.get().id;
+		templateId = (
+			await one(
+				tx
+					.insert(templates)
+					.values({ slug: s.slug, ...row })
+					.returning({ id: templates.id }),
+				'inserted template'
+			)
+		).id;
 	}
 
 	// Filament roles
 	const roles = new Map(
-		tx
-			.select()
-			.from(templateFilamentRoles)
-			.where(eq(templateFilamentRoles.templateId, templateId))
-			.all()
-			.map((r) => [r.key, r])
+		(
+			await tx
+				.select()
+				.from(templateFilamentRoles)
+				.where(eq(templateFilamentRoles.templateId, templateId))
+		).map((r) => [r.key, r])
 	);
 	for (const r of s.filamentRoles) {
 		const cur = roles.get(r.key);
 		if (!cur) {
-			tx.insert(templateFilamentRoles)
-				.values({ templateId, ...r })
-				.run();
+			await tx.insert(templateFilamentRoles).values({ templateId, ...r });
 			changed = true;
-		} else if (JSON.stringify(pick(cur, r)) !== JSON.stringify(r)) {
-			tx.update(templateFilamentRoles)
+		} else if (canon(pick(cur, r)) !== canon(r)) {
+			await tx
+				.update(templateFilamentRoles)
 				.set(r)
 				.where(
 					and(
 						eq(templateFilamentRoles.templateId, templateId),
 						eq(templateFilamentRoles.key, r.key)
 					)
-				)
-				.run();
+				);
 			changed = true;
 		}
 	}
 
 	// Parts
 	const parts = new Map(
-		tx
-			.select()
-			.from(templateParts)
-			.where(eq(templateParts.templateId, templateId))
-			.all()
-			.map((p) => [p.slug, p])
+		(await tx.select().from(templateParts).where(eq(templateParts.templateId, templateId))).map(
+			(p) => [p.slug, p]
+		)
 	);
-	s.parts.forEach((p, i) => {
+	for (const [i, p] of s.parts.entries()) {
 		const values = {
 			name: p.name,
 			section: p.section,
@@ -167,27 +179,22 @@ function reconcileTemplate(tx: Tx, s: TemplateSeed, existingId: string | null): 
 		};
 		const cur = parts.get(p.slug);
 		if (!cur) {
-			tx.insert(templateParts)
-				.values({ templateId, slug: p.slug, ...values })
-				.run();
+			await tx.insert(templateParts).values({ templateId, slug: p.slug, ...values });
 			changed = true;
-		} else if (JSON.stringify(pick(cur, values)) !== JSON.stringify(values)) {
-			tx.update(templateParts)
+		} else if (canon(pick(cur, values)) !== canon(values)) {
+			await tx
+				.update(templateParts)
 				.set(values)
-				.where(and(eq(templateParts.templateId, templateId), eq(templateParts.slug, p.slug)))
-				.run();
+				.where(and(eq(templateParts.templateId, templateId), eq(templateParts.slug, p.slug)));
 			changed = true;
 		}
-	});
+	}
 
 	// Plates
 	const plates = new Map(
-		tx
-			.select()
-			.from(templatePlates)
-			.where(eq(templatePlates.templateId, templateId))
-			.all()
-			.map((p) => [p.number, p])
+		(await tx.select().from(templatePlates).where(eq(templatePlates.templateId, templateId))).map(
+			(p) => [p.number, p]
+		)
 	);
 	for (const p of s.plates) {
 		const values = {
@@ -200,29 +207,27 @@ function reconcileTemplate(tx: Tx, s: TemplateSeed, existingId: string | null): 
 		};
 		const cur = plates.get(p.number);
 		if (!cur) {
-			tx.insert(templatePlates)
-				.values({ templateId, number: p.number, ...values })
-				.run();
+			await tx.insert(templatePlates).values({ templateId, number: p.number, ...values });
 			changed = true;
-		} else if (JSON.stringify(pick(cur, values)) !== JSON.stringify(values)) {
-			tx.update(templatePlates)
+		} else if (canon(pick(cur, values)) !== canon(values)) {
+			await tx
+				.update(templatePlates)
 				.set(values)
-				.where(and(eq(templatePlates.templateId, templateId), eq(templatePlates.number, p.number)))
-				.run();
+				.where(and(eq(templatePlates.templateId, templateId), eq(templatePlates.number, p.number)));
 			changed = true;
 		}
 	}
 
 	// Plate layouts (insert missing, update static fields)
 	const layouts = new Map(
-		tx
-			.select()
-			.from(templatePlateLayouts)
-			.where(eq(templatePlateLayouts.templateId, templateId))
-			.all()
-			.map((l) => [l.key, l])
+		(
+			await tx
+				.select()
+				.from(templatePlateLayouts)
+				.where(eq(templatePlateLayouts.templateId, templateId))
+		).map((l) => [l.key, l])
 	);
-	(s.plateLayouts ?? []).forEach((l, i) => {
+	for (const [i, l] of (s.plateLayouts ?? []).entries()) {
 		const values = {
 			name: l.name,
 			printerNote: l.printerNote,
@@ -240,75 +245,71 @@ function reconcileTemplate(tx: Tx, s: TemplateSeed, existingId: string | null): 
 		};
 		const cur = layouts.get(l.key);
 		if (!cur) {
-			tx.insert(templatePlateLayouts)
-				.values({ templateId, key: l.key, ...values })
-				.run();
+			await tx.insert(templatePlateLayouts).values({ templateId, key: l.key, ...values });
 			changed = true;
-		} else if (JSON.stringify(pick(cur, values)) !== JSON.stringify(values)) {
-			tx.update(templatePlateLayouts)
+		} else if (canon(pick(cur, values)) !== canon(values)) {
+			await tx
+				.update(templatePlateLayouts)
 				.set(values)
 				.where(
 					and(eq(templatePlateLayouts.templateId, templateId), eq(templatePlateLayouts.key, l.key))
-				)
-				.run();
+				);
 			changed = true;
 		}
-	});
+	}
 
 	// Guide pages (insert missing, update titles)
 	const pages = new Map(
-		tx
-			.select()
-			.from(templateGuidePages)
-			.where(eq(templateGuidePages.templateId, templateId))
-			.all()
-			.map((g) => [g.page, g])
+		(
+			await tx
+				.select()
+				.from(templateGuidePages)
+				.where(eq(templateGuidePages.templateId, templateId))
+		).map((g) => [g.page, g])
 	);
 	for (const g of s.guidePages) {
 		const cur = pages.get(g.page);
 		if (!cur) {
-			tx.insert(templateGuidePages)
-				.values({ templateId, ...g })
-				.run();
+			await tx.insert(templateGuidePages).values({ templateId, ...g });
 			changed = true;
 		} else if (cur.title !== g.title || cur.sort !== g.sort) {
-			tx.update(templateGuidePages)
+			await tx
+				.update(templateGuidePages)
 				.set({ title: g.title, sort: g.sort })
 				.where(
 					and(eq(templateGuidePages.templateId, templateId), eq(templateGuidePages.page, g.page))
-				)
-				.run();
+				);
 			changed = true;
 		}
 	}
 
 	// Hardware (insert missing only)
 	const hw = new Set(
-		tx
-			.select({ name: templateHardware.name })
-			.from(templateHardware)
-			.where(eq(templateHardware.templateId, templateId))
-			.all()
-			.map((h) => h.name)
+		(
+			await tx
+				.select({ name: templateHardware.name })
+				.from(templateHardware)
+				.where(eq(templateHardware.templateId, templateId))
+		).map((h) => h.name)
 	);
 	for (const h of s.hardware) {
 		if (hw.has(h.name)) continue;
-		tx.insert(templateHardware)
-			.values({ templateId, name: h.name, qty: h.qty ?? null, note: h.note ?? null })
-			.run();
+		await tx
+			.insert(templateHardware)
+			.values({ templateId, name: h.name, qty: h.qty ?? null, note: h.note ?? null });
 		changed = true;
 	}
 
 	// Assembly steps (insert missing, update static fields; never deleted)
 	const steps = new Map(
-		tx
-			.select()
-			.from(templateAssemblySteps)
-			.where(eq(templateAssemblySteps.templateId, templateId))
-			.all()
-			.map((a) => [a.key, a])
+		(
+			await tx
+				.select()
+				.from(templateAssemblySteps)
+				.where(eq(templateAssemblySteps.templateId, templateId))
+		).map((a) => [a.key, a])
 	);
-	(s.assemblySteps ?? []).forEach((a, i) => {
+	for (const [i, a] of (s.assemblySteps ?? []).entries()) {
 		const values = {
 			sort: i,
 			title: a.title,
@@ -321,45 +322,41 @@ function reconcileTemplate(tx: Tx, s: TemplateSeed, existingId: string | null): 
 		};
 		const cur = steps.get(a.key);
 		if (!cur) {
-			tx.insert(templateAssemblySteps)
-				.values({ templateId, key: a.key, ...values })
-				.run();
+			await tx.insert(templateAssemblySteps).values({ templateId, key: a.key, ...values });
 			changed = true;
-		} else if (JSON.stringify(pick(cur, values)) !== JSON.stringify(values)) {
-			tx.update(templateAssemblySteps)
+		} else if (canon(pick(cur, values)) !== canon(values)) {
+			await tx
+				.update(templateAssemblySteps)
 				.set(values)
 				.where(
 					and(
 						eq(templateAssemblySteps.templateId, templateId),
 						eq(templateAssemblySteps.key, a.key)
 					)
-				)
-				.run();
+				);
 			changed = true;
 		}
-	});
+	}
 
 	// Color designs (insert missing only; designs may be edited by users later)
 	const designs = new Set(
-		tx
-			.select({ slug: colorDesigns.slug })
-			.from(colorDesigns)
-			.where(eq(colorDesigns.templateId, templateId))
-			.all()
-			.map((d) => d.slug)
+		(
+			await tx
+				.select({ slug: colorDesigns.slug })
+				.from(colorDesigns)
+				.where(eq(colorDesigns.templateId, templateId))
+		).map((d) => d.slug)
 	);
 	for (const d of s.designs) {
 		if (designs.has(d.slug)) continue;
-		tx.insert(colorDesigns)
-			.values({
-				templateId,
-				slug: d.slug,
-				name: d.name,
-				roles: d.roles,
-				partRoles: d.partRoles,
-				isPublic: true
-			})
-			.run();
+		await tx.insert(colorDesigns).values({
+			templateId,
+			slug: d.slug,
+			name: d.name,
+			roles: d.roles,
+			partRoles: d.partRoles,
+			isPublic: true
+		});
 		changed = true;
 	}
 
@@ -367,12 +364,12 @@ function reconcileTemplate(tx: Tx, s: TemplateSeed, existingId: string | null): 
 	// (`updated_by IS NULL`) and it differs. Admin edits are never overwritten. Parts the seed does
 	// not mention get an unplaced identity row so every part has one.
 	const existingPlacements = new Map(
-		tx
-			.select()
-			.from(templatePartPlacements)
-			.where(eq(templatePartPlacements.templateId, templateId))
-			.all()
-			.map((p) => [p.slug, p])
+		(
+			await tx
+				.select()
+				.from(templatePartPlacements)
+				.where(eq(templatePartPlacements.templateId, templateId))
+		).map((p) => [p.slug, p])
 	);
 	const placements = new Map((s.placements ?? []).map((p) => [p.slug, p]));
 	if (s.placements) {
@@ -381,7 +378,8 @@ function reconcileTemplate(tx: Tx, s: TemplateSeed, existingId: string | null): 
 			if (cur) {
 				const p = placements.get(part.slug);
 				if (p && shouldUpdatePlacement(cur, p)) {
-					tx.update(templatePartPlacements)
+					await tx
+						.update(templatePartPlacements)
 						.set({
 							matrix: p.matrix ?? IDENTITY,
 							instances: p.instances ?? [],
@@ -393,22 +391,19 @@ function reconcileTemplate(tx: Tx, s: TemplateSeed, existingId: string | null): 
 								eq(templatePartPlacements.templateId, templateId),
 								eq(templatePartPlacements.slug, part.slug)
 							)
-						)
-						.run();
+						);
 					changed = true;
 				}
 				continue;
 			}
 			const p = placements.get(part.slug);
-			tx.insert(templatePartPlacements)
-				.values({
-					templateId,
-					slug: part.slug,
-					matrix: p?.matrix ?? IDENTITY,
-					instances: p?.instances ?? [],
-					placed: p?.placed ?? false
-				})
-				.run();
+			await tx.insert(templatePartPlacements).values({
+				templateId,
+				slug: part.slug,
+				matrix: p?.matrix ?? IDENTITY,
+				instances: p?.instances ?? [],
+				placed: p?.placed ?? false
+			});
 			changed = true;
 		}
 	}
@@ -416,19 +411,20 @@ function reconcileTemplate(tx: Tx, s: TemplateSeed, existingId: string | null): 
 	for (const f of s.printFootprints ?? []) {
 		const fp = seedToFootprint(f);
 		if (!fp.pieces.length || !s.parts.some((p) => p.slug === f.slug)) continue;
-		const cur = tx
-			.select({
-				note: templatePrintGeometry.sourceNote,
-				footprint: templatePrintGeometry.footprint
-			})
-			.from(templatePrintGeometry)
-			.where(
-				and(
-					eq(templatePrintGeometry.templateId, templateId),
-					eq(templatePrintGeometry.slug, f.slug)
+		const cur = await first(
+			tx
+				.select({
+					note: templatePrintGeometry.sourceNote,
+					footprint: templatePrintGeometry.footprint
+				})
+				.from(templatePrintGeometry)
+				.where(
+					and(
+						eq(templatePrintGeometry.templateId, templateId),
+						eq(templatePrintGeometry.slug, f.slug)
+					)
 				)
-			)
-			.get();
+		);
 		const big = fp.pieces.reduce((a, b) => (b.w * b.d > a.w * a.d ? b : a));
 		const row = {
 			footprint: fp as unknown as Record<string, unknown>,
@@ -441,20 +437,18 @@ function reconcileTemplate(tx: Tx, s: TemplateSeed, existingId: string | null): 
 			updatedAt: new Date()
 		};
 		if (!cur) {
-			tx.insert(templatePrintGeometry)
-				.values({ templateId, slug: f.slug, ...row })
-				.run();
+			await tx.insert(templatePrintGeometry).values({ templateId, slug: f.slug, ...row });
 			changed = true;
-		} else if (cur.note === SEED_NOTE && JSON.stringify(cur.footprint) !== JSON.stringify(fp)) {
-			tx.update(templatePrintGeometry)
+		} else if (cur.note === SEED_NOTE && canon(cur.footprint) !== canon(fp)) {
+			await tx
+				.update(templatePrintGeometry)
 				.set(row)
 				.where(
 					and(
 						eq(templatePrintGeometry.templateId, templateId),
 						eq(templatePrintGeometry.slug, f.slug)
 					)
-				)
-				.run();
+				);
 			changed = true;
 		}
 	}
@@ -466,4 +460,13 @@ function pick(cur: object, want: object): Record<string, unknown> {
 	const out: Record<string, unknown> = {};
 	for (const k of Object.keys(want)) out[k] = (cur as Record<string, unknown>)[k];
 	return out;
+}
+
+/** Stable JSON (object keys sorted): Postgres jsonb returns keys in its own order. */
+function canon(v: unknown): string {
+	return JSON.stringify(v, (_k, val) =>
+		val && typeof val === 'object' && !Array.isArray(val)
+			? Object.fromEntries(Object.entries(val).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+			: val
+	);
 }

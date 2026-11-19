@@ -23,7 +23,7 @@ import { meshopt, weld } from '@gltf-transform/functions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import { and, eq } from 'drizzle-orm';
 import { templateModelPath } from '../config';
-import type { Db } from '../db';
+import { first, type DbOrTx } from '../db';
 import { templateModels, templatePrintGeometry } from '../db/schema';
 import type { PrintFootprint } from '#lib/domain/print-footprint.ts';
 import { KitPackError } from './format';
@@ -305,18 +305,16 @@ export async function addNodeToGlb(
  * `buildKitPack` packs it.
  */
 export async function addModelNodeFrom3mf(
-	db: Db,
+	db: DbOrTx,
 	templateId: string,
 	slug: string,
 	threeMfPath: string,
 	log: (m: string) => void = () => {}
 ): Promise<{ slugs: string[]; triangles: number; box: { min: number[]; max: number[] } }> {
 	if (!/^[a-z0-9][a-z0-9-]*$/i.test(slug)) throw new KitPackError('Invalid part slug');
-	const row = db
-		.select()
-		.from(templateModels)
-		.where(eq(templateModels.templateId, templateId))
-		.get();
+	const row = await first(
+		db.select().from(templateModels).where(eq(templateModels.templateId, templateId))
+	);
 	if (!row) throw new KitPackError('The template has no 3D model yet');
 	const path = templateModelPath(templateId);
 	const object = readThreeMfObject(new Uint8Array(readFileSync(threeMfPath)));
@@ -328,10 +326,10 @@ export async function addModelNodeFrom3mf(
 	writeFileSync(tmp, added.glb);
 	renameSync(tmp, path);
 	const version = createHash('sha256').update(added.glb).digest('hex').slice(0, 16);
-	db.update(templateModels)
+	await db
+		.update(templateModels)
 		.set({ slugs: added.slugs, version, size: added.glb.byteLength })
-		.where(eq(templateModels.templateId, templateId))
-		.run();
+		.where(eq(templateModels.templateId, templateId));
 	const min = [Infinity, Infinity, Infinity];
 	const max = [-Infinity, -Infinity, -Infinity];
 	for (let i = 0; i < object.positions.length; i++) {
@@ -361,12 +359,12 @@ const PROJECT_KEYS = [
  * keys into the part's stored print settings (pieces and row), so a 3MF exported later carries them
  * like it does for MakeGood's own parts. The part must already have imported geometry.
  */
-export function applyProjectSettings(
-	db: Db,
+export async function applyProjectSettings(
+	db: DbOrTx,
 	templateId: string,
 	slug: string,
 	threeMfPath: string
-): Record<string, string> {
+): Promise<Record<string, string>> {
 	const files = unzipSync(new Uint8Array(readFileSync(threeMfPath)), {
 		filter: (f) => f.name === 'Metadata/project_settings.config'
 	});
@@ -377,24 +375,25 @@ export function applyProjectSettings(
 	for (const k of PROJECT_KEYS)
 		if (typeof project[k] === 'string') picked[k] = project[k] as string;
 	if (!Object.keys(picked).length) throw new KitPackError('3MF: no print settings found');
-	const row = db
-		.select()
-		.from(templatePrintGeometry)
-		.where(
-			and(eq(templatePrintGeometry.templateId, templateId), eq(templatePrintGeometry.slug, slug))
-		)
-		.get();
+	const row = await first(
+		db
+			.select()
+			.from(templatePrintGeometry)
+			.where(
+				and(eq(templatePrintGeometry.templateId, templateId), eq(templatePrintGeometry.slug, slug))
+			)
+	);
 	if (!row) throw new KitPackError(`${slug} has no print geometry yet (import the 3MF first)`);
 	const fp = structuredClone(row.footprint) as unknown as PrintFootprint;
 	for (const pc of fp.pieces) pc.settings = { ...pc.settings, ...picked };
-	db.update(templatePrintGeometry)
+	await db
+		.update(templatePrintGeometry)
 		.set({
 			footprint: fp as unknown as Record<string, unknown>,
 			settings: { ...row.settings, ...picked }
 		})
 		.where(
 			and(eq(templatePrintGeometry.templateId, templateId), eq(templatePrintGeometry.slug, slug))
-		)
-		.run();
+		);
 	return picked;
 }

@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { strFromU8, unzipSync } from 'fflate';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrintFootprint } from '#lib/domain/print-footprint.ts';
 import { templateHardwarePath, templateModelPath } from '../config';
-import { openDb, runMigrations, type Db } from '../db';
+import { type Db } from '../db';
+import { createTestDb } from '../db/testing';
 import {
 	templateModels,
 	templatePartPlacements,
@@ -27,15 +28,14 @@ const PARTS = ['push-grip', 'tires', 'seat-center'];
 const MOVED = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 7, 8, 9, 1];
 
 let counter = 0;
-/** A fresh install: own data dir (DATABASE_URL is read at call time), migrated and seeded. */
-function freshInstall(): { db: Db; tid: string; dir: string } {
+/** A fresh install: own data dir (DATA_DIR is read at call time), empty Postgres database, seeded. */
+async function freshInstall(): Promise<{ db: Db; tid: string; dir: string }> {
 	const dir = mkdtempSync(join(tmpdir(), `tmt-kp-${process.pid}-${counter++}-`));
-	process.env.DATABASE_URL = join(dir, 'tmt.db');
-	const db = openDb(process.env.DATABASE_URL);
-	runMigrations(db);
-	seedTemplates(db, templateSeeds);
-	const tid = db.select().from(templates).where(eq(templates.slug, SLUG)).get()!.id;
-	return { db, tid, dir };
+	process.env.DATA_DIR = dir;
+	const db = await createTestDb({ max: 2 });
+	await seedTemplates(db, templateSeeds);
+	const [row] = await db.select().from(templates).where(eq(templates.slug, SLUG));
+	return { db, tid: row.id, dir };
 }
 
 function mesh(seed: number): PrintMesh {
@@ -79,23 +79,21 @@ function mesh(seed: number): PrintMesh {
 }
 
 /** A source install holding a kit imported "by an admin", from which packs are built. */
-function sourceKit(note = 'profile.3mf') {
-	const src = freshInstall();
+async function sourceKit(note = 'profile.3mf') {
+	const src = await freshInstall();
 	const { db, tid } = src;
 	mkdirSync(join(src.dir, 'uploads', 'models'), { recursive: true });
 	writeFileSync(templateModelPath(tid), Buffer.from('glTF-model-' + note));
 	writeFileSync(templateHardwarePath(tid), Buffer.from('glTF-hardware'));
-	db.insert(templateModels)
-		.values({
-			templateId: tid,
-			glbPath: templateModelPath(tid),
-			version: 'x',
-			size: 1,
-			slugs: PARTS,
-			sourceNote: 'steps.zip: 3 parts'
-		})
-		.run();
-	PARTS.forEach((slug, i) => {
+	await db.insert(templateModels).values({
+		templateId: tid,
+		glbPath: templateModelPath(tid),
+		version: 'x',
+		size: 1,
+		slugs: PARTS,
+		sourceNote: 'steps.zip: 3 parts'
+	});
+	for (const [i, slug] of PARTS.entries()) {
 		const m = mesh(i);
 		const file = `${slug}.bin`;
 		mkdirSync(printDir(tid), { recursive: true });
@@ -125,7 +123,8 @@ function sourceKit(note = 'profile.3mf') {
 				} as never
 			]
 		};
-		db.update(templatePrintGeometry)
+		await db
+			.update(templatePrintGeometry)
 			.set({
 				footprint: fp as never,
 				hull: [[0, 0]],
@@ -135,23 +134,22 @@ function sourceKit(note = 'profile.3mf') {
 				meshPath: `print/${tid}/${file}`,
 				sourceNote: note
 			})
-			.where(and(eq(templatePrintGeometry.templateId, tid), eq(templatePrintGeometry.slug, slug)))
-			.run();
-	});
-	db.update(templatePartPlacements)
+			.where(and(eq(templatePrintGeometry.templateId, tid), eq(templatePrintGeometry.slug, slug)));
+	}
+	await db
+		.update(templatePartPlacements)
 		.set({ matrix: MOVED, placed: true })
 		.where(
 			and(eq(templatePartPlacements.templateId, tid), eq(templatePartPlacements.slug, 'push-grip'))
-		)
-		.run();
+		);
 	return src;
 }
 
-function makePack(version: string, outDir: string) {
-	const src = sourceKit();
+async function makePack(version: string, outDir: string) {
+	const src = await sourceKit();
 	mkdirSync(outDir, { recursive: true });
 	const outFile = join(outDir, `${SLUG}-${version}.kitpack`);
-	const res = buildKitPack(src.db, { templateSlug: SLUG, version, outFile, log: () => {} });
+	const res = await buildKitPack(src.db, { templateSlug: SLUG, version, outFile, log: () => {} });
 	const bytes = readFileSync(outFile);
 	return {
 		outFile,
@@ -172,12 +170,13 @@ function writeIndex(dir: string, entries: object[]) {
 }
 
 const quiet = () => {};
-const geomOf = (db: Db, tid: string) =>
-	db.select().from(templatePrintGeometry).where(eq(templatePrintGeometry.templateId, tid)).all();
-const rowOf = (db: Db, tid: string, slug: string) => geomOf(db, tid).find((r) => r.slug === slug)!;
+const geomOf = async (db: Db, tid: string) =>
+	await db.select().from(templatePrintGeometry).where(eq(templatePrintGeometry.templateId, tid));
+const rowOf = async (db: Db, tid: string, slug: string) =>
+	(await geomOf(db, tid)).find((r) => r.slug === slug)!;
 
 describe('build', () => {
-	it('keeps only per-object print settings', () => {
+	it('keeps only per-object print settings', async () => {
 		const c = cleanSettings({
 			wall_loops: '4',
 			sparse_infill_density: '15%',
@@ -196,7 +195,7 @@ describe('build', () => {
 		]);
 		expect(c.dropped).toContain('filament_colour');
 	});
-	it('detects a changed mesh in the round trip check', () => {
+	it('detects a changed mesh in the round trip check', async () => {
 		const a = mesh(1);
 		const b = mesh(1);
 		b.paint![0].value = '5';
@@ -206,14 +205,14 @@ describe('build', () => {
 
 describe('kit pack install', () => {
 	let packs: string;
-	let pack: ReturnType<typeof makePack>;
-	beforeEach(() => {
+	let pack: Awaited<ReturnType<typeof makePack>>;
+	beforeEach(async () => {
 		packs = mkdtempSync(join(tmpdir(), 'tmt-kp-packs-'));
-		pack = makePack('1.0.0', packs);
+		pack = await makePack('1.0.0', packs);
 		writeIndex(packs, [pack.entry]);
 	});
 
-	it('strips machine settings, keeps paint counts, leaves legacy pose keys out', () => {
+	it('strips machine settings, keeps paint counts, leaves legacy pose keys out', async () => {
 		expect(pack.res.manifest.contents).toMatchObject({
 			parts: 3,
 			meshes: 3,
@@ -226,7 +225,7 @@ describe('kit pack install', () => {
 	});
 
 	it('records a community part under another license, and the installer still reads the pack', async () => {
-		const src = sourceKit();
+		const src = await sourceKit();
 		const outFile = join(packs, `${SLUG}-1.0.9.kitpack`);
 		const notice = {
 			parts: ['tires'],
@@ -235,7 +234,7 @@ describe('kit pack install', () => {
 			url: 'https://example.test/m',
 			note: 'Credit: someone'
 		};
-		const res = buildKitPack(src.db, {
+		const res = await buildKitPack(src.db, {
 			templateSlug: SLUG,
 			version: '1.0.9',
 			outFile,
@@ -259,13 +258,13 @@ describe('kit pack install', () => {
 				size: bytes.length
 			}
 		]);
-		const { db } = freshInstall();
+		const { db } = await freshInstall();
 		const out = await installKitPacks(db, { dir: packs, download: false, log: quiet });
 		expect(out[0]).toMatchObject({ status: 'installed', version: '1.0.9' });
 	});
 
 	it('installs model, hardware, placements and print geometry into a fresh install', async () => {
-		const { db, tid } = freshInstall();
+		const { db, tid } = await freshInstall();
 		const out = await installKitPacks(db, { dir: packs, download: false, log: quiet });
 		expect(out).toEqual([
 			expect.objectContaining({
@@ -276,13 +275,15 @@ describe('kit pack install', () => {
 				geometry: 3
 			})
 		]);
-		const model = db.select().from(templateModels).where(eq(templateModels.templateId, tid)).get()!;
+		const model = (
+			await db.select().from(templateModels).where(eq(templateModels.templateId, tid))
+		)[0]!;
 		expect(model.sourceNote.startsWith('kitpack:1.0.0')).toBe(true);
 		expect(model.slugs).toEqual(PARTS);
 		expect(readFileSync(templateModelPath(tid)).toString()).toBe('glTF-model-profile.3mf');
 		expect(existsSync(templateHardwarePath(tid))).toBe(true);
 		for (const slug of PARTS) {
-			const r = rowOf(db, tid, slug);
+			const r = await rowOf(db, tid, slug);
 			expect(r.sourceNote).toBe('kitpack:1.0.0');
 			const fp = r.footprint as unknown as PrintFootprint;
 			expect(fp.pieces[0].settings).toEqual({ wall_loops: '4', sparse_infill_density: '15%' });
@@ -294,40 +295,46 @@ describe('kit pack install', () => {
 			expect(m.paint).toEqual(mesh(PARTS.indexOf(slug)).paint);
 			expect(checkRoundTrip(mesh(PARTS.indexOf(slug)), m, slug)).toBeLessThanOrEqual(0.0051);
 		}
-		const pl = db
-			.select()
-			.from(templatePartPlacements)
-			.where(
-				and(
-					eq(templatePartPlacements.templateId, tid),
-					eq(templatePartPlacements.slug, 'push-grip')
+		const pl = (
+			await db
+				.select()
+				.from(templatePartPlacements)
+				.where(
+					and(
+						eq(templatePartPlacements.templateId, tid),
+						eq(templatePartPlacements.slug, 'push-grip')
+					)
 				)
-			)
-			.get()!;
+		)[0]!;
 		expect(pl.matrix).toEqual(MOVED);
 		expect(pl.placed).toBe(true);
 		expect(kitInstallState(SLUG).installing).toBe(false);
 	});
 
 	it('reports installing while it runs', async () => {
-		const { db } = freshInstall();
+		const { db } = await freshInstall();
 		const p = installKitPacks(db, { dir: packs, download: false, log: quiet });
-		expect(kitInstallState(SLUG)).toEqual({
-			installing: true,
-			message: 'Installing MakeGood files…'
-		});
+		// The decision which packs need work now reads the database, so "installing" shows a moment later.
+		await vi.waitFor(
+			() =>
+				expect(kitInstallState(SLUG)).toEqual({
+					installing: true,
+					message: 'Installing MakeGood files…'
+				}),
+			{ interval: 1, timeout: 5000 }
+		);
 		await p;
 		expect(kitInstallState(SLUG).installing).toBe(false);
 	});
 
 	it('is idempotent', async () => {
-		const { db, tid } = freshInstall();
+		const { db, tid } = await freshInstall();
 		await installKitPacks(db, { dir: packs, download: false, log: quiet });
-		const before = JSON.stringify(geomOf(db, tid));
+		const before = JSON.stringify(await geomOf(db, tid));
 		const second = await installKitPacks(db, { dir: packs, download: false, log: quiet });
 		expect(second).toEqual([{ slug: SLUG, status: 'current', version: '1.0.0' }]);
 		// even without the marker a full pass changes nothing
-		const marker = join(process.env.DATABASE_URL!, '..', 'uploads', 'kitpack', `${SLUG}.json`);
+		const marker = join(process.env.DATA_DIR!, 'uploads', 'kitpack', `${SLUG}.json`);
 		expect(existsSync(marker)).toBe(true);
 		writeFileSync(marker, '{}');
 		const third = await installKitPacks(db, { dir: packs, download: false, log: quiet });
@@ -337,63 +344,62 @@ describe('kit pack install', () => {
 			geometry: 0,
 			placements: 0
 		});
-		expect(JSON.stringify(geomOf(db, tid))).toBe(before);
+		expect(JSON.stringify(await geomOf(db, tid))).toBe(before);
 	});
 
 	it('never overwrites admin imports or placement edits', async () => {
-		const { db, tid } = freshInstall();
-		db.insert(user).values({ id: 'adm', name: 'Adm', email: 'adm@example.test' }).run();
+		const { db, tid } = await freshInstall();
+		await db.insert(user).values({ id: 'adm', name: 'Adm', email: 'adm@example.test' });
 		// admin imported one part, the model, and edited a placement
-		db.update(templatePrintGeometry)
+		await db
+			.update(templatePrintGeometry)
 			.set({ sourceNote: 'mine.3mf', height: 99 })
 			.where(
 				and(eq(templatePrintGeometry.templateId, tid), eq(templatePrintGeometry.slug, 'tires'))
-			)
-			.run();
-		db.insert(templateModels)
-			.values({
-				templateId: tid,
-				glbPath: templateModelPath(tid),
-				version: 'mine',
-				size: 1,
-				slugs: ['tires'],
-				sourceNote: 'upload.zip: 1 parts'
-			})
-			.run();
-		mkdirSync(join(process.env.DATABASE_URL!, '..', 'uploads', 'models'), { recursive: true });
+			);
+		await db.insert(templateModels).values({
+			templateId: tid,
+			glbPath: templateModelPath(tid),
+			version: 'mine',
+			size: 1,
+			slugs: ['tires'],
+			sourceNote: 'upload.zip: 1 parts'
+		});
+		mkdirSync(join(process.env.DATA_DIR!, 'uploads', 'models'), { recursive: true });
 		writeFileSync(templateModelPath(tid), 'admin glb');
-		db.update(templatePartPlacements)
+		await db
+			.update(templatePartPlacements)
 			.set({ matrix: MOVED.map((v) => v + 1), updatedBy: 'adm' })
 			.where(
 				and(
 					eq(templatePartPlacements.templateId, tid),
 					eq(templatePartPlacements.slug, 'push-grip')
 				)
-			)
-			.run();
+			);
 		const out = await installKitPacks(db, { dir: packs, download: false, log: quiet });
 		expect(out[0]).toMatchObject({ status: 'installed', model: false, geometry: 2 });
-		expect(rowOf(db, tid, 'tires')).toMatchObject({ sourceNote: 'mine.3mf', height: 99 });
-		expect(rowOf(db, tid, 'push-grip').sourceNote).toBe('kitpack:1.0.0');
+		expect(await rowOf(db, tid, 'tires')).toMatchObject({ sourceNote: 'mine.3mf', height: 99 });
+		expect((await rowOf(db, tid, 'push-grip')).sourceNote).toBe('kitpack:1.0.0');
 		expect(readFileSync(templateModelPath(tid)).toString()).toBe('admin glb');
-		expect(db.select().from(templateModels).get()!.version).toBe('mine');
-		const pl = db
-			.select()
-			.from(templatePartPlacements)
-			.where(
-				and(
-					eq(templatePartPlacements.templateId, tid),
-					eq(templatePartPlacements.slug, 'push-grip')
+		expect((await db.select().from(templateModels))[0]!.version).toBe('mine');
+		const pl = (
+			await db
+				.select()
+				.from(templatePartPlacements)
+				.where(
+					and(
+						eq(templatePartPlacements.templateId, tid),
+						eq(templatePartPlacements.slug, 'push-grip')
+					)
 				)
-			)
-			.get()!;
+		)[0]!;
 		expect(pl.matrix).toEqual(MOVED.map((v) => v + 1));
 	});
 
 	it('upgrades older pack data to a newer pack', async () => {
-		const { db, tid } = freshInstall();
+		const { db, tid } = await freshInstall();
 		await installKitPacks(db, { dir: packs, download: false, log: quiet });
-		const v2 = makePack('1.1.0', packs);
+		const v2 = await makePack('1.1.0', packs);
 		writeIndex(packs, [pack.entry, v2.entry]);
 		const out = await installKitPacks(db, { dir: packs, download: false, log: quiet });
 		expect(out[0]).toMatchObject({
@@ -402,29 +408,29 @@ describe('kit pack install', () => {
 			model: true,
 			geometry: 3
 		});
-		expect(rowOf(db, tid, 'tires').sourceNote).toBe('kitpack:1.1.0');
-		expect(db.select().from(templateModels).get()!.sourceNote.startsWith('kitpack:1.1.0')).toBe(
-			true
-		);
+		expect((await rowOf(db, tid, 'tires')).sourceNote).toBe('kitpack:1.1.0');
+		expect(
+			(await db.select().from(templateModels))[0]!.sourceNote.startsWith('kitpack:1.1.0')
+		).toBe(true);
 	});
 
 	it('upgrades 1.0.0 pack data to 1.0.1 with source groups and leaves admin rows alone', async () => {
-		const { db, tid } = freshInstall();
+		const { db, tid } = await freshInstall();
 		await installKitPacks(db, { dir: packs, download: false, log: quiet });
-		expect(rowOf(db, tid, 'tires').sourceNote).toBe('kitpack:1.0.0');
+		expect((await rowOf(db, tid, 'tires')).sourceNote).toBe('kitpack:1.0.0');
 		expect(
-			(rowOf(db, tid, 'push-grip').footprint as unknown as PrintFootprint).groups
+			((await rowOf(db, tid, 'push-grip')).footprint as unknown as PrintFootprint).groups
 		).toBeUndefined();
 		// an admin re-imported one part since
-		db.update(templatePrintGeometry)
+		await db
+			.update(templatePrintGeometry)
 			.set({ sourceNote: 'mine.3mf', height: 99 })
 			.where(
 				and(eq(templatePrintGeometry.templateId, tid), eq(templatePrintGeometry.slug, 'tires'))
-			)
-			.run();
+			);
 		// pack 1.0.1: the same kit, push-grip with a source group
-		const src = sourceKit();
-		const row = rowOf(src.db, src.tid, 'push-grip');
+		const src = await sourceKit();
+		const row = await rowOf(src.db, src.tid, 'push-grip');
 		const fp = structuredClone(row.footprint) as unknown as PrintFootprint;
 		fp.pieces[0].copies = 2;
 		fp.groups = [
@@ -454,7 +460,7 @@ describe('kit pack install', () => {
 				]
 			}
 		];
-		src.db
+		await src.db
 			.update(templatePrintGeometry)
 			.set({ footprint: fp as never })
 			.where(
@@ -462,10 +468,9 @@ describe('kit pack install', () => {
 					eq(templatePrintGeometry.templateId, src.tid),
 					eq(templatePrintGeometry.slug, 'push-grip')
 				)
-			)
-			.run();
+			);
 		const outFile = join(packs, `${SLUG}-1.0.1.kitpack`);
-		buildKitPack(src.db, { templateSlug: SLUG, version: '1.0.1', outFile, log: quiet });
+		await buildKitPack(src.db, { templateSlug: SLUG, version: '1.0.1', outFile, log: quiet });
 		const bytes = readFileSync(outFile);
 		writeIndex(packs, [
 			pack.entry,
@@ -484,8 +489,8 @@ describe('kit pack install', () => {
 			geometry: 2,
 			keptAdmin: 1
 		});
-		expect(rowOf(db, tid, 'tires')).toMatchObject({ sourceNote: 'mine.3mf', height: 99 });
-		const up = rowOf(db, tid, 'push-grip');
+		expect(await rowOf(db, tid, 'tires')).toMatchObject({ sourceNote: 'mine.3mf', height: 99 });
+		const up = await rowOf(db, tid, 'push-grip');
 		expect(up.sourceNote).toBe('kitpack:1.0.1');
 		const groups = (up.footprint as unknown as PrintFootprint).groups!;
 		expect(groups).toHaveLength(1);
@@ -493,19 +498,19 @@ describe('kit pack install', () => {
 	});
 
 	it('refuses a pack whose sha256 does not match the index', async () => {
-		const { db, tid } = freshInstall();
+		const { db, tid } = await freshInstall();
 		writeIndex(packs, [{ ...pack.entry, sha256: 'b'.repeat(64) }]);
 		const out = await installKitPacks(db, { dir: packs, download: false, log: quiet });
 		expect(out[0]).toMatchObject({ slug: SLUG, status: 'failed' });
 		expect((out[0] as { reason: string }).reason).toMatch(/sha256 mismatch/);
 		expect(
-			db.select().from(templateModels).where(eq(templateModels.templateId, tid)).get()
+			(await db.select().from(templateModels).where(eq(templateModels.templateId, tid)))[0]
 		).toBeUndefined();
-		expect(rowOf(db, tid, 'tires').sourceNote).toBe('seed');
+		expect((await rowOf(db, tid, 'tires')).sourceNote).toBe('seed');
 	});
 
 	it('refuses a modified pack file', async () => {
-		const { db } = freshInstall();
+		const { db } = await freshInstall();
 		const bytes = readFileSync(pack.outFile);
 		bytes[bytes.length - 40] ^= 0xff;
 		writeFileSync(pack.outFile, bytes);
@@ -514,13 +519,13 @@ describe('kit pack install', () => {
 	});
 
 	it('does nothing when the pack is absent and downloads are off', async () => {
-		const { db, tid } = freshInstall();
+		const { db, tid } = await freshInstall();
 		const empty = mkdtempSync(join(tmpdir(), 'tmt-kp-empty-'));
 		writeIndex(empty, [pack.entry]);
 		const out = await installKitPacks(db, { dir: empty, download: false, log: quiet });
 		expect(out[0]).toMatchObject({ slug: SLUG, status: 'unavailable' });
 		expect(
-			db.select().from(templateModels).where(eq(templateModels.templateId, tid)).get()
+			(await db.select().from(templateModels).where(eq(templateModels.templateId, tid)))[0]
 		).toBeUndefined();
 		expect(kitInstallState(SLUG).installing).toBe(false);
 		// no index at all: also fine
@@ -530,7 +535,7 @@ describe('kit pack install', () => {
 	});
 
 	it('downloads a missing pack (file:// URL) and verifies it', async () => {
-		const { db, tid } = freshInstall();
+		const { db, tid } = await freshInstall();
 		const empty = mkdtempSync(join(tmpdir(), 'tmt-kp-dl-'));
 		writeIndex(empty, [pack.entry]);
 		const out = await installKitPacks(db, {
@@ -541,10 +546,10 @@ describe('kit pack install', () => {
 		});
 		expect(out[0]).toMatchObject({ status: 'installed', model: true });
 		expect(
-			db.select().from(templateModels).where(eq(templateModels.templateId, tid)).get()
+			(await db.select().from(templateModels).where(eq(templateModels.templateId, tid)))[0]
 		).toBeDefined();
 		// a wrong hash from the download is refused
-		const bad = freshInstall();
+		const bad = await freshInstall();
 		writeIndex(empty, [{ ...pack.entry, sha256: 'c'.repeat(64) }]);
 		const out2 = await installKitPacks(bad.db, {
 			dir: empty,

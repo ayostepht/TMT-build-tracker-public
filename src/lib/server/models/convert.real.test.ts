@@ -16,7 +16,7 @@ describe.skipIf(!zip || !existsSync(zip))('convertStepZip (real STEP zip)', () =
 		'builds a GLB with one node per slug from a few small parts',
 		{ timeout: 120_000 },
 		async () => {
-			process.env.DATABASE_URL = join(mkdtempSync(join(tmpdir(), 'tmt-conv-')), 't.db');
+			process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'tmt-conv-'));
 			const progress: number[] = [];
 			const res = await convertStepZip(
 				zip!,

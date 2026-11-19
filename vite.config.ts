@@ -44,6 +44,12 @@ export default defineConfig({
 				test: {
 					name: 'server',
 					environment: 'node',
+					// One migrated template Postgres database per run; see src/lib/server/db/testing.ts.
+					globalSetup: ['./src/lib/server/db/test-global-setup.ts'],
+					setupFiles: ['./src/lib/server/db/test-setup.ts'],
+					// Cloning/migrating/seeding databases is slow when the whole suite runs in parallel.
+					testTimeout: 30_000,
+					hookTimeout: 30_000,
 					include: ['src/**/*.{test,spec}.{js,ts}'],
 					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}']
 				}
