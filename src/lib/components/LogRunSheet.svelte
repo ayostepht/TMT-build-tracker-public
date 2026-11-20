@@ -494,12 +494,16 @@
 				: {})
 		} as PrintRunInput & { split?: PartialSplitBody };
 		const before = snapshotParts(ctx.view, slugs);
+		// Read everything derived from props now: once the refreshed view drops this plate from the
+		// card that hosts the sheet (a Now printing card, say), the card and its derived values are
+		// gone, and reading them after the await is what raised Svelte's derived_inert warning.
+		const what = label();
+		const buildId = ctx.id;
 		try {
 			const { id: runId, ids } = await logRun(ctx.id, input);
 			await ctx.refresh();
-			const buildId = ctx.id;
 			open = false;
-			toasts.push(`Logged ${label()} · ${result}`, {
+			toasts.push(`Logged ${what} · ${result}`, {
 				label: 'Undo',
 				run: async () => {
 					const ok = await ctx.act(() => undoRun(buildId, runId, before, ids));
@@ -818,6 +822,12 @@
 		line-height: 1;
 		padding: var(--sp-2) var(--sp-5);
 		cursor: pointer;
+	}
+	@media (pointer: coarse), (max-width: 760px) {
+		.x {
+			min-width: 44px;
+			min-height: 44px;
+		}
 	}
 	fieldset {
 		border: 0;

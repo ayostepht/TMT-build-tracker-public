@@ -15,6 +15,9 @@
 
 	// Links go to this build's Print tab; the Print tab reads the hash (#plate-N / #part-slug).
 	const printUrl = $derived(resolve('/(app)/builds/[id]/print', { id: ctx.id }));
+
+	// A shortened note opens to its full text on tap (a hover title does nothing on a phone).
+	let opened = $state<Record<string, boolean>>({});
 </script>
 
 <section
@@ -27,11 +30,18 @@
 		<ul class="activity">
 			{#each shown as a (a.id)}
 				<li>
-					<span
+					<span class="atext"
 						>{#each describeActivitySegments(a, ctx.view) as s, i (i)}{#if s.plate !== undefined}<a
 									class="alink"
 									href="{printUrl}#plate-{s.plate}">{s.text}</a
 								>{:else if s.part}<a class="alink" href="{printUrl}#part-{s.part}">{s.text}</a
+								>{:else if s.full}<button
+									type="button"
+									class="anote"
+									title={s.full}
+									aria-expanded={!!opened[a.id + i]}
+									onclick={() => (opened[a.id + i] = !opened[a.id + i])}
+									>{opened[a.id + i] ? s.full : s.text}</button
 								>{:else}{s.text}{/if}{/each}</span
 					><time datetime={a.at}>{ago(a.at, ctx.now)}</time>
 				</li>
@@ -46,3 +56,34 @@
 		<p class="empty">Nothing yet. Changes on this build show up here.</p>
 	{/if}
 </section>
+
+<style>
+	.atext {
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+	.anote {
+		border: 0;
+		background: none;
+		padding: 0;
+		font: inherit;
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+		overflow-wrap: anywhere;
+	}
+	/* Phones: rows are at least 44px tall and the in-row links get a taller hit area without moving the text. */
+	@media (pointer: coarse), (max-width: 760px) {
+		.activity li {
+			align-items: center;
+			min-height: 44px;
+			box-sizing: border-box;
+		}
+		.alink,
+		.anote {
+			display: inline-block;
+			padding-block: 12px;
+			margin-block: -12px;
+		}
+	}
+</style>

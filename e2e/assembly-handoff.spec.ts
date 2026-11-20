@@ -170,6 +170,8 @@ test('assembly progress and checks update live for a second user', async ({ page
 	const step = (p: typeof page) => p.locator('.astep[data-step="frame.handle"]');
 	await step(editor.page).getByLabel('Handle front sits flat (no warp gap)').check();
 	await step(editor.page).getByRole('button', { name: 'Mark step done' }).click();
+	// parts of the step are not printed: it asks first, then goes through
+	await step(editor.page).getByRole('button', { name: 'Mark done anyway' }).click();
 	await expect(step(editor.page)).toHaveAttribute('data-done', 'true');
 
 	await expect(progress).toContainText('1 of');
