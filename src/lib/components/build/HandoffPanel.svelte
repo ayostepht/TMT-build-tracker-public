@@ -1,4 +1,11 @@
 <script lang="ts">
+	import {
+		HANDOFF_CONTACT_MAX,
+		HANDOFF_LOCATION_MAX,
+		HANDOFF_NOTES_MAX,
+		HANDOFF_ORGANIZATION_MAX,
+		HANDOFF_RECIPIENT_MAX
+	} from '#lib/domain/limits.ts';
 	import AskDialog from '#lib/components/AskDialog.svelte';
 	import { createAsk } from '#lib/client/ask.svelte.ts';
 	import { untrack } from 'svelte';
@@ -112,16 +119,27 @@
 		<div class="form-grid">
 			<label class="field"
 				>Recipient name
-				<input bind:value={form.recipientName} oninput={touch} disabled={!ctx.canEdit} /></label
+				<input
+					bind:value={form.recipientName}
+					oninput={touch}
+					disabled={!ctx.canEdit}
+					maxlength={HANDOFF_RECIPIENT_MAX}
+				/></label
 			>
 			<label class="field"
 				>Organization or hospital
-				<input bind:value={form.organization} oninput={touch} disabled={!ctx.canEdit} /></label
+				<input
+					bind:value={form.organization}
+					oninput={touch}
+					disabled={!ctx.canEdit}
+					maxlength={HANDOFF_ORGANIZATION_MAX}
+				/></label
 			>
 			<label class="field"
 				>Contact (team members only)
 				<input
 					bind:value={form.contact}
+					maxlength={HANDOFF_CONTACT_MAX}
 					oninput={touch}
 					disabled={!ctx.canEdit}
 					placeholder="Email or phone, kept off the summary"
@@ -138,12 +156,21 @@
 			>
 			<label class="field span2"
 				>Location
-				<input bind:value={form.location} oninput={touch} disabled={!ctx.canEdit} /></label
+				<input
+					bind:value={form.location}
+					oninput={touch}
+					disabled={!ctx.canEdit}
+					maxlength={HANDOFF_LOCATION_MAX}
+				/></label
 			>
 			<label class="field span2"
 				>Notes (fitting, adjustments, follow-up)
-				<textarea rows="3" bind:value={form.notes} oninput={touch} disabled={!ctx.canEdit}
-				></textarea></label
+				<textarea
+					rows="3"
+					bind:value={form.notes}
+					oninput={touch}
+					disabled={!ctx.canEdit}
+					maxlength={HANDOFF_NOTES_MAX}></textarea></label
 			>
 		</div>
 		{#if ctx.canEdit}

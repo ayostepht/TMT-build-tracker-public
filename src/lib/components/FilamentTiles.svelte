@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SPOOL_NOTE_MAX } from '#lib/domain/limits.ts';
 	import {
 		fmt,
 		fmtH,
@@ -203,7 +204,7 @@
 								>Note (optional)
 								<input
 									type="text"
-									maxlength="200"
+									maxlength={SPOOL_NOTE_MAX}
 									placeholder="e.g. bought another roll"
 									data-testid="spool-note"
 									bind:value={note}

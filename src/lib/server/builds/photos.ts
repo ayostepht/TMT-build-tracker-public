@@ -1,3 +1,4 @@
+import { PHOTO_CAPTION_MAX } from './limits';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -62,7 +63,8 @@ export async function addPhoto(
 	if (typeof input.kind !== 'string' || !(PHOTO_KINDS as readonly string[]).includes(input.kind))
 		throw new ApiError(400, 'Unknown photo kind');
 	const kind = input.kind as PhotoKind;
-	const caption = typeof input.caption === 'string' ? input.caption.trim().slice(0, 300) : '';
+	const caption =
+		typeof input.caption === 'string' ? input.caption.trim().slice(0, PHOTO_CAPTION_MAX) : '';
 	const full = checked(input.file, MAX_PHOTO_BYTES, 'photo');
 	const thumb = input.thumb ? checked(input.thumb, MAX_THUMB_BYTES, 'thumbnail') : null;
 

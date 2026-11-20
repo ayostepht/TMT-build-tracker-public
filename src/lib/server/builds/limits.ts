@@ -1,4 +1,16 @@
-/** Length caps for build free-text fields, shared by create and update. */
-export const BUILD_NAME_MAX = 200;
-export const BUILD_RECIPIENT_MAX = 200;
-export const BUILD_HOSPITAL_MAX = 200;
+/** Length caps for build free-text fields; the numbers live in the shared domain module. */
+export {
+	ASSEMBLY_NOTE_MAX,
+	BUILD_HOSPITAL_MAX,
+	BUILD_NAME_MAX,
+	BUILD_RECIPIENT_MAX,
+	HANDOFF_CONTACT_MAX,
+	HANDOFF_LOCATION_MAX,
+	HANDOFF_NOTES_MAX,
+	HANDOFF_ORGANIZATION_MAX,
+	HANDOFF_RECIPIENT_MAX,
+	PHOTO_CAPTION_MAX,
+	RUN_NOTE_MAX,
+	SPOOL_NAME_MAX,
+	SPOOL_NOTE_MAX
+} from '#lib/domain/limits.ts';

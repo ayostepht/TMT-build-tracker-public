@@ -33,6 +33,7 @@ import {
 } from './files';
 import type { DesignRole } from './mutate';
 import { isObj } from '#lib/domain/guards.ts';
+import { DESIGN_NAME_MAX } from '#lib/domain/limits.ts';
 
 /** Most designs one list call returns. */
 const LIST_LIMIT = 500;
@@ -68,7 +69,8 @@ function bad(msg: string): never {
 }
 
 function designName(v: unknown): string {
-	if (typeof v !== 'string' || !v.trim() || v.length > 100) bad('name must be 1 to 100 characters');
+	if (typeof v !== 'string' || !v.trim() || v.length > DESIGN_NAME_MAX)
+		bad(`name must be 1 to ${DESIGN_NAME_MAX} characters`);
 	return v.trim();
 }
 

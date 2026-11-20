@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ASSEMBLY_NOTE_MAX } from '#lib/domain/limits.ts';
 	import { resolve } from '$app/paths';
 	import { setAssemblyItem, guidePageImageUrl } from '#lib/client/api.ts';
 	import {
@@ -219,6 +220,7 @@
 							<span class="lab">Notes</span>
 							<textarea
 								rows="2"
+								maxlength={ASSEMBLY_NOTE_MAX}
 								placeholder={ctx.canEdit ? 'Anything to remember about this step' : ''}
 								value={si?.note ?? ''}
 								readonly={!ctx.canEdit}

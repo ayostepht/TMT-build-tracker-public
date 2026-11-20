@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { BUILD_HOSPITAL_MAX, BUILD_NAME_MAX, BUILD_RECIPIENT_MAX } from '#lib/domain/limits.ts';
 	import { enhance } from '$app/forms';
 	import type { PageProps } from './$types';
 
@@ -20,9 +21,13 @@
 	{:else}
 		<form class="card stack" method="post" use:enhance>
 			{#if form?.error}<div class="error" role="alert">{form.error}</div>{/if}
-			<label class="field">Name<input name="name" required maxlength="200" /></label>
-			<label class="field">Recipient (optional)<input name="recipient" /></label>
-			<label class="field">Hospital (optional)<input name="hospital" /></label>
+			<label class="field">Name<input name="name" required maxlength={BUILD_NAME_MAX} /></label>
+			<label class="field"
+				>Recipient (optional)<input name="recipient" maxlength={BUILD_RECIPIENT_MAX} /></label
+			>
+			<label class="field"
+				>Hospital (optional)<input name="hospital" maxlength={BUILD_HOSPITAL_MAX} /></label
+			>
 			{#if data.workspaces.length > 1}
 				<label class="field"
 					>Create in
