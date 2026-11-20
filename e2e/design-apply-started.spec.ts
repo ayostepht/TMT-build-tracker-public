@@ -40,8 +40,13 @@ async function viewOf(page: Page, buildId: string): Promise<View> {
 // Plate identity (numbers, names, parts); times may legitimately change (a linked job sets one).
 const platesOf = (v: View) => JSON.stringify(v.plates.map((p) => [p.number, p.name, p.parts]));
 const hexOf = (v: View, key: string) => v.filaments.find((f) => f.key === key)!.hex.toLowerCase();
+// The view's `state` record has no defined key order (unordered DB read), so sort by slug.
 const statesOf = (v: View) =>
-	JSON.stringify(Object.entries(v.state).map(([slug, s]) => [slug, s.status]));
+	JSON.stringify(
+		Object.entries(v.state)
+			.map(([slug, s]) => [slug, s.status])
+			.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+	);
 
 /**
  * Saves a design (private) from a separate source build in the chapter that recolors primary and accent (PETG, so
