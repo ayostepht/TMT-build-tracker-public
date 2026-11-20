@@ -2,6 +2,9 @@
 // then clones it (`CREATE DATABASE … TEMPLATE …`, tens of ms) via `createTestDb()` in testing.ts.
 // Teardown drops the template and every clone, even those a crashed test file left behind.
 import { randomBytes } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import postgres from 'postgres';
 import type { TestProject } from 'vitest/node';
 import { openDb, runMigrations, closeDb } from './index';
@@ -57,6 +60,23 @@ function withDatabase(url: string, name: string): string {
 }
 
 export default async function setup(project: TestProject) {
+	// One temp root per run: workers inherit TMPDIR, so every `mkdtemp(tmpdir())` in a test file
+	// (and test-setup.ts's data directory) lands inside it and is removed in teardown, even for a
+	// file whose afterAll never ran (all tests skipped, worker killed). Skipped when the caller
+	// already points TMT_TEST_KEEP_TMP at something: then nothing is redirected or removed.
+	let dataRoot: string | undefined;
+	if (!process.env.TMT_TEST_KEEP_TMP) {
+		dataRoot = mkdtempSync(join(tmpdir(), 'tmt-test-run-'));
+		process.env.TMPDIR = dataRoot;
+	}
+	const removeDataRoot = () => {
+		if (!dataRoot) return;
+		try {
+			rmSync(dataRoot, { recursive: true, force: true });
+		} catch {
+			// never fail a run over cleanup
+		}
+	};
 	const adminUrl = process.env.TEST_DATABASE_URL || DEFAULT_TEST_DATABASE_URL;
 	const run = randomBytes(4).toString('hex');
 	const prefix = `tmt_t_${run}_`;
@@ -72,6 +92,7 @@ export default async function setup(project: TestProject) {
 		await admin.unsafe(`create database ${template}`);
 	} catch (e) {
 		await admin.end({ timeout: 1 }).catch(() => {});
+		removeDataRoot();
 		throw new Error(
 			`Cannot reach the test Postgres at ${new URL(adminUrl).host} (${(e as Error).message}).\n` +
 				`Start it with scripts/dev-postgres.sh, or set TEST_DATABASE_URL to a Postgres the role can CREATE DATABASE on.`,
@@ -99,5 +120,6 @@ export default async function setup(project: TestProject) {
 			);
 		}
 		await admin.end({ timeout: 5 });
+		removeDataRoot();
 	};
 }
