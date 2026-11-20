@@ -31,6 +31,9 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   rehearsal before any migration reaches `main` (rules in `docs/dev/HANDOFF.md`).
 - **Live (sixth deploy, 2026-11-20):** `sha-828df84`, everything through #26. No
   migrations since `0001`. The maintainer confirmed the speed-up on the live site.
+- **Merged, not yet deployed:** #27 leave and delete teams (member removal, role changes and
+  account deletion share the `team:<id>` lock), #28 the kit layout comes first in the
+  arranger. No migrations.
 - **Speed (2026-11-20):** pages were slow because of sequential database round trips (the app
   and the database are a network hop apart). Measured through a latency proxy at 40 ms per
   round trip, before → after #18/#19: build page 2.3 s → 0.6 s, builds list 3.0 → 1.1 s, team
@@ -81,6 +84,21 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - Production connections: one pool, `DATABASE_POOL_MAX` default 10 (3 kept warm). Confirm the
   Supabase pooler's pool size in the dashboard; if it is under 10, set `DATABASE_POOL_MAX=6`.
   Document the guidance in `docs/guides/environment.md` and `hosting.md` [release-pwa].
+- Arranger (#28): the source layout (uploaded plates, else the kit layout for the bed) is
+  kept; `domain/arrange-source.ts`. Standard palette on a 256 mm bed gives 25 plates (kit 24
+  plus a split of the rims), where the old default path gave 21. Stored arrangements carry
+  `v: 2`; older ones are still checked against the previous planner and are never rewritten.
+  Questions with the maintainer: may moved parts join an existing multi-part plate; store
+  the author's positions in the kit pack; names of moved plates; a "reset to the kit layout"
+  preview for existing arranged builds. `print-template.spec.ts:53` saw a connection reset
+  once in 16 local repeats on the branch (none on main, CI green): watch it.
+- Part-level printing (start and log a chosen subset of a plate) is being built in the
+  sibling repository; port it here when it lands. What exists today: a single part can be set
+  to Printing from its own row, and "Printed" on the plate then logs only the parts that are
+  Printing (grams proposed are the whole plate's).
+- Teams follow-ups: Better Auth's `/organization/delete` is still enabled and takes no team
+  lock (disable it and route deletion through `deleteTeam`); a team joined while the account
+  is being deleted isn't locked.
 - `member` has no unique index on (organization, user); Better Auth prevents duplicates in
   the app. An additive unique index would need a check for existing duplicates first and the
   maintainer's sign-off (schema).

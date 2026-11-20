@@ -22,6 +22,7 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 - A way back to the home page: the home page opens for signed-in visitors too, the app has a "Home page" link in the footer and account menu, the demo banner has "Leave the demo", and signing out lands on the home page. The installed app still opens on your builds.
 - Link previews: sharing the site's address in Facebook, Messages, Discord or Slack shows a card with the chair, the name and a one-line description.
 - Invitations: a "Share" button on phones, a way out when an invite is opened with the wrong account (sign out and use another; the invited address is shown masked), and a link to the team from an invite that was already used.
+- Leave a team, or delete one, from its Members page. The only owner chooses who takes over before leaving; deleting asks for the team's name and lists what goes. Removing a member hands their builds and printers in that team to an owner.
 - "Send feedback" in the footers opens a new issue on GitHub.
 - Hosting guide and deploy files for Fly.io, Railway and your own server behind a Cloudflare Tunnel, with a Supabase database.
 
@@ -31,6 +32,7 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 - Printers connect only through OctoEverywhere shared links (Elegoo, Klipper with Moonraker, OctoPrint), or are added as "not connected" to log prints by hand. The server never connects to your home network.
 - Chapters are called teams everywhere.
 - A new look: warm paper and ink colors with one brick accent, in light and dark.
+- Plates follow the kit's layout first (or your uploaded file's): a plate stays as the kit has it while its parts share a filament, a part that is alone on its plate stays alone, only parts whose filament no longer matches move (to new plates at the end), and brims count toward a part's space. Plates keep the kit's numbers. Existing builds keep their plates until you re-arrange them.
 - Faster pages: the app runs far fewer database queries one after another (opening a build, the builds list, the team page and creating a build), keeps a few database connections warm, and shuts down within a second when asked. New optional settings `DATABASE_IDLE_TIMEOUT_S`, `DATABASE_WARM_CONNECTIONS` and `DATABASE_PREPARE` (see the environment guide).
 - Tracking on a phone: one notification at a time with a larger Undo that stays 12 seconds; the whole assembly checklist row is tappable, and marking a step done while its parts are not printed asks first; the activity list shows a print's grams and note; "Now printing" and "Next up" come before the builds list on a team page.
 - Larger tap targets on phones for pills, tabs, footer links and the setup wizard's options.

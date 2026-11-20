@@ -26,7 +26,12 @@ _Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 - `main` 828df84 is live (sixth deploy, `sha-828df84`, #12 to #26); the maintainer confirmed
   the site is much faster.
-- No pull requests open, no agents running. The session's worktrees and the journey audit
+- Merged after the sixth deploy and waiting for the maintainer to pull: #27 (leave and
+  delete teams) and #28 (kit layout first in the arranger).
+- Sibling repository: the maintainer said the arranger change may be shared there; the plan is
+  a pull request into its `edge` with the port (async to sync DB calls). Part-level printing
+  is built there by its developer and ported here afterwards.
+- No pull requests open here. The session's worktrees and the journey audit
   screenshots were session-local.
 - Sibling repository: resource-limit back-port open there (`fix/resource-limits`); carry-overs
   in STATUS.
