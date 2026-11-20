@@ -167,3 +167,29 @@ export function pieceBrimMm(
 	const m = /(\d+(?:[.,]\d+)?)\s*mm/i.exec(partBrimText ?? '');
 	return m ? clamp(parseFloat(m[1].replace(',', '.'))) : 0;
 }
+
+/**
+ * True when two parts are the same printed geometry (the wheel rim halves: one object, two colors): the
+ * same number of pieces with the same sizes, copies per unit and outline, and the same units per plate.
+ * Names and meshes are not compared (the parts are named for what they are, not for their shape).
+ */
+export function sameGeometry(a: PrintFootprint, b: PrintFootprint): boolean {
+	if (a.pieces.length !== b.pieces.length) return false;
+	if ((a.unitsPerPlate ?? null) !== (b.unitsPerPlate ?? null)) return false;
+	return a.pieces.every((pc, i) => {
+		const o = b.pieces[i];
+		if (
+			Math.abs(pc.w - o.w) >= 0.05 ||
+			Math.abs(pc.d - o.d) >= 0.05 ||
+			Math.max(1, pc.copies) !== Math.max(1, o.copies)
+		)
+			return false;
+		if (!pc.hull || !o.hull) return true;
+		return (
+			pc.hull.length === o.hull.length &&
+			pc.hull.every(
+				(p, k) => Math.abs(p[0] - o.hull![k][0]) < 0.05 && Math.abs(p[1] - o.hull![k][1]) < 0.05
+			)
+		);
+	});
+}

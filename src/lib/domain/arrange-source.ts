@@ -9,15 +9,27 @@
  *     it. It is not re-packed, merged with another plate or given a brim margin ("trusted as authored").
  *  B. Only what must move moves. A part leaves its source plate when its filament no longer matches
  *     the rest (a design that gives two parts of one kit color different colors), or when the plate
- *     cannot be used on the chosen bed. The largest same-filament group stays in place; the movers (and
- *     parts the source does not know, e.g. a variant) go to NEW plates, packed together by the arranger
- *     with their brims counted. They never join an existing plate: fewer surprises over fewer plates.
+ *     cannot be used on the chosen bed. The largest same-filament group stays in place. A part that left
+ *     for its filament first tries to JOIN an existing plate (rule F); the movers that do not join, and
+ *     parts the source does not know (e.g. a variant), go to NEW plates, packed together by the arranger
+ *     with their brims counted.
  *  C. A plate with exactly one part in the source is sacred: it keeps the relaxed safe area, never
  *     receives another part and keeps its place.
+ *  F. (planner 3) A moved part may join a plate that was already a multi-part plate in the source, when the
+ *     plate prints in the part's own filament only, prints as often as the part needs, and stays at or
+ *     under `JOIN_MAX_UTILISATION` of the usable bed. The plate's parts keep their places; the newcomer
+ *     is fitted into the free space with the printer's normal gap (brims counted on both sides, bed
+ *     margin and keep-outs kept). Most room left first, then the lowest plate number.
+ *  G. (planner 3) A plate that is printed in runs of its own is ONE plate with the footprint of ONE print
+ *     (see `isRunPlate`): the wheel rims, one object printed in two colors. Never split for "not fitting
+ *     together": its parts are never on the bed at the same time.
  *
  * Plates keep the source's numbers (so they match the kit's guide); new plates continue after the last.
  * Flat rotations about Z only (see `arrange.ts`): nothing here can tilt or stand a part up.
  */
+import { boxOrients, fitOutline, inflateOutline, type Pt } from './geom2d.ts';
+import { nestOutlines, type OptItem } from './plate-optimize.ts';
+import { sameGeometry } from './print-footprint.ts';
 import {
 	arrange,
 	defaultCompatible,
@@ -35,10 +47,35 @@ export interface SourcePlate {
 	number: number;
 	name: string;
 	runs?: number;
+	/** Each part of the plate is printed in runs of its own (`runs` each), never together on one bed. */
+	perPartRuns?: boolean;
 	/** Part slugs on the plate. */
 	parts: string[];
 	items?: ArrangedItem[];
 }
+
+/** Which rules a plan follows: an arrangement is checked for staleness by the planner that made it. */
+export interface PlannerRules {
+	/** G: a plate printed in runs of its own is one plate with the footprint of one print. */
+	perRun: boolean;
+	/** F: a part that left its plate for its filament may join an existing multi-part plate. */
+	join: boolean;
+}
+/** Planner 2 (the kit layout comes first): no run plates, no joining. */
+export const RULES_V2: PlannerRules = { perRun: false, join: false };
+/** Planner 3: run plates stay one plate, moved parts may join. */
+export const RULES_V3: PlannerRules = { perRun: true, join: true };
+
+/**
+ * Crowding limit for a part that joins a plate: the plate's used share of its usable bed (the sum of
+ * its items' boxes with brims over the bed inside the edge margin, `ArrangedPlate.utilisation` unrounded)
+ * may not pass this after the join. The kit author's own multi-part plates (xpa layout, 256 x 256 bed,
+ * boxes with brims) measure 22, 47, 49, 60, 68 and 94 % (median 54.5 %, see `arrange.README.md`): joining
+ * stops a little above the typical multi-part plate, not at the fullest one. 60 % is also where `arrange()`
+ * stops calling a plate underfilled (`mergeBelow`). The normal gap between parts (`printer.spacing`) is kept
+ * as well: a join never steps down to the 2 mm gap of the kit's own plates.
+ */
+export const JOIN_MAX_UTILISATION = 0.6;
 
 export type MoveReason = 'filament' | 'bed' | 'new';
 export interface SourceMove {
@@ -48,6 +85,8 @@ export interface SourceMove {
 	/** Plate number it is on now. */
 	to: number;
 	reason: MoveReason;
+	/** True when the part joined a plate that already existed in the layout (rule F) instead of a new plate. */
+	joined?: boolean;
 }
 
 export interface SourceArrangeResult extends ArrangeResult {
@@ -62,6 +101,21 @@ const MIN_KIT_GAP = 2;
 /** Most items on a plate for which the arranger also searches orders and turns. */
 const THOROUGH_ITEMS = 6;
 
+/**
+ * A source plate that is printed in runs of its own (rule G): it lists 2+ parts that share ONE geometry
+ * (the same object repeated) and either says so (`perPartRuns`) or is printed several times. One print
+ * of it holds one of the parts; the parts follow each other in successive runs. A plate of the same
+ * parts printed once (`runs` 1, not flagged) is a plate whose parts share the bed.
+ */
+export function isRunPlate(
+	pl: Pick<SourcePlate, 'perPartRuns' | 'runs'>,
+	parts: readonly ArrangePart[]
+): boolean {
+	if (parts.length < 2) return false;
+	if (!pl.perPartRuns && !((pl.runs ?? 1) > 1)) return false;
+	return parts.every((p) => sameGeometry(p.footprint, parts[0].footprint));
+}
+
 /** Slugs that are alone on their plate in the source layout (rule C). */
 export function soloParts(source: readonly SourcePlate[]): string[] {
 	const seen = new Set<string>();
@@ -73,6 +127,18 @@ export function soloParts(source: readonly SourcePlate[]): string[] {
 	}
 	return out;
 }
+
+/** Units of a part in one plate run, and how many runs it needs: as `arrange()` counts them. */
+const unitsPerRunOf = (p: ArrangePart) =>
+	Math.min(Math.max(1, p.units), Math.max(1, p.footprint.unitsPerPlate ?? p.units));
+const runsOfPart = (p: ArrangePart) =>
+	Math.max(1, Math.ceil(Math.max(1, p.units) / Math.max(1, p.footprint.unitsPerPlate ?? p.units)));
+const rectOutline = (w: number, d: number): Pt[] => [
+	[-w / 2, -d / 2],
+	[w / 2, -d / 2],
+	[w / 2, d / 2],
+	[-w / 2, d / 2]
+];
 
 const area = (p: ArrangePart) =>
 	p.footprint.pieces.reduce((a, pc) => a + pc.w * pc.d * Math.max(1, pc.copies), 0);
@@ -119,7 +185,8 @@ function sourceItemsUsable(
  */
 export function arrangeFromSource(
 	input: ArrangeInput,
-	source: readonly SourcePlate[]
+	source: readonly SourcePlate[],
+	rules: PlannerRules = RULES_V3
 ): SourceArrangeResult {
 	const { printer } = input;
 	const warnings: ArrangeWarning[] = [];
@@ -223,7 +290,13 @@ export function arrangeFromSource(
 		return base!;
 	}
 
-	const keptPlates: { number: number; plate: ArrangedPlate; whole: boolean }[] = [];
+	const keptPlates: {
+		number: number;
+		plate: ArrangedPlate;
+		whole: boolean;
+		/** The plate has several parts in the source layout and they share the bed: rule F may add a part to it. */
+		multi: boolean;
+	}[] = [];
 	const extras: { plate: ArrangedPlate; from: number }[] = [];
 	const leaving = new Set<string>();
 	const moveReasonOf = new Map<string, { from: number | null; reason: MoveReason }>();
@@ -231,14 +304,23 @@ export function arrangeFromSource(
 	source.forEach((pl, i) => {
 		const members = [...new Set(pl.parts)].filter((s) => homeOf.get(s) === i);
 		if (!members.length) return;
-		const { stay, leave } = split(members);
+		// a plate printed in runs of its own is laid out for ONE print: one part's items; all its parts stay
+		const runPlate =
+			rules.perRun &&
+			isRunPlate(
+				pl,
+				members.map((s) => partOf.get(s)!)
+			);
+		const { stay, leave } = runPlate ? { stay: members, leave: [] as string[] } : split(members);
 		for (const s of leave) {
 			leaving.add(s);
 			moveReasonOf.set(s, { from: pl.number, reason: 'filament' });
 		}
-		const parts = stay.map((s) => ({ ...partOf.get(s)!, brims: undefined }));
+		// the parts that are on the bed in one print
+		const onBed = runPlate ? [stay[0]] : stay;
+		const parts = onBed.map((s) => ({ ...partOf.get(s)!, brims: undefined }));
 		// each source plate is placed on its own, exactly as the plate alone: deterministic and independent
-		const r = placeOnePlate(parts, solo.has(stay[0]) && stay.length === 1 ? stay : []);
+		const r = placeOnePlate(parts, solo.has(onBed[0]) && onBed.length === 1 ? onBed : []);
 		warnings.push(...r.warnings);
 		if (!r.plates.length) return;
 		// the plate that stays is the one with most parts (ties: the first); the rest overflowed this bed
@@ -252,7 +334,7 @@ export function arrangeFromSource(
 			r.plates.length === 1 &&
 			pl.parts.every((s) => partOf.has(s) && homeOf.get(s) === i);
 		// positions: the source's own; else, when parts left the plate, where the stay parts sit on the whole plate
-		let base: ArrangedItem[] | undefined = pl.items?.filter((it) => stay.includes(it.slug));
+		let base: ArrangedItem[] | undefined = pl.items?.filter((it) => onBed.includes(it.slug));
 		if (!base?.length && leave.length && r.plates.length === 1) {
 			const full = placeOnePlate(
 				members.map((s) => ({ ...partOf.get(s)!, brims: undefined })),
@@ -265,7 +347,22 @@ export function arrangeFromSource(
 		if (base?.length && r.plates.length === 1 && sourceItemsUsable(base, kept, input))
 			items = base.map((it) => ({ ...it, role: partOf.get(it.slug)?.role ?? it.role }));
 		const name = whole ? pl.name : kept.name;
-		keptPlates.push({ number: pl.number, plate: { ...kept, items, name }, whole });
+		// a plate that stays whole is printed as often as the source says (tires: 8 segments per print, twice)
+		const runs = rules.perRun && whole && (pl.runs ?? 0) >= 1 ? Math.round(pl.runs!) : kept.runs;
+		keptPlates.push({
+			number: pl.number,
+			plate: {
+				...kept,
+				runs,
+				items,
+				name,
+				...(runPlate && r.plates.length === 1
+					? { parts: [...stay], perPartRuns: true as const }
+					: {})
+			},
+			whole,
+			multi: !runPlate && new Set(pl.parts).size >= 2
+		});
 		r.plates.forEach((p, k) => {
 			if (k === ki) return;
 			extras.push({ plate: p, from: pl.number });
@@ -274,9 +371,157 @@ export function arrangeFromSource(
 	});
 
 	// parts the source does not list (a variant, a new part) and the parts that left their plate
-	const movers = input.parts.filter((p) => !homeOf.has(p.slug) || leaving.has(p.slug));
-	for (const p of movers)
+	const allMovers = input.parts.filter((p) => !homeOf.has(p.slug) || leaving.has(p.slug));
+	for (const p of allMovers)
 		if (!moveReasonOf.has(p.slug)) moveReasonOf.set(p.slug, { from: null, reason: 'new' });
+
+	// rule F: a part that left its plate for its filament may join an existing multi-part plate
+	const joinedTo = new Map<string, number>();
+	if (rules.join)
+		for (const p of allMovers)
+			if (leaving.has(p.slug)) {
+				const to = tryJoin(p);
+				if (to != null) joinedTo.set(p.slug, to);
+			}
+	const movers = allMovers.filter((p) => !joinedTo.has(p.slug));
+
+	/** Items of a part for one run, as outlines (brim counted), largest first; null when one cannot be placed whole. */
+	function joinItems(p: ArrangePart):
+		| {
+				slug: string;
+				piece: number;
+				copy: number;
+				outline: Pt[];
+				angles: number[];
+				w: number;
+				d: number;
+		  }[]
+		| null {
+		const list: {
+			slug: string;
+			piece: number;
+			copy: number;
+			outline: Pt[];
+			angles: number[];
+			w: number;
+			d: number;
+		}[] = [];
+		const ux = printer.bedX - 2 * printer.margin;
+		const uy = printer.bedY - 2 * printer.margin;
+		const per = unitsPerRunOf(p);
+		for (const [pi, pc] of p.footprint.pieces.entries()) {
+			const b = Math.max(0, p.brims?.[pi] ?? 0);
+			const outline = b > 0 ? inflateOutline(fitOutline(pc), b) : fitOutline(pc);
+			const orients = boxOrients(
+				{ w: pc.w + 2 * b, d: pc.d + 2 * b, hull: outline },
+				p.rotate !== false,
+				ux,
+				uy
+			);
+			if (!orients.some((o) => o.w <= ux + 1e-6 && o.d <= uy + 1e-6)) return null;
+			for (let c = 0; c < Math.max(1, pc.copies) * per; c++)
+				list.push({
+					slug: p.slug,
+					piece: pi,
+					copy: c,
+					outline,
+					angles: p.rotate === false ? [0] : [0, 90, 180, 270, ...orients.map((o) => o.rot)],
+					w: pc.w + 2 * b,
+					d: pc.d + 2 * b
+				});
+		}
+		return list.sort((a, b) => b.w * b.d - a.w * a.d || a.piece - b.piece || a.copy - b.copy);
+	}
+
+	/** Fit the mover into the first plate (most room first, then lowest number) that takes it; its number, or null. */
+	function tryJoin(p: ArrangePart): number | null {
+		if (p.footprint.groups?.length || solo.has(p.slug)) return null;
+		const items = joinItems(p);
+		if (!items?.length) return null;
+		const usable = (printer.bedX - 2 * printer.margin) * (printer.bedY - 2 * printer.margin);
+		if (!(usable > 0)) return null;
+		const own = homeOf.get(p.slug);
+		const used = (pl: ArrangedPlate) => pl.items.reduce((a, i) => a + i.w * i.d, 0) / usable;
+		const runs = runsOfPart(p);
+		const candidates = keptPlates
+			.filter(
+				(k) =>
+					k.multi &&
+					!k.plate.oversize &&
+					k.plate.items.length > 0 &&
+					k.plate.runs === runs &&
+					k.plate.roles.length === 1 &&
+					k.plate.roles[0] === p.role &&
+					k.number !== (own === undefined ? null : source[own].number)
+			)
+			.sort((a, b) => used(a.plate) - used(b.plate) || a.number - b.number);
+		const newArea = items.reduce((a, i) => a + i.w * i.d, 0);
+		for (const k of candidates) {
+			// cheap test first: the boxes alone must stay under the cap
+			if (used(k.plate) + newArea / usable > JOIN_MAX_UTILISATION + 1e-9) continue;
+			const fixed: OptItem[] = k.plate.items.map((it) => {
+				const owner = partOf.get(it.slug);
+				const pc = owner?.footprint.pieces[it.piece];
+				const b = Math.max(0, owner?.brims?.[it.piece] ?? 0);
+				const base = pc ? fitOutline(pc) : null;
+				return {
+					outline: base ? (b > 0 ? inflateOutline(base, b) : base) : rectOutline(it.w, it.d),
+					rotatable: false,
+					rot: it.rotation,
+					x: it.x,
+					y: it.y,
+					ox: it.ox,
+					oy: it.oy,
+					w: it.w,
+					d: it.d
+				};
+			});
+			const nest = nestOutlines(
+				items.map((i) => ({ outline: i.outline, angles: i.angles })),
+				{
+					bedX: printer.bedX,
+					bedY: printer.bedY,
+					margin: printer.margin,
+					spacing: printer.spacing,
+					keepOut: printer.keepOut
+				},
+				fixed
+			);
+			if (!nest) continue;
+			const added: ArrangedItem[] = items.map((it, n) => ({
+				slug: it.slug,
+				piece: it.piece,
+				copy: it.copy,
+				x: nest[n].x,
+				y: nest[n].y,
+				w: nest[n].w,
+				d: nest[n].d,
+				rotation: nest[n].rot,
+				role: p.role,
+				...(nest[n].ox || nest[n].oy ? { ox: nest[n].ox, oy: nest[n].oy } : {})
+			}));
+			// exact boxes after turning
+			const total = used(k.plate) + added.reduce((a, i) => a + i.w * i.d, 0) / usable;
+			if (total > JOIN_MAX_UTILISATION + 1e-9) continue;
+			const order = new Map(input.parts.map((x, i) => [x.slug, i]));
+			const parts = [...k.plate.parts, p.slug].sort((a, b) => order.get(a)! - order.get(b)!);
+			const estGrams = { ...k.plate.estGrams };
+			if (p.grams != null)
+				estGrams[p.role] =
+					Math.round(((estGrams[p.role] ?? 0) + p.grams * unitsPerRunOf(p)) * 10) / 10;
+			k.plate = {
+				...k.plate,
+				items: [...k.plate.items, ...added],
+				parts,
+				estGrams,
+				utilisation: Math.min(1, Math.round(total * 100) / 100)
+			};
+			k.whole = false;
+			return k.number;
+		}
+		return null;
+	}
+
 	let pooled: ArrangedPlate[] = [];
 	if (movers.length || (input.unsized ?? []).length) {
 		const r = arrange({
@@ -316,7 +561,13 @@ export function arrangeFromSource(
 			// a part on its own source plate (the plate lost others or a variant) did not move
 			const home = homeOf.get(s);
 			if (home !== undefined && source[home].number === pl.number) continue;
-			moves.push({ slug: s, from: why?.from ?? null, to: pl.number, reason: why?.reason ?? 'new' });
+			moves.push({
+				slug: s,
+				from: why?.from ?? null,
+				to: pl.number,
+				reason: why?.reason ?? 'new',
+				...(joinedTo.get(s) === pl.number ? { joined: true } : {})
+			});
 		}
 	}
 	return { plates: out, warnings, kept, moves };

@@ -91,32 +91,78 @@ async function kitLayoutFor(
 	};
 }
 
-/** One info note per source plate that gave up parts: which parts, where they went and why. */
-function moveNotes(moves: SourceMove[], view: BuildView): ExportWarning[] {
-	const nameOf = (n: number) => view.plates.find((p) => p.number === n)?.name ?? `Plate ${n}`;
+/** "plate 7", "plates 7 and 9", "a new plate 25", "new plates 25 and 26". */
+function plateList(nums: number[], fresh: boolean): string {
+	const list = [...new Set(nums)].sort((a, b) => a - b);
+	const word = `${fresh ? 'new ' : ''}plate${list.length === 1 ? '' : 's'}`;
+	const text =
+		list.length > 2
+			? `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`
+			: list.join(' and ');
+	return `${fresh && list.length === 1 ? 'a ' : ''}${word} ${text}`;
+}
+
+/**
+ * One info note per source plate that gave up parts: which parts, where they went and why. A part that
+ * joined a plate of the layout says so ("joined plate 15 (Push Handle Bottom)"); the others "moved to a
+ * new plate 25".
+ */
+function moveNotes(moves: SourceMove[], view: BuildView, plates: ArrangedPlate[]): ExportWarning[] {
+	const nameOf = (n: number) =>
+		view.plates.find((p) => p.number === n)?.name ??
+		plates.find((p) => p.number === n)?.name ??
+		`Plate ${n}`;
 	const partName = (slug: string) => view.parts.find((p) => p.slug === slug)?.name ?? slug;
 	const out: ExportWarning[] = [];
-	const from = [...new Set(moves.map((m) => m.from))];
-	for (const f of from) {
+	for (const f of [...new Set(moves.map((m) => m.from))]) {
 		const mine = moves.filter((m) => m.from === f);
-		const to = [...new Set(mine.map((m) => m.to))].sort((a, b) => a - b);
 		const names = mine.map((m) => partName(m.slug)).join(', ');
-		const where = to.length === 1 ? `plate ${to[0]}` : `plates ${to.join(', ')}`;
-		const bed = mine.every((m) => m.reason === 'bed');
+		const many = mine.length !== 1;
+		/** Where the parts went, one clause per destination: "X joined plate 15 (...)" / "Y moved to a new plate 25". */
+		const joinedTo = [...new Set(mine.filter((m) => m.joined).map((m) => m.to))].sort(
+			(a, b) => a - b
+		);
+		const clauses = joinedTo.map(
+			(to) =>
+				`${mine
+					.filter((m) => m.joined && m.to === to)
+					.map((m) => partName(m.slug))
+					.join(', ')} joined plate ${to} (${nameOf(to)}), which prints in the same filament`
+		);
+		const fresh = mine.filter((m) => !m.joined);
+		if (fresh.length)
+			clauses.push(
+				`${fresh.map((m) => partName(m.slug)).join(', ')} moved to ${plateList(
+					fresh.map((m) => m.to),
+					true
+				)}`
+			);
+		const where = clauses.join('; ');
 		if (f == null)
 			out.push({
 				code: 'arrangement',
 				severity: 'info',
-				message: `${names} ${mine.length === 1 ? 'is' : 'are'} not on any plate of the layout, so ${mine.length === 1 ? 'it was' : 'they were'} placed on new ${to.length === 1 ? 'plate' : 'plates'} (${where}).`
+				message: `${names} ${many ? 'are' : 'is'} not on any plate of the layout, so ${many ? 'they were' : 'it was'} placed on ${plateList(
+					mine.map((m) => m.to),
+					true
+				)}.`
+			});
+		else if (mine.every((m) => m.reason === 'bed'))
+			out.push({
+				code: 'arrangement',
+				severity: 'info',
+				plate: f,
+				message: `Plate ${f} (${nameOf(f)}) does not fit one ${view.printer?.bedX} × ${view.printer?.bedY} mm bed on ${view.printer?.name}, so ${names} moved to ${plateList(
+					mine.map((m) => m.to),
+					true
+				)} (after the last plate). The other plates match the Print tab.`
 			});
 		else
 			out.push({
 				code: 'arrangement',
 				severity: 'info',
 				plate: f,
-				message: bed
-					? `Plate ${f} (${nameOf(f)}) does not fit one ${view.printer?.bedX} × ${view.printer?.bedY} mm bed on ${view.printer?.name}, so ${names} moved to ${where} (extra ${to.length === 1 ? 'plate' : 'plates'} after the last). The other plates match the Print tab.`
-					: `On plate ${f} (${nameOf(f)}), ${names} no longer ${mine.length === 1 ? 'shares' : 'share'} a filament with the rest of the plate, so ${mine.length === 1 ? 'it' : 'they'} moved to ${where}. The other parts stay where they are.`
+				message: `On plate ${f} (${nameOf(f)}), ${names} no longer ${many ? 'share' : 'shares'} a filament with the rest of the plate. ${where.charAt(0).toUpperCase()}${where.slice(1)}. The other parts stay where they are.`
 			});
 	}
 	return out;
@@ -152,7 +198,7 @@ export async function prepareExport(
 		const placed = kit?.fits ? placeOnPlates(view, footprints, null) : null;
 		if (kit?.fits && placed?.plates.length) {
 			plates = placed.plates;
-			notes.push(...moveNotes(placed.moves, view));
+			notes.push(...moveNotes(placed.moves, view, placed.plates));
 		} else {
 			const plan = await planForBuild(db, view, footprints, null);
 			if (!plan) throw new ApiError(400, 'Choose a printer first.');

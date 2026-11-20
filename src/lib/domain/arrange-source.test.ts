@@ -2,12 +2,20 @@ import { describe, expect, it } from 'vitest';
 import {
 	arrange,
 	SOLO_MARGIN,
+	type ArrangedItem,
 	type ArrangeInput,
 	type ArrangePart,
 	type ArrangePrinter,
 	type ArrangeRole
 } from './arrange.ts';
-import { arrangeFromSource, soloParts, type SourcePlate } from './arrange-source.ts';
+import {
+	arrangeFromSource,
+	isRunPlate,
+	JOIN_MAX_UTILISATION,
+	RULES_V2,
+	soloParts,
+	type SourcePlate
+} from './arrange-source.ts';
 import { pieceBrimMm } from './print-footprint.ts';
 
 // The kit's own layout comes first; the arranger is the exception. Fixture: a "kit" of nine parts on
@@ -114,11 +122,11 @@ describe('A. the source layout stays', () => {
 	});
 });
 
-describe('B. only what must move moves', () => {
+describe('B. only what must move moves (planner 2 rules: movers get new plates)', () => {
 	it('a design that splits a two-part plate moves only the minority part, to a new plate', () => {
-		const standard = arrangeFromSource(input(), source());
+		const standard = arrangeFromSource(input(), source(), RULES_V2);
 		const parts = withRole(kit(), 'pb', 'accent');
-		const r = arrangeFromSource(input(parts), source());
+		const r = arrangeFromSource(input(parts), source(), RULES_V2);
 		// the same plates in the same places, plus one new plate
 		expect(r.plates.map((p) => p.number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
 		expect(plateOf(r, 3)!.parts).toEqual(['pa']);
@@ -144,7 +152,7 @@ describe('B. only what must move moves', () => {
 			part('x3', 'primary', 70, 50)
 		];
 		const src = source().map((s) => (s.number === 3 ? { ...s, parts: ['x1', 'x2', 'x3'] } : s));
-		const r = arrangeFromSource(input(withRole(parts, 'x2', 'accent')), src);
+		const r = arrangeFromSource(input(withRole(parts, 'x2', 'accent')), src, RULES_V2);
 		expect(plateOf(r, 3)!.parts).toEqual(['x1', 'x3']);
 		expect(plateOf(r, 7)!.parts).toEqual(['x2']);
 	});
@@ -181,12 +189,19 @@ describe('C. single-part plates are sacred', () => {
 
 	it('never receives another part, even with room, even when others are re-arranged', () => {
 		const parts = [...withRole(kit(), 'pb', 'accent'), part('extra', 'accent', 20, 20)];
-		const r = arrangeFromSource(input(parts), source());
+		const r = arrangeFromSource(input(parts), source(), RULES_V2);
 		expect(plateOf(r, 6)!.parts).toEqual(['small']); // 30 x 30 on an otherwise empty bed
 		expect(plateOf(r, 1)!.parts).toEqual(['big1']);
 		expect(plateOf(r, 2)!.parts).toEqual(['big2']);
 		// the movers share their own new plate instead
 		expect(plateOf(r, 7)!.parts.sort()).toEqual(['extra', 'pb']);
+		// planner 3: the part that left may join the accent pair (plate 4); `extra` is new to the layout and never joins
+		const v3 = arrangeFromSource(input(parts), source());
+		expect(plateOf(v3, 6)!.parts).toEqual(['small']);
+		expect(plateOf(v3, 1)!.parts).toEqual(['big1']);
+		expect(plateOf(v3, 2)!.parts).toEqual(['big2']);
+		expect(plateOf(v3, 4)!.parts.sort()).toEqual(['pb', 'pc', 'pd']);
+		expect(plateOf(v3, 7)!.parts).toEqual(['extra']);
 	});
 
 	it('keeps the relaxed safe area: a part that only fits the bed with a thin edge margin', () => {
@@ -288,5 +303,319 @@ describe('E. no layout for the bed', () => {
 		}
 		// everything else is still packed fresh: the pairs share plates
 		expect(guarded.plates.some((p) => p.parts.length > 1)).toBe(true);
+	});
+});
+
+// ---- F. a moved part may join an existing multi-part plate; G. run plates stay one plate
+
+type Box = { x: number; y: number; w: number; d: number };
+/** Distance between two axis-aligned item boxes (0 when they touch or overlap). */
+const boxGap = (a: Box, b: Box) =>
+	Math.hypot(
+		Math.max(0, Math.abs(a.x - b.x) - (a.w + b.w) / 2),
+		Math.max(0, Math.abs(a.y - b.y) - (a.d + b.d) / 2)
+	);
+
+describe('F. a moved part may join an existing multi-part plate', () => {
+	const usable = 254 * 254;
+
+	it('joins a plate that was a multi-part plate, in its own filament, and the others stay put', () => {
+		const standard = arrangeFromSource(input(), source());
+		const r = arrangeFromSource(input(withRole(kit(), 'pb', 'accent')), source());
+		// no new plate: the accent pair (plate 4) took it
+		expect(r.plates.map((p) => p.number)).toEqual([1, 2, 3, 4, 5, 6]);
+		expect(plateOf(r, 3)!.parts).toEqual(['pa']);
+		expect(plateOf(r, 4)!.parts.sort()).toEqual(['pb', 'pc', 'pd']);
+		expect(r.moves).toEqual([{ slug: 'pb', from: 3, to: 4, reason: 'filament', joined: true }]);
+		expect(r.kept).toEqual([1, 2, 5, 6]);
+		// the receiving plate's own parts keep their exact positions and turns
+		const was = standard.plates[3].items;
+		const now = r.plates[3].items;
+		for (const w of was) {
+			const n = now.find((i) => i.slug === w.slug && i.piece === w.piece && i.copy === w.copy)!;
+			expect(n).toEqual(w);
+		}
+		// the newcomer: inside the bed margin, the printer's normal gap to both neighbours, same filament
+		const pb = now.find((i) => i.slug === 'pb')!;
+		expect(pb.role).toBe('accent');
+		expect(pb.x - pb.w / 2).toBeGreaterThanOrEqual(1 - 0.11);
+		expect(pb.y - pb.d / 2).toBeGreaterThanOrEqual(1 - 0.11);
+		expect(pb.x + pb.w / 2).toBeLessThanOrEqual(255 + 0.11);
+		expect(pb.y + pb.d / 2).toBeLessThanOrEqual(255 + 0.11);
+		for (const w of was) expect(boxGap(pb, w)).toBeGreaterThanOrEqual(8 - 0.11);
+		// bookkeeping: parts in the build's order, utilisation includes the newcomer, grams add up
+		expect(r.plates[3].roles).toEqual(['accent']);
+		expect(r.plates[3].utilisation).toBeCloseTo(now.reduce((a, i) => a + i.w * i.d, 0) / usable, 2);
+		expect(r.plates[3].estGrams.accent).toBe(150);
+		// everything else is as before
+		for (const n of [1, 2, 5, 6]) expect(plateOf(r, n)).toEqual(plateOf(standard, n));
+	});
+
+	it('never joins a plate that has a single part in the source', () => {
+		// the accent pair is recolored primary: the only accent plate left is the single-part "Small"
+		let parts = withRole(kit(), 'pc', 'primary');
+		parts = withRole(parts, 'pd', 'primary');
+		parts = withRole(parts, 'pb', 'accent');
+		const r = arrangeFromSource(input(parts), source());
+		expect(plateOf(r, 6)!.parts).toEqual(['small']);
+		expect(plateOf(r, 7)!.parts).toEqual(['pb']);
+		expect(r.moves.find((m) => m.slug === 'pb')).toEqual({
+			slug: 'pb',
+			from: 3,
+			to: 7,
+			reason: 'filament'
+		});
+	});
+
+	it('never joins a plate of another filament or material', () => {
+		// every multi-part plate is primary or accent PETG; the mover prints in TPU
+		const parts = [
+			...withRole(kit(), 't1', 'accent').map((p) =>
+				p.slug === 't2' ? { ...p, role: 'accent' } : p
+			)
+		];
+		const r = arrangeFromSource(input(withRole(parts, 'pb', 'soft')), source());
+		expect(plateOf(r, 7)!.parts).toEqual(['pb']);
+		for (const n of [3, 4, 5]) expect(plateOf(r, n)!.parts).not.toContain('pb');
+	});
+
+	it('does not join a plate that prints another number of times', () => {
+		const parts = kit().map((p) =>
+			p.slug === 'pb'
+				? { ...p, role: 'accent', units: 2, footprint: { ...p.footprint, unitsPerPlate: 1 } }
+				: p
+		);
+		const r = arrangeFromSource(input(parts), source());
+		// pb needs 2 runs (one unit per plate), the accent pair prints once
+		const withUpp = r.plates.find((p) => p.parts.includes('pb'))!;
+		expect(withUpp.parts.includes('pc')).toBe(false);
+	});
+
+	/**
+	 * A kit whose accent plate 4 holds a wall (full width, `wallD` deep, along the bottom edge) and a small
+	 * part in the top right corner, at the source's own positions; pa (bigger than the mover) stays on plate 3
+	 * and `pb`, recolored accent, is the part that leaves it.
+	 */
+	const walled = (wallD: number, pbW: number, pbD: number, p = printer()) => {
+		const acc = (slug: string, x: number, y: number, w: number, d: number): ArrangedItem => ({
+			slug,
+			piece: 0,
+			copy: 0,
+			x,
+			y,
+			w,
+			d,
+			rotation: 0,
+			role: 'accent'
+		});
+		const parts = kit().map((k) =>
+			k.slug === 'pc'
+				? part('pc', 'accent', 254, wallD)
+				: k.slug === 'pd'
+					? part('pd', 'accent', 30, 30)
+					: k.slug === 'pa'
+						? part('pa', 'primary', 130, 130)
+						: k.slug === 'pb'
+							? { ...part('pb', 'primary', pbW, pbD, { rotate: false }), role: 'accent' }
+							: k
+		);
+		const src = source().map((s) =>
+			s.number === 4
+				? {
+						...s,
+						items: [acc('pc', 128, 1 + wallD / 2, 254, wallD), acc('pd', 240, 240, 30, 30)]
+					}
+				: s
+		);
+		return arrangeFromSource(input(parts, p), src);
+	};
+
+	it('does not join when the plate would be more crowded than the cap', () => {
+		// a 254 x 100 wall and a 30 x 30 part use 40 % of the bed
+		const ok = walled(100, 100, 100); // + 10 000 mm2: 56 %, room above the wall
+		expect(plateOf(ok, 4)!.parts).toContain('pb');
+		expect(ok.plates[3].utilisation).toBeLessThanOrEqual(JOIN_MAX_UTILISATION + 0.005);
+		// the same room, a wider part: the boxes together pass the cap, so it gets a new plate
+		const over = walled(100, 150, 100); // + 15 000 mm2: 63 %
+		expect((25400 + 900 + 15000) / usable).toBeGreaterThan(JOIN_MAX_UTILISATION);
+		expect(plateOf(over, 4)!.parts.sort()).toEqual(['pc', 'pd']);
+		expect(plateOf(over, 7)!.parts).toEqual(['pb']);
+		// the receiving plate's own parts did not move
+		expect(over.plates[3].items.map((i) => [i.slug, i.x, i.y])).toEqual([
+			['pc', 128, 51],
+			['pd', 240, 240]
+		]);
+	});
+
+	it('does not join when it does not fit with the normal gap (no step-down to 2 mm)', () => {
+		// above a 254 x 80 wall (top edge 81) a 168 mm tall part needs 81 + gap + 168 <= 255: gap 5 yes, gap 8 no
+		const tight = walled(80, 90, 168, printer({ spacing: 5 }));
+		expect(plateOf(tight, 4)!.parts).toContain('pb');
+		const normal = walled(80, 90, 168, printer({ spacing: 8 }));
+		expect(plateOf(normal, 4)!.parts.sort()).toEqual(['pc', 'pd']);
+		expect(plateOf(normal, 7)!.parts).toEqual(['pb']);
+		// both are under the cap: only the gap decides
+		expect((254 * 80 + 900 + 90 * 168) / usable).toBeLessThan(JOIN_MAX_UTILISATION);
+		// and the joined part keeps the printer's gap to the wall
+		const wall = tight.plates[3].items.find((i) => i.slug === 'pc')!;
+		const pb = tight.plates[3].items.find((i) => i.slug === 'pb')!;
+		expect(boxGap(pb, wall)).toBeGreaterThanOrEqual(5 - 0.11);
+	});
+
+	it('prefers the plate with most room left, ties go to the lowest plate number', () => {
+		const src: SourcePlate[] = [...source(), { number: 7, name: 'Pair E F', parts: ['pe', 'pf'] }];
+		const base = [...kit(), part('pe', 'accent', 60, 60), part('pf', 'accent', 60, 60)];
+		const equal = arrangeFromSource(input(withRole(base, 'pb', 'accent')), src);
+		expect(plateOf(equal, 4)!.parts).toContain('pb'); // same load: lowest number
+		expect(plateOf(equal, 7)!.parts).not.toContain('pb');
+		// plate 4 gets heavier: plate 7 has more room
+		const heavier = base.map((p) => (p.slug === 'pc' ? part('pc', 'accent', 120, 120) : p));
+		const r = arrangeFromSource(input(withRole(heavier, 'pb', 'accent')), src);
+		expect(plateOf(r, 7)!.parts).toContain('pb');
+		expect(plateOf(r, 4)!.parts).not.toContain('pb');
+	});
+
+	it('movers that join one plate and movers that do not are reported where each went', () => {
+		let parts = withRole(kit(), 'pb', 'accent');
+		parts = [...parts, part('extra', 'accent', 20, 20)];
+		const r = arrangeFromSource(input(parts), source());
+		expect(r.moves).toContainEqual({
+			slug: 'pb',
+			from: 3,
+			to: 4,
+			reason: 'filament',
+			joined: true
+		});
+		expect(r.moves).toContainEqual({ slug: 'extra', from: null, to: 7, reason: 'new' });
+	});
+
+	it('planner 2 rules keep the old behavior (a new plate at the end)', () => {
+		const r = arrangeFromSource(input(withRole(kit(), 'pb', 'accent')), source(), RULES_V2);
+		expect(r.plates.map((p) => p.number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+		expect(plateOf(r, 7)!.parts).toEqual(['pb']);
+		expect(r.moves).toEqual([{ slug: 'pb', from: 3, to: 7, reason: 'filament' }]);
+	});
+
+	it('a joined plate is deterministic: the same input gives the same plates', () => {
+		const run = () => arrangeFromSource(input(withRole(kit(), 'pb', 'accent')), source());
+		expect(run()).toEqual(run());
+	});
+});
+
+describe('G. a plate printed in runs of its own is one plate, laid out for one print', () => {
+	// two halves of one object, 150 x 150 each: two of them never share a 256 mm bed
+	const rim = (slug: string, role: string, extra: Partial<ArrangePart> = {}) =>
+		part(slug, role, 150, 150, { units: 2, ...extra });
+	const rimFp = (slug: string, upp?: number) => ({
+		slug,
+		unitsPerPlate: upp ?? 1,
+		pieces: [{ name: 'RIM.step', w: 150, d: 150, h: 40, copies: 1 }]
+	});
+	const rims = (upp = 1): ArrangePart[] => [
+		{ ...rim('rimA', 'accent'), footprint: rimFp('rimA', upp), units: 2 },
+		{ ...rim('rimB', 'primary'), footprint: rimFp('rimB', upp), units: 2 }
+	];
+	const rimSrc = (extra: Partial<SourcePlate> = {}): SourcePlate[] => [
+		{ number: 1, name: 'Wheel Rim', runs: 2, perPartRuns: true, parts: ['rimA', 'rimB'], ...extra },
+		{ number: 2, name: 'Other', parts: ['o1'] }
+	];
+	const other = part('o1', 'primary', 50, 50);
+
+	it('is detected by the flag or by runs > 1 with identical geometry, never by chance', () => {
+		const [a, b] = rims();
+		expect(isRunPlate({ perPartRuns: true, runs: 2 }, [a, b])).toBe(true);
+		expect(isRunPlate({ runs: 2 }, [a, b])).toBe(true); // an uploaded file's plate, no flag
+		expect(isRunPlate({ runs: 1 }, [a, b])).toBe(false); // printed once: the parts share the bed
+		expect(isRunPlate({ perPartRuns: true, runs: 2 }, [a])).toBe(false);
+		expect(isRunPlate({ perPartRuns: true, runs: 2 }, [a, part('x', 'primary', 150, 150)])).toBe(
+			false
+		); // different geometry
+		// same box, another outline: not the same object
+		const hulled = (hull: [number, number][]): ArrangePart => ({
+			...a,
+			footprint: { ...a.footprint, pieces: [{ ...a.footprint.pieces[0], hull }] }
+		});
+		const sq: [number, number][] = [
+			[-75, -75],
+			[75, -75],
+			[75, 75],
+			[-75, 75]
+		];
+		const cut: [number, number][] = [
+			[-75, -75],
+			[75, -75],
+			[75, 40],
+			[40, 75],
+			[-75, 75]
+		];
+		expect(isRunPlate({ perPartRuns: true, runs: 2 }, [hulled(sq), hulled(sq)])).toBe(true);
+		expect(isRunPlate({ perPartRuns: true, runs: 2 }, [hulled(sq), hulled(cut)])).toBe(false);
+	});
+
+	it('stays one plate, as the source says, with one print on the bed', () => {
+		const r = arrangeFromSource(input([...rims(), other]), rimSrc());
+		expect(r.plates.map((p) => p.number)).toEqual([1, 2]);
+		const p = plateOf(r, 1)! as (typeof r.plates)[number];
+		expect(p.parts).toEqual(['rimA', 'rimB']);
+		expect(p.name).toBe('Wheel Rim');
+		expect(p.perPartRuns).toBe(true);
+		expect(p.runs).toBe(2);
+		expect(p.items).toHaveLength(1); // ONE print: one object on the bed
+		expect(p.items[0].slug).toBe('rimA');
+		expect(p.roles).toEqual(['accent']);
+		expect(r.kept).toEqual([1, 2]);
+		expect(r.moves).toEqual([]);
+		expect(r.warnings).toEqual([]);
+		// grams per run: one print is one half
+		expect(p.estGrams).toEqual({ accent: 50 });
+	});
+
+	it('detects a run plate with no flag when it is printed several times', () => {
+		const r = arrangeFromSource(input([...rims(), other]), rimSrc({ perPartRuns: undefined }));
+		expect(r.plates.map((p) => p.number)).toEqual([1, 2]);
+		expect(plateOf(r, 1)!.parts).toEqual(['rimA', 'rimB']);
+	});
+
+	it('is not split for roles that cannot share a printer (separate runs, separate colors)', () => {
+		const r = arrangeFromSource(input([...rims(), other], printer({ mmSlots: 1 })), rimSrc());
+		expect(r.plates.map((p) => p.number)).toEqual([1, 2]);
+		expect(plateOf(r, 1)!.parts).toEqual(['rimA', 'rimB']);
+	});
+
+	it('one print holds the units of one run (two halves per print)', () => {
+		const r = arrangeFromSource(
+			input([
+				...rims(2).map((p) => ({
+					...p,
+					footprint: { ...p.footprint, pieces: [{ ...p.footprint.pieces[0], w: 100, d: 100 }] }
+				})),
+				other
+			]),
+			rimSrc({ runs: 1 })
+		);
+		const p = plateOf(r, 1)! as (typeof r.plates)[number];
+		expect(p.parts).toEqual(['rimA', 'rimB']);
+		expect(p.items).toHaveLength(2);
+		expect(new Set(p.items.map((i) => i.slug))).toEqual(new Set(['rimA']));
+		expect(p.runs).toBe(1);
+	});
+
+	it('a plate of the same parts printed once (no flag) still splits when they do not fit together', () => {
+		const r = arrangeFromSource(input([...rims(), other]), rimSrc({ runs: 1, perPartRuns: false }));
+		expect(r.plates.length).toBeGreaterThan(2);
+	});
+
+	it('planner 2 rules reproduce the old split', () => {
+		const r = arrangeFromSource(input([...rims(), other]), rimSrc(), RULES_V2);
+		expect(r.plates.length).toBe(3);
+		expect(r.moves.map((m) => m.reason)).toEqual(['bed']);
+	});
+
+	it('a run plate never takes a moved part and a mover never joins it', () => {
+		const parts = [...rims(), other, part('o2', 'primary', 40, 40)];
+		const src = [...rimSrc(), { number: 3, name: 'Pair', parts: ['o2', 'o3'] }];
+		const withO3 = [...parts, part('o3', 'primary', 40, 40)];
+		const r = arrangeFromSource(input(withRole(withO3, 'o3', 'accent')), src);
+		expect(plateOf(r, 1)!.parts).toEqual(['rimA', 'rimB']);
 	});
 });

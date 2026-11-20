@@ -344,6 +344,17 @@
 	const roleOf = (slug: string) => partOf(slug)?.role ?? '';
 	const rolesOf = (pl: Plate) => [...new Set(pl.parts.map(roleOf))];
 	const status = (slug: string) => ctx.view.state[slug]?.status;
+	/**
+	 * "Print 4 times: 2 in Accent, 2 in Primary" for a plate whose parts are printed in runs of their own
+	 * (the wheel rims: one object per print), else "Print N times".
+	 */
+	function runsLabel(pl: Plate): string {
+		if (!pl.perPartRuns || pl.parts.length < 2) return `Print ${pl.runs} times`;
+		const per = pl.parts.map(
+			(s) => `${pl.runs} in ${filLabel(ctx.filament(roleOf(s)), roleOf(s))}`
+		);
+		return `Print ${pl.runs * pl.parts.length} times: ${per.join(', ')}`;
+	}
 
 	/** The grams field's label: says whose number it holds (typed, or read from the file). */
 	function gramsLabel(pl: Plate, per: boolean, name?: string): string {
@@ -652,9 +663,7 @@
 				<PlateTime plate={pl} />
 				{#if pl.runNote || pl.runs > 1}
 					<span class="meta" style="color:var(--warn);font-weight:600"
-						>{pl.runNote ?? `Print ${pl.runs} times`}{ri
-							? ` · run ${ri.run} of ${ri.of}`
-							: ''}</span
+						>{pl.runNote ?? runsLabel(pl)}{ri ? ` · run ${ri.run} of ${ri.of}` : ''}</span
 					>
 				{/if}
 				{#if logged}
