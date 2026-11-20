@@ -30,9 +30,11 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   must keep their data: additive, backward-compatible migrations only, a backup and a
   rehearsal before any migration reaches `main` (rules in `docs/dev/HANDOFF.md`).
 - **Live (fifth deploy, 2026-11-20):** evening batch #4, #7–#11; Discord sign-in off,
-  Cloudflare Web Analytics and Turnstile on. **Merged, not yet deployed:** #12 (strict
+  Cloudflare Web Analytics and Turnstile on. **Image ready, deploy pending:** #12 (strict
   Turnstile action/hostname checks, reload message) and #13 (a way back to the home page,
-  Leave the demo, demo links do a full load so the Turnstile CSP applies). No migrations.
+  Leave the demo, demo links do a full load so the Turnstile CSP applies), `sha-d28d128`.
+  **Merged after that:** #14 (signed-out page loads redirect, form actions answer 401). No
+  migrations.
 - **Migrations:** one baseline, `drizzle/0000_baseline.sql`, applied to the live database on
   2026-11-19. **Frozen from now on:** schema changes add new migrations; never edit or
   regenerate the baseline. `0001_drop_duplicate_org_slug_index` merged and applied 2026-11-19 (#3). Team creation now retries on a slug conflict.
@@ -64,10 +66,6 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   a fade would help [design-studio-ui].
 - Every link to `/demo` needs `data-sveltekit-reload` (the Turnstile CSP is sent only with the
   `/demo` document); `e2e/way-home.spec.ts` asserts it.
-- Signed-out robustness [app-shell]: loads in `account`, `builds/new`, `builds/[id]/setup`,
-  `onboarding` and `studio` use `locals.user!`, so signing out on those pages can flash an
-  error during the refresh; the `teams/[slug]/members` form actions answer 500 instead of
-  401 without a session (nothing is read or changed). Follow-up in progress.
 - `stats/workspace.test.ts` "50 builds with 500 runs each" asserts a 300 ms wall-clock budget
   and overran once (362 ms) under a loaded full run; make it robust [build-state].
 

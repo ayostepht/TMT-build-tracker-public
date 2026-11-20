@@ -28,18 +28,18 @@ _Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
   Turnstile on (real widget verified).
 - `main` ahead of live: #12 (strict Turnstile checks) and #13 (way back to the home page).
   No migrations. The maintainer pulls `:latest` once its `public-ci` run publishes.
-- In progress: `app-shell` follow-up for signed-out guards (see STATUS open items), branch
-  `fix/signed-out-guards`.
+- #14 (signed-out guards) merged after that image; it goes out with the next update.
+- No pull requests open, no agents running.
 - Sibling repository: resource-limit back-port open there (`fix/resource-limits`); carry-overs
   in STATUS.
 - Google Safe Browsing review of the domain requested; don't share widely until it clears.
 
 ## Next step
 
-1. Tell the maintainer when `:latest` for `main` after #13 is published; after they update,
-   log the sixth deploy and have them start and leave a demo once.
-2. Land the signed-out guards follow-up (verifier, pull request, merge).
-3. With the maintainer: nightly backup, repository settings.
+1. The maintainer was told `sha-d28d128` is ready (Force update, then: home page signed in,
+   Home page link, demo start with strict Turnstile, Leave the demo). After they confirm, log
+   the sixth deploy.
+2. With the maintainer: nightly backup, repository settings.
 
 ## Questions waiting for the maintainer
 
