@@ -45,6 +45,9 @@
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -->
 <div class="home">
+	{#if data.notice}<p class="home-notice" role="status" data-testid="home-notice">
+			{data.notice}
+		</p>{/if}
 	<section class="hero">
 		<div class="hero__copy">
 			<p class="mono-label">For people who print MakeGood 3D TMT chairs</p>
@@ -55,8 +58,22 @@
 				reprint, who has what, and what is left before it can go to the child.
 			</p>
 			<div class="cta">
-				<a class="btn primary go" href="/demo">Try the demo, no account needed</a>
-				<a class="btn" href={resolve('/login')}>Sign in</a>
+				{#if data.signedIn}
+					<a
+						class="btn primary go"
+						href={resolve('/(app)/workspace')}
+						data-testid="home-open-builds"
+						>{data.isDemo ? 'Back to the demo' : 'Open your builds'}</a
+					>
+					{#if data.isDemo}<a class="btn" href={resolve('/login')}
+							>Sign in to keep your own builds</a
+						>{/if}
+				{:else}
+					<a class="btn primary go" href="/demo" data-sveltekit-reload
+						>Try the demo, no account needed</a
+					>
+					<a class="btn" href={resolve('/login')}>Sign in</a>
+				{/if}
 			</div>
 			<p class="fine">Free and open source. No ads, no email list, no password to forget.</p>
 		</div>
@@ -300,21 +317,34 @@
 		</div>
 	</section>
 
-	<section class="closer">
-		<div>
-			<h2>See it with a sample chair.</h2>
-			<p>The demo gives you your own throwaway workspace. It is cleared after a day.</p>
-		</div>
-		<div class="cta cta--stack">
-			<a class="btn primary go" href="/demo">Try the demo, no account needed</a>
-			<a class="btn" href={resolve('/login')}>Sign in</a>
-		</div>
-	</section>
+	{#if !data.signedIn}
+		<section class="closer">
+			<div>
+				<h2>See it with a sample chair.</h2>
+				<p>The demo gives you your own throwaway workspace. It is cleared after a day.</p>
+			</div>
+			<div class="cta cta--stack">
+				<a class="btn primary go" href="/demo" data-sveltekit-reload
+					>Try the demo, no account needed</a
+				>
+				<a class="btn" href={resolve('/login')}>Sign in</a>
+			</div>
+		</section>
+	{/if}
 </div>
 
 <!-- eslint-enable svelte/no-navigation-without-resolve -->
 
 <style>
+	.home-notice {
+		margin: var(--sp-6) 0 0;
+		padding: var(--sp-4) var(--sp-6);
+		background: var(--accent-soft);
+		border: 1px solid var(--accent);
+		border-radius: var(--r-md, 6px);
+		color: var(--ink);
+		font-size: var(--fs-md);
+	}
 	.home {
 		max-width: 1180px;
 		margin: 0 auto;

@@ -88,8 +88,10 @@
 				picture address and your provider's account id, nothing else from it.
 			</p>
 			<p class="login-demo">
-				Want a look around first? <a href={resolve('/(site)/demo')} data-testid="try-demo"
-					>Try the demo instead</a
+				Want a look around first? <a
+					href={resolve('/(site)/demo')}
+					data-sveltekit-reload
+					data-testid="try-demo">Try the demo instead</a
 				>. No account needed.
 			</p>
 			<p class="login-fine">

@@ -3,7 +3,7 @@
 	"name": "TMT Build Tracker",
 	"short_name": "TMT Builds",
 	"description": "Plan, print, assemble and hand off MakeGood 3D TMT chairs with your team.",
-	"start_url": "/",
+	"start_url": "/workspace",
 	"scope": "/",
 	"display": "standalone",
 	"orientation": "any",

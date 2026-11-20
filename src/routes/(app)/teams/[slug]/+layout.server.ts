@@ -1,4 +1,4 @@
-import { error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import { and, eq } from 'drizzle-orm';
 import { normalizeRole } from '#lib/server/access.ts';
 import { getAuth } from '#lib/server/auth-instance.ts';
@@ -9,6 +9,8 @@ import type { LayoutServerLoad } from './$types';
 
 /** Workspace header data shared by the chapter tabs (Builds, Members, Printers, Integrations). */
 export const load: LayoutServerLoad = async ({ params, locals, request }) => {
+	// Signed out (e.g. the reload right after sign-out): same as the (app) layout.
+	if (!locals.user) redirect(303, '/login');
 	const db = getDb();
 	const org = await first(db.select().from(organization).where(eq(organization.slug, params.slug)));
 	if (!org) error(404, 'Not found');
@@ -16,7 +18,7 @@ export const load: LayoutServerLoad = async ({ params, locals, request }) => {
 		db
 			.select({ role: member.role })
 			.from(member)
-			.where(and(eq(member.organizationId, org.id), eq(member.userId, locals.user!.id)))
+			.where(and(eq(member.organizationId, org.id), eq(member.userId, locals.user.id)))
 	);
 	if (!m) error(404, 'Not found');
 	const role = normalizeRole(m.role);

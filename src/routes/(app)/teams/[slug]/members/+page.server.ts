@@ -23,7 +23,9 @@ async function teamFor(slug: string, userId: string) {
 }
 
 export const load: PageServerLoad = async ({ params, locals }) => {
-	const { org, role } = await teamFor(params.slug, locals.user!.id);
+	// Signed out (e.g. the reload right after sign-out): same as the (app) layout.
+	if (!locals.user) redirect(303, '/login');
+	const { org, role } = await teamFor(params.slug, locals.user.id);
 	// A personal workspace has no members to manage.
 	if (isPersonalMetadata(org.metadata)) redirect(303, `/teams/${org.slug}`);
 	const db = getDb();

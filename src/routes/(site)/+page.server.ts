@@ -1,4 +1,3 @@
-import { redirect } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { getDb } from '#lib/server/db/index.ts';
 import { templateParts } from '#lib/server/db/schema.ts';
@@ -36,9 +35,15 @@ async function heroModel(): Promise<{
 	}
 }
 
-/** The public home is for visitors; someone who is signed in goes straight to their builds. */
-export const load: PageServerLoad = async ({ locals, setHeaders }) => {
-	if (locals.user) redirect(303, '/workspace');
+/** The public home is for everyone, signed in or not (the app links back to it). */
+export const load: PageServerLoad = async ({ locals, url, setHeaders }) => {
 	setHeaders({ 'cache-control': 'private, no-cache' });
-	return { hero: await heroModel() };
+	return {
+		hero: await heroModel(),
+		// Fixed text only: the query string never reaches the page as text.
+		notice:
+			!locals.user && url.searchParams.get('notice') === 'demo-ended'
+				? 'The demo was deleted.'
+				: null
+	};
 };

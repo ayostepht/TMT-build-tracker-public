@@ -3,7 +3,7 @@
 	import { resolve } from '$app/paths';
 	import AppMark from '#lib/components/AppMark.svelte';
 
-	let { signedIn = false }: { signedIn?: boolean } = $props();
+	let { signedIn = false, isDemo = false }: { signedIn?: boolean; isDemo?: boolean } = $props();
 	// The sign-in page is already the sign-in button.
 	const onLogin = $derived(page.url.pathname === '/login');
 </script>
@@ -17,9 +17,11 @@
 		</a>
 		<nav class="site-head__nav" aria-label="Site">
 			{#if signedIn}
-				<a class="btn primary" href={resolve('/(app)/workspace')}>Open your builds</a>
+				<a class="btn primary" href={resolve('/(app)/workspace')} data-testid="site-open-builds"
+					>{isDemo ? 'Back to the demo' : 'Open your builds'}</a
+				>
 			{:else}
-				<a class="site-head__link" href="/demo">Try the demo</a>
+				<a class="site-head__link" href="/demo" data-sveltekit-reload>Try the demo</a>
 				{#if !onLogin}<a class="btn site-head__btn" href={resolve('/login')}>Sign in</a>{/if}
 			{/if}
 		</nav>

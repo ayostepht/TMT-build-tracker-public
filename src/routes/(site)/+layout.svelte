@@ -7,7 +7,7 @@
 </script>
 
 <div class="site">
-	<SiteHeader signedIn={data.signedIn} />
+	<SiteHeader signedIn={data.signedIn} isDemo={data.isDemo} />
 	<main id="main" tabindex="-1">
 		{@render children()}
 	</main>
