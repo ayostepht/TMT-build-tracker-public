@@ -29,12 +29,19 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - **Real users since 2026-11-20:** the site was shared with a first few makers. Updates
   must keep their data: additive, backward-compatible migrations only, a backup and a
   rehearsal before any migration reaches `main` (rules in `docs/dev/HANDOFF.md`).
-- **Live (fifth deploy, 2026-11-20):** evening batch #4, #7–#11; Discord sign-in off,
-  Cloudflare Web Analytics and Turnstile on. **Image ready, deploy pending:** #12 (strict
-  Turnstile action/hostname checks, reload message) and #13 (a way back to the home page,
-  Leave the demo, demo links do a full load so the Turnstile CSP applies), `sha-d28d128`.
-  **Merged after that:** #14 (signed-out page loads redirect, form actions answer 401). No
-  migrations.
+- **Live:** the maintainer's server runs the fifth or sixth deploy (they update by hand; the
+  last image they were told about is `sha-d28d128`). **Ready, not yet deployed:**
+  `sha-48b585e` (`main` 48b585e, green): #14 signed-out guards, #15 hero wheel fix and link
+  previews, #16 first-time journey fixes, #17 printer counts in one query, #18 faster
+  navigation with a warm pool and clean shutdown, #19 build loader in two waves, #20 tracking
+  loop on a phone, #21 console warnings, #22 photo viewer focus. No migrations.
+- **Speed (2026-11-20):** pages were slow because of sequential database round trips (the app
+  and the database are a network hop apart). Measured through a latency proxy at 40 ms per
+  round trip, before → after #18/#19: build page 2.3 s → 0.6 s, builds list 3.0 → 1.1 s, team
+  page with 12 builds 17 → 2.9 s, create a build 7.5 → 1.2 s, mark a plate printed 3.3 → 2.5 s.
+  `DATABASE_PREPARE=on` (opt-in, untested against Supabase) removes a second round trip per
+  parameterised query (about 2× on warm requests). Moving the container next to the database
+  would cut the remaining wait by about 95%.
 - **Migrations:** one baseline, `drizzle/0000_baseline.sql`, applied to the live database on
   2026-11-19. **Frozen from now on:** schema changes add new migrations; never edit or
   regenerate the baseline. `0001_drop_duplicate_org_slug_index` merged and applied 2026-11-19 (#3). Team creation now retries on a slug conflict.
@@ -66,6 +73,19 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   a fade would help [design-studio-ui].
 - Every link to `/demo` needs `data-sveltekit-reload` (the Turnstile CSP is sent only with the
   `/demo` document); `e2e/way-home.spec.ts` asserts it.
+- In progress (2026-11-20): demo start from a ready-made spare (`perf/demo-spares`: about
+  57 s → 0.8 s at 40 ms; security review done, two low fixes pending); phone touch targets
+  (#23, waiting on the unit-test connection fix); unit tests exhausting Postgres connections
+  in CI (`fix/test-db-connections`); the stats wall-clock test (`fix/stats-budget-test`).
+- `member` has no unique index on (organization, user); Better Auth prevents duplicates in
+  the app. An additive unique index would need a check for existing duplicates first and the
+  maintainer's sign-off (schema).
+- Mutations load the full build view inside their transaction, where queries can't overlap
+  (about 35 sequential queries per status change). Options: named prepared statements, or a
+  lighter view for mutations [build-state, kit-and-startup].
+- "Next up" shows the lowest-numbered unprinted plate per build; a reprint plate with a
+  higher number waits behind it. Whether reprints should jump ahead is the maintainer's call.
+- The closed phone team switcher (a native select) still truncates long team names.
 - `stats/workspace.test.ts` "50 builds with 500 runs each" asserts a 300 ms wall-clock budget
   and overran once (362 ms) under a loaded full run; make it robust [build-state].
 

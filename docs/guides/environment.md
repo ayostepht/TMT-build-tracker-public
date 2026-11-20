@@ -78,12 +78,15 @@ Each limit takes a whole number (0 forbids the thing) or `off`; a malformed valu
 
 ## Demo
 
-| Variable               | Default | Description                                                  |
-| ---------------------- | ------- | ------------------------------------------------------------ |
-| `DEMO_MAX_LIVE`        | 500     | Demos that may exist at once; `0` turns the demo off         |
-| `DEMO_PER_IP_PER_HOUR` | 5       | New demos per visitor address per hour                       |
-| `DEMO_TTL_HOURS`       | 24      | Hours until a demo and everything in it is deleted (1 to 72) |
-| `DEMO_BUILDS`          | 2       | Builds one demo may hold (1 to 10)                           |
+| Variable               | Default | Description                                                                                |
+| ---------------------- | ------- | ------------------------------------------------------------------------------------------ |
+| `DEMO_MAX_LIVE`        | 500     | Demos that may exist at once; `0` turns the demo off                                       |
+| `DEMO_PER_IP_PER_HOUR` | 5       | New demos per visitor address per hour                                                     |
+| `DEMO_TTL_HOURS`       | 24      | Hours until a demo and everything in it is deleted (1 to 72)                               |
+| `DEMO_BUILDS`          | 2       | Builds one demo may hold (1 to 10)                                                         |
+| `DEMO_SPARES`          | 2       | Ready-made demos kept in reserve so starting one is quick; `0` builds each demo on request |
+
+Spare demos are made in the background after the server starts and replaced as visitors use them; they are recreated every few hours so the sample build's times stay fresh. They do not count toward `DEMO_MAX_LIVE` or the per-address limits until a visitor starts one, and the demo lifetime starts then.
 
 ## Analytics
 
