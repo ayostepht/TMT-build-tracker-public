@@ -67,8 +67,44 @@ for (const size of [
 	});
 }
 
+// Short desktop windows: the controls must leave room for several swatch rows on open.
+for (const size of [
+	{ width: 1440, height: 700 },
+	{ width: 1650, height: 830 }
+]) {
+	test(`swatch picker shows at least 4 swatch rows on open (${size.width}x${size.height})`, async ({
+		page
+	}) => {
+		await page.setViewportSize(size);
+		const { buildId } = await ownerWithBuild(page, `pickrows${size.height}`);
+		await page.goto(`/builds/${buildId}/design`);
+		await page.waitForLoadState('networkidle');
+		await page.getByRole('tab', { name: 'Colors' }).click();
+		await page
+			.locator('li.slot[data-role="primary"]')
+			.getByRole('button', { name: /^Change filament for/ })
+			.first()
+			.click();
+		const picker = page.getByTestId('swatch-picker');
+		await expect(picker.getByTestId('swatch').first()).toBeVisible();
+		await page.waitForTimeout(300);
+		const rows = await picker.evaluate((el) => {
+			const view = Math.min(el.getBoundingClientRect().bottom, window.innerHeight);
+			const tops = new Set<number>();
+			for (const s of el.querySelectorAll('[data-testid="swatch"]')) {
+				const r = s.getBoundingClientRect();
+				if (r.bottom <= view) tops.add(Math.round(r.top));
+			}
+			return tops.size;
+		});
+		console.log(`visible swatch rows ${size.width}x${size.height}: ${rows}`);
+		expect(rows).toBeGreaterThanOrEqual(4);
+	});
+}
+
 // Screenshots for review: PICKER_SHOTS=<dir> PICKER_TAG=before|after
 test('picker screenshots', async ({ page }) => {
+	if (process.env.PICKER_DARK) await page.emulateMedia({ colorScheme: 'dark' });
 	const dir = process.env.PICKER_SHOTS;
 	test.skip(!dir, 'only with PICKER_SHOTS');
 	const { buildId } = await ownerWithBuild(page, 'pickshots');
@@ -90,5 +126,9 @@ test('picker screenshots', async ({ page }) => {
 		await expect(picker.getByTestId('swatch').first()).toBeVisible();
 		await page.waitForTimeout(500);
 		await page.screenshot({ path: `${dir}/${process.env.PICKER_TAG}-${w}x${h}.png` });
+		if (w > 900) {
+			await picker.getByTestId('swatch').nth(3).hover();
+			await page.screenshot({ path: `${dir}/${process.env.PICKER_TAG}-hover-${w}x${h}.png` });
+		}
 	}
 });

@@ -39,7 +39,14 @@ import {
 } from '../db/schema';
 import { emitBuildEvent } from '../events';
 import { assertRunRoom, assertUnder, countBuilds, pruneActivity } from '../quota';
-import { BUILD_HOSPITAL_MAX, BUILD_NAME_MAX, BUILD_RECIPIENT_MAX } from './limits';
+import {
+	BUILD_HOSPITAL_MAX,
+	BUILD_NAME_MAX,
+	BUILD_RECIPIENT_MAX,
+	RUN_NOTE_MAX,
+	SPOOL_NAME_MAX,
+	SPOOL_NOTE_MAX
+} from './limits';
 import { repointBuildsOffTemplates } from './repoint';
 import { emitPrinterEvent } from '../printers/bus';
 import { parsePrinter } from '#lib/printers/printer.ts';
@@ -554,7 +561,7 @@ async function runOutcome(
 			grams: optGrams(body.grams, 'grams') ?? null,
 			hours: optNum(body.hours, 'hours') ?? null,
 			printer: optStr(body.printer, 'printer', 100) ?? null,
-			note: typeof body.note === 'string' ? body.note.slice(0, 2000) : ''
+			note: typeof body.note === 'string' ? body.note.slice(0, RUN_NOTE_MAX) : ''
 		};
 		const targets = runTargets(view, input);
 		const plannedSeconds =
@@ -764,7 +771,7 @@ export async function updateFilament(
 			if (
 				typeof body[f] !== 'string' ||
 				!(body[f] as string).trim() ||
-				(body[f] as string).length > 100
+				(body[f] as string).length > SPOOL_NAME_MAX
 			)
 				bad(`${f} must be a non-empty string`);
 			set[f] = (body[f] as string).trim();
@@ -1021,7 +1028,7 @@ export async function updateRun(
 		}
 		if (body.note !== undefined) {
 			if (typeof body.note !== 'string') bad('note must be a string');
-			set.note = body.note.slice(0, 2000);
+			set.note = body.note.slice(0, RUN_NOTE_MAX);
 			changed.note = true;
 		}
 		if (body.printer !== undefined) {
@@ -1221,7 +1228,7 @@ export async function addSpool(
 	let note: string | null = null;
 	if (body.note !== undefined && body.note !== null) {
 		if (typeof body.note !== 'string') bad('note must be text');
-		if (body.note.length > 200) bad('note must be at most 200 characters');
+		if (body.note.length > SPOOL_NOTE_MAX) bad(`note must be at most ${SPOOL_NOTE_MAX} characters`);
 		note =
 			body.note
 				// eslint-disable-next-line no-control-regex

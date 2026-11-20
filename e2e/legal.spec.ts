@@ -37,6 +37,8 @@ for (const p of PAGES) {
 		await expect(page.locator('h1:visible')).toHaveCount(1);
 		await expect(page.getByRole('heading', { level: 1, name: p.title, exact: true })).toBeVisible();
 		await expect(page.locator('main')).toContainText('Last updated');
+		// Only the configured sign-in provider is named (the e2e server enables Google alone).
+		await expect(page.locator('main')).not.toContainText(/Discord/);
 
 		await expect(page.getByTestId('legal-back')).toHaveAttribute('href', /\/login/);
 		await page.getByTestId(p.sibling).click();

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { TEAM_NAME_MAX } from '#lib/domain/limits.ts';
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import type { PageProps } from './$types';
@@ -31,7 +32,7 @@
 	<form class="card stack" method="post" action="?/create" use:enhance>
 		<h2>Create a team</h2>
 		{#if form?.error}<div class="error" role="alert">{form.error}</div>{/if}
-		<label class="field">Team name<input name="name" required maxlength="80" /></label>
+		<label class="field">Team name<input name="name" required maxlength={TEAM_NAME_MAX} /></label>
 		<button class="btn primary">Create team</button>
 	</form>
 

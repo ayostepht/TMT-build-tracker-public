@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { BUILD_NAME_MAX } from '#lib/domain/limits.ts';
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -121,7 +122,11 @@
 			<h2>New draft</h2>
 			{#if form?.error}<div class="error" role="alert">{form.error}</div>{/if}
 			<label class="field"
-				>Name (optional)<input name="name" maxlength="200" placeholder="Draft name" /></label
+				>Name (optional)<input
+					name="name"
+					maxlength={BUILD_NAME_MAX}
+					placeholder="Draft name"
+				/></label
 			>
 			{#if data.workspaces.length > 1}
 				<label class="field"
@@ -168,7 +173,12 @@
 							void rename(d.id);
 						}}
 					>
-						<input aria-label="Draft name" bind:value={renameText} maxlength="200" required />
+						<input
+							aria-label="Draft name"
+							bind:value={renameText}
+							maxlength={BUILD_NAME_MAX}
+							required
+						/>
 						<button class="btn sm primary">Save</button>
 						<button class="btn sm" type="button" onclick={() => (renaming = null)}>Cancel</button>
 					</form>

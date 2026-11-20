@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { BUILD_NAME_MAX } from '#lib/domain/limits.ts';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
@@ -282,7 +283,7 @@
 						</label>
 						<label class="field">
 							Build name
-							<input bind:value={buildName} bind:this={nameInput} maxlength="200" />
+							<input bind:value={buildName} bind:this={nameInput} maxlength={BUILD_NAME_MAX} />
 						</label>
 						<button class="btn primary" disabled={busy} onclick={start}>Start a build</button>
 					{:else}
