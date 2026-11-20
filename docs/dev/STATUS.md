@@ -41,9 +41,9 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 
 ## Waiting on the maintainer
 
-- Set up the nightly database backup now that there are real users (`pg_dump` through a
-  `postgres:17` container, kept off the server), and choose an analytics provider (or leave
-  it off).
+- Backups: nightly User Script on the maintainer's server since 2026-11-20 (`pg_dump` 17 of
+  the `public` and `drizzle` schemas plus a tarball of `/data`, 14 days kept, on an array
+  share apart from appdata). Still to do: an off-site copy and a first restore test.
 - Repository settings for the new repo: branch protection on `main` (required `public-ci`
   checks, no force push), private vulnerability reporting, the `ghcr.io` package visibility,
   Dependabot.

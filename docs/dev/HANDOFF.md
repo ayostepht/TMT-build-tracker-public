@@ -39,7 +39,8 @@ _Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 1. The maintainer was told `sha-d28d128` is ready (Force update, then: home page signed in,
    Home page link, demo start with strict Turnstile, Leave the demo). After they confirm, log
    the sixth deploy.
-2. With the maintainer: nightly backup, repository settings.
+2. With the maintainer: off-site copy of the backups and one restore test; repository
+   settings.
 
 ## Questions waiting for the maintainer
 
