@@ -2,9 +2,11 @@
 	import { resolve } from '$app/paths';
 	import LegalPage from '#lib/components/LegalPage.svelte';
 	import { ISSUES_URL } from '#lib/repo.ts';
+	import { providerPhrase } from '#lib/sign-in-providers.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+	const providerText = $derived(providerPhrase(data.signInProviders));
 </script>
 
 <svelte:head><title>Privacy · TMT Build Tracker</title></svelte:head>
@@ -21,7 +23,8 @@
 	<h2>Your account</h2>
 	<ul>
 		<li>
-			You sign in with Google, GitHub or Discord. No password is stored, and no email is ever sent.
+			You sign in with {providerText || 'a supported provider'}. No password is stored, and no email
+			is ever sent.
 		</li>
 		<li>
 			Signing in creates your account. The app stores your <b>name</b>, your
@@ -117,8 +120,9 @@
 		</li>
 		<li>No email is sent.</li>
 		<li>
-			Google, GitHub or Discord learn that you signed in, because you use them to do it. For a
-			linked printer, OctoEverywhere answers the status requests.
+			The provider you sign in with{providerText ? ` (currently ${providerText})` : ''} learns that you
+			signed in, because you use it to do so. For a linked printer, OctoEverywhere answers the status
+			requests.
 		</li>
 		<li>
 			The links to MakeGood, GitHub and the build guide are plain links; nothing is sent until you

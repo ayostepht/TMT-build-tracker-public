@@ -36,6 +36,7 @@ test('the demo page says what you get and starts a demo with tracking first', as
 	await settled(page);
 	await expect(page.getByRole('heading', { level: 1 })).toContainText('Track a sample chair build');
 	await expect(page.locator('main')).toContainText('24 hours');
+	await expect(page.locator('main')).not.toContainText(/Discord/);
 	await shots(page, 'demo-page');
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.emulateMedia({ colorScheme: 'light' });
