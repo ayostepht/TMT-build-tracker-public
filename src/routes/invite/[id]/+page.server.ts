@@ -1,9 +1,10 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getAuth } from '#lib/server/auth-instance.ts';
 import { mayUseInvitations } from '#lib/server/auth-policy.ts';
 import { first, getDb } from '#lib/server/db/index.ts';
-import { invitation, organization, user } from '#lib/server/db/schema.ts';
+import { invitation, member, organization, user } from '#lib/server/db/schema.ts';
+import { maskEmail, teamMessage } from '#lib/team-wording.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 function policyAllows(u: { emailVerified?: boolean | null; isDemo?: boolean | null }) {
@@ -15,6 +16,7 @@ function find(id: string) {
 		getDb()
 			.select({
 				id: invitation.id,
+				organizationId: invitation.organizationId,
 				email: invitation.email,
 				role: invitation.role,
 				status: invitation.status,
@@ -33,24 +35,40 @@ function find(id: string) {
 export const load: PageServerLoad = async ({ params, locals }) => {
 	const inv = await find(params.id);
 	if (!inv) error(404, 'Invitation not found');
+	const status = inv.expiresAt < new Date() && inv.status === 'pending' ? 'expired' : inv.status;
+	const wrongAccount = !!locals.user && locals.user.email.toLowerCase() !== inv.email.toLowerCase();
+	const isMember = locals.user
+		? !!(await first(
+				getDb()
+					.select({ id: member.id })
+					.from(member)
+					.where(
+						and(eq(member.organizationId, inv.organizationId), eq(member.userId, locals.user.id))
+					)
+			))
+		: false;
 	return {
 		invitation: {
 			id: inv.id,
 			team: inv.team,
 			role: inv.role,
 			inviter: inv.inviter,
-			status: inv.expiresAt < new Date() && inv.status === 'pending' ? 'expired' : inv.status,
-			slug: inv.slug,
+			status,
+			// The team's address is only for its members (the "Go to the team" link).
+			slug: isMember ? inv.slug : null,
 			// Only reveal the invited address to the person it was sent to.
 			email:
 				locals.user && locals.user.email.toLowerCase() === inv.email.toLowerCase()
 					? inv.email
-					: null
+					: null,
+			// A different signed-in account sees the first character and the domain, never more.
+			maskedEmail: wrongAccount && status === 'pending' ? maskEmail(inv.email) : null
 		},
+		isMember,
 		signedIn: !!locals.user,
 		isDemo: (locals.user as { isDemo?: boolean } | null)?.isDemo === true,
 		needsVerifiedEmail: !!locals.user && !policyAllows(locals.user),
-		wrongAccount: !!locals.user && locals.user.email.toLowerCase() !== inv.email.toLowerCase(),
+		wrongAccount,
 		userEmail: locals.user?.email ?? null
 	};
 };
@@ -70,7 +88,7 @@ export const actions: Actions = {
 				headers: request.headers
 			});
 		} catch (e) {
-			return fail(400, { error: (e as Error).message || 'Could not accept invitation' });
+			return fail(400, { error: teamMessage((e as Error).message, 'Could not accept invitation') });
 		}
 		redirect(303, `/teams/${inv.slug}`);
 	},
@@ -82,7 +100,9 @@ export const actions: Actions = {
 				headers: request.headers
 			});
 		} catch (e) {
-			return fail(400, { error: (e as Error).message || 'Could not decline invitation' });
+			return fail(400, {
+				error: teamMessage((e as Error).message, 'Could not decline invitation')
+			});
 		}
 		redirect(303, '/workspace');
 	}

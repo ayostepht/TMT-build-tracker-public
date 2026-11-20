@@ -6,6 +6,7 @@ import { getAuth } from '#lib/server/auth-instance.ts';
 import { first, getDb } from '#lib/server/db/index.ts';
 import { invitation, member, organization, user } from '#lib/server/db/schema.ts';
 import { isPersonalMetadata } from '#lib/server/teams.ts';
+import { teamMessage } from '#lib/team-wording.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 async function teamFor(slug: string, userId: string) {
@@ -62,8 +63,8 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 };
 
 function authFail(e: unknown) {
-	const msg = e instanceof APIError || e instanceof Error ? e.message : 'Something went wrong';
-	return fail(400, { error: msg });
+	const msg = e instanceof APIError || e instanceof Error ? e.message : '';
+	return fail(400, { error: teamMessage(msg) });
 }
 
 export const actions: Actions = {

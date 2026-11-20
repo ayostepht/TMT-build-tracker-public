@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { MAKEGOOD_MODEL_URL } from '#lib/makegood.ts';
-	import { REPO_URL } from '#lib/repo.ts';
+	import { FEEDBACK_URL, REPO_URL } from '#lib/repo.ts';
 </script>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -->
@@ -24,6 +24,9 @@
 			<a href={resolve('/(site)/privacy')}>Privacy</a>
 			<a href={resolve('/(site)/terms')}>Terms</a>
 			<a href={REPO_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
+			<a href={FEEDBACK_URL} target="_blank" rel="noopener noreferrer" data-testid="footer-feedback"
+				>Send feedback</a
+			>
 		</nav>
 		<p class="site-foot__cookie">
 			This site only sets a sign-in cookie. Analytics are cookieless. <a
