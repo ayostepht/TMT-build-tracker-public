@@ -25,7 +25,7 @@
 	// Last photo shown in the viewer: where focus goes if its thumbnail is gone (photo deleted).
 	let lastShown = 0;
 	$effect(() => {
-		if (open !== null) lastShown = open;
+		if (idx !== null) lastShown = idx;
 	});
 	const asking = createAsk();
 
@@ -64,9 +64,8 @@
 			}))
 		)
 			return;
-		const idx = open;
 		await ctx.act(() => deletePhoto(ctx.id, id));
-		if (idx !== null) open = photos.length ? Math.min(idx, photos.length - 1) : null;
+		open = idx;
 	}
 
 	function show(i: number) {
@@ -98,13 +97,17 @@
 		};
 	}
 	function onkeydown(e: KeyboardEvent) {
-		if (open === null) return;
+		if (open === null || idx === null) return;
 		// A question on top (delete photo) takes the keys; the viewer stays. Escape is the dialog's own.
 		if (asking.current) return;
-		if (e.key === 'ArrowLeft' && open > 0) open--;
-		else if (e.key === 'ArrowRight' && open < photos.length - 1) open++;
+		if (e.key === 'ArrowLeft' && idx > 0) open = idx - 1;
+		else if (e.key === 'ArrowRight' && idx < photos.length - 1) open = idx + 1;
 	}
-	const cur = $derived(open !== null ? photos[open] : undefined);
+	// `open` clamped to the photos that exist: when the shown photo is deleted the list shrinks
+	// before `open` is updated, and the viewer must not unmount and remount in between (the
+	// remounted dialog would record <body> as its opener and focus would not come back).
+	const idx = $derived(open !== null && photos.length ? Math.min(open, photos.length - 1) : null);
+	const cur = $derived(idx !== null ? photos[idx] : undefined);
 </script>
 
 <svelte:window {onkeydown} />
@@ -158,7 +161,7 @@
 	{/if}
 </div>
 
-{#if cur && open !== null}
+{#if cur && idx !== null}
 	<dialog
 		class="ds-modal pg-box"
 		aria-label="Photo viewer"
@@ -167,9 +170,7 @@
 	>
 		<div class="lhead">
 			<span class="muted"
-				>{open + 1} of {photos.length} · {cur.createdByName ?? 'Someone'}, {ago(
-					cur.createdAt
-				)}</span
+				>{idx + 1} of {photos.length} · {cur.createdByName ?? 'Someone'}, {ago(cur.createdAt)}</span
 			>
 			<button type="button" class="x" aria-label="Close photo" data-initial onclick={close}
 				>×</button
@@ -177,7 +178,7 @@
 		</div>
 		<div class="limg"><img src={photoUrl(ctx.id, cur.id)} alt={cur.caption || `${label}`} /></div>
 		<div class="lfoot">
-			<button type="button" class="btn sm" disabled={open === 0} onclick={() => open!--}
+			<button type="button" class="btn sm" disabled={idx === 0} onclick={() => (open = idx - 1)}
 				>‹ Prev</button
 			>
 			<span class="cap">{cur.caption}</span>
@@ -187,8 +188,8 @@
 			<button
 				type="button"
 				class="btn sm"
-				disabled={open >= photos.length - 1}
-				onclick={() => open!++}>Next ›</button
+				disabled={idx >= photos.length - 1}
+				onclick={() => (open = idx + 1)}>Next ›</button
 			>
 		</div>
 	</dialog>

@@ -8,7 +8,7 @@
  * upload can never render as an active document even if a handler forgot its content type.
  */
 
-/** Browser features the app never uses. Clipboard (copy link) and fullscreen stay allowed. */
+/** Browser features the app never uses. Clipboard (copy link) and fullscreen stay allowed. Only features Chromium recognises (an unknown one logs a console error on every page; checked in e2e/security.spec.ts). */
 export const PERMISSIONS_POLICY = [
 	'camera',
 	'microphone',
@@ -16,7 +16,6 @@ export const PERMISSIONS_POLICY = [
 	'payment',
 	'usb',
 	'serial',
-	'bluetooth',
 	'hid',
 	'midi',
 	'display-capture'
