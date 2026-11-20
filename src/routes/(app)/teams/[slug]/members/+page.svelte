@@ -7,6 +7,19 @@
 	let { data, form }: PageProps = $props();
 	const isOwner = $derived(data.role === 'owner');
 	const inviteUrl = (id: string) => `${page.url.origin}/invite/${id}`;
+	/** The system share sheet exists on most phones; elsewhere only "Copy link" is shown. */
+	const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+	async function shareLink(id: string) {
+		try {
+			await navigator.share({
+				title: `Join ${data.team.name} on TMT Build Tracker`,
+				text: `Join ${data.team.name} on TMT Build Tracker`,
+				url: inviteUrl(id)
+			});
+		} catch {
+			// Dismissed the share sheet, or sharing failed: nothing to do, the link is still on screen.
+		}
+	}
 
 	/** Member being removed: asked about in a dialog, not a browser confirm(). */
 	let removing = $state<{ id: string; name: string } | null>(null);
@@ -40,9 +53,22 @@
 		<li class="ds-card ds-card--compact" data-testid="member-row">
 			<b>{m.name}</b> <span class="muted">{m.email}</span>
 			{#if isOwner}
-				<form method="post" action="?/setRole" use:enhance>
+				<form
+					method="post"
+					action="?/setRole"
+					use:enhance={({ formElement }) =>
+						async ({ result, update }) => {
+							await update();
+							// A refused change leaves the menu showing the role it still has.
+							if (result.type !== 'success') {
+								const sel = formElement.elements.namedItem('role') as HTMLSelectElement | null;
+								if (sel) sel.value = m.role;
+							}
+						}}
+				>
 					<input type="hidden" name="memberId" value={m.id} />
 					<select
+						class="mem-role"
 						name="role"
 						value={m.role}
 						aria-label="Role of {m.name}"
@@ -86,11 +112,25 @@
 					onclick={() => copyLink(form.invited!.id, newLink)}
 					>{copied === form.invited.id ? 'Copied' : 'Copy link'}</button
 				>
+				{#if canShare}
+					<button
+						class="btn"
+						type="button"
+						data-testid="share-invite"
+						onclick={() => shareLink(form.invited!.id)}>Share</button
+					>
+				{/if}
 			</div>
 		</div>
 	{/if}
 	<form class="card stack" method="post" action="?/invite" use:enhance>
-		<label class="field">Email<input type="email" name="email" required /></label>
+		<label class="field"
+			>Email<input type="email" name="email" required aria-describedby="invite-why" /></label
+		>
+		<p class="muted mem-why" id="invite-why">
+			The link only works for the account with this email. Nothing is emailed; you send the link
+			yourself.
+		</p>
 		<label class="field"
 			>Role
 			<select name="role">
@@ -121,6 +161,14 @@
 							onclick={() => copyLink(i.id, pendingLinks[i.id] ?? null)}
 							>{copied === i.id ? 'Copied' : 'Copy link'}</button
 						>
+						{#if canShare}
+							<button
+								class="btn"
+								type="button"
+								data-testid="share-pending-invite"
+								onclick={() => shareLink(i.id)}>Share</button
+							>
+						{/if}
 					</div>
 					<form method="post" action="?/revoke" use:enhance>
 						<input type="hidden" name="id" value={i.id} />
@@ -163,6 +211,22 @@
 {/if}
 
 <style>
+	.mem-why {
+		margin: 0;
+		font-size: var(--fs-sm);
+	}
+	.mem-role {
+		padding: var(--sp-3) var(--sp-5);
+		border: 1px solid var(--field-line);
+		border-radius: var(--r-md);
+		background: var(--paper);
+		min-height: 40px;
+	}
+	@media (pointer: coarse) {
+		.mem-role {
+			min-height: 44px;
+		}
+	}
 	.mem-link {
 		display: flex;
 		gap: 8px;
