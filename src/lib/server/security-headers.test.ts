@@ -20,6 +20,7 @@ describe('securityHeaders', () => {
 		expect(h['permissions-policy']).toContain('microphone=()');
 		expect(h['permissions-policy']).toContain('geolocation=()');
 		expect(h['permissions-policy']).not.toContain('clipboard');
+		expect(h['permissions-policy']).not.toContain('bluetooth');
 	});
 
 	it('sends HSTS only on https, without includeSubDomains or preload', () => {

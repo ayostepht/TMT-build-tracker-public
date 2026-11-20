@@ -122,3 +122,20 @@ test.describe('SSO only', () => {
 		}
 	});
 });
+
+test.describe('browser console noise', () => {
+	test('no Permissions-Policy warning on the public page or an app page', async ({ page }) => {
+		const messages: string[] = [];
+		page.on('console', (m) => messages.push(m.text()));
+		await page.goto('/');
+		await page.waitForLoadState('networkidle');
+		await signUp(page, 'Policy Check', uniqueEmail('policy'));
+		await page.goto('/workspace');
+		await page.waitForLoadState('networkidle');
+		// A static document served by the asset handler carries the same headers.
+		await page.goto('/offline.html');
+		await page.waitForLoadState('networkidle');
+		const bad = messages.filter((t) => /permissions-policy|unrecognized feature/i.test(t));
+		expect(bad).toEqual([]);
+	});
+});

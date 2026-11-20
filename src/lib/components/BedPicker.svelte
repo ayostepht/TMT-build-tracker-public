@@ -175,12 +175,15 @@
 	};
 	async function loadTeam(): Promise<PrinterPublic[]> {
 		if (!orgId) return [];
+		let next: typeof groups;
 		try {
-			groups = (await listMyPrinters(orgId)).workspaces;
+			next = (await listMyPrinters(orgId)).workspaces;
 		} catch {
-			groups = [];
+			next = [];
 		}
-		return team;
+		groups = next;
+		// Plain values only: a derived read here would be inert if the page was left meanwhile.
+		return next.flatMap((g) => g.printers);
 	}
 	function pickTeam(id: string) {
 		const t = team.find((x) => x.id === id);
