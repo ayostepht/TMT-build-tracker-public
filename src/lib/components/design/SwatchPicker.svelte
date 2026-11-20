@@ -580,7 +580,7 @@
 					<b>{nameOf(detail)}</b>
 					<span class="muted">{detail[0]} · {detail[3]} · {detail[2]}</span>
 					<!-- One fixed-height line, so hovering never changes the height of what is above the grid. -->
-					<span class="extras why" title={extrasTitle}>
+					<span class="extras why" class:hasothers={detailOthers.length > 0} title={extrasTitle}>
 						{#if detailApprox}<span data-testid="swatch-approx"
 								>Approx. color: estimated from product photos</span
 							>{/if}
@@ -1230,15 +1230,70 @@
 		.sheet {
 			padding: 0 var(--sp-8) 0;
 		}
-		header {
-			padding-top: var(--sp-7);
+		.sheet {
+			gap: var(--sp-3);
 		}
+		header {
+			padding-top: var(--sp-4);
+			padding-bottom: var(--sp-2);
+		}
+		/* Compact: the two selects share one row, the brand chips are one swipeable row below. */
 		.filters {
 			flex-wrap: wrap;
 			overflow: visible;
+			padding-bottom: 0;
+			row-gap: var(--sp-3);
 		}
-		.brandchips {
-			display: contents;
+		.filters > select {
+			flex: 1 1 0;
+			min-width: 0;
+			max-width: none;
+			text-overflow: ellipsis;
+		}
+		.filters > .brandchips {
+			flex: 0 0 100%;
+			min-width: 0;
+			flex-wrap: nowrap;
+			overflow-x: auto;
+			overscroll-behavior-x: contain;
+			scrollbar-width: thin;
+			padding-bottom: var(--sp-2);
+		}
+		.brandchips > select {
+			flex: none;
+		}
+		.searchrow input,
+		select {
+			padding-block: var(--sp-3);
+		}
+		.detail {
+			height: 3rem;
+			gap: var(--sp-4);
+		}
+		/* "Other brands" sits on the detail row's last line instead of taking a row of its own. */
+		.otherswrap {
+			min-height: 0;
+			height: 0;
+		}
+		.others summary {
+			position: absolute;
+			right: 0;
+			top: -1.5rem;
+			background: var(--card);
+			padding-left: var(--sp-3);
+		}
+		.extras.hasothers {
+			padding-right: 8rem;
+		}
+		.body {
+			gap: var(--sp-4);
+		}
+		h3 {
+			margin-bottom: var(--sp-2);
+		}
+		.grid {
+			gap: var(--sp-3);
+			padding: var(--sp-2) var(--sp-3);
 		}
 	}
 	@media (prefers-reduced-motion: no-preference) {

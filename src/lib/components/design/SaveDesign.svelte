@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DESIGN_NAME_MAX } from '#lib/domain/limits.ts';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { createDesign, uploadDesignSnapshot } from '#lib/client/api.ts';
@@ -66,7 +67,7 @@
 		>
 			<label class="field">
 				Design name
-				<input bind:value={name} maxlength="100" placeholder="e.g. Ocean blues" />
+				<input bind:value={name} maxlength={DESIGN_NAME_MAX} placeholder="e.g. Ocean blues" />
 			</label>
 			{#if error}<div class="error" role="alert">{error}</div>{/if}
 			<button class="btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save design'}</button>

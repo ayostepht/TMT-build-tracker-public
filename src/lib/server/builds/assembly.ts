@@ -4,6 +4,7 @@ import { ApiError } from '../access';
 import { first, type Db } from '../db';
 import { buildAssembly } from '../db/schema';
 import { mutateBuild } from './actions';
+import { ASSEMBLY_NOTE_MAX } from './limits';
 
 /**
  * Tick or untick one assembly item, or edit its note. `itemKey` is a step key, `<step>:check:<key>`
@@ -19,8 +20,11 @@ export async function setAssemblyItem(
 	if (typeof itemKey !== 'string' || !itemKey) throw new ApiError(400, 'itemKey is required');
 	if (patch.done !== undefined && typeof patch.done !== 'boolean')
 		throw new ApiError(400, 'done must be true or false');
-	if (patch.note !== undefined && (typeof patch.note !== 'string' || patch.note.length > 1000))
-		throw new ApiError(400, 'note must be text of at most 1000 characters');
+	if (
+		patch.note !== undefined &&
+		(typeof patch.note !== 'string' || patch.note.length > ASSEMBLY_NOTE_MAX)
+	)
+		throw new ApiError(400, `note must be text of at most ${ASSEMBLY_NOTE_MAX} characters`);
 	if (patch.done === undefined && patch.note === undefined)
 		throw new ApiError(400, 'Nothing to update');
 

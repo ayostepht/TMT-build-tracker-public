@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { RUN_NOTE_MAX } from '#lib/domain/limits.ts';
 	import { tick, untrack } from 'svelte';
 	import {
 		RUN_RESULTS,
@@ -738,7 +739,7 @@
 						id="{uid}-n"
 						rows="3"
 						placeholder="Warping, stringing, fit…"
-						maxlength="2000"
+						maxlength={RUN_NOTE_MAX}
 						bind:value={note}></textarea>
 				</label>
 

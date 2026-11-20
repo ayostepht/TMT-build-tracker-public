@@ -1,7 +1,7 @@
 // Preloaded with `node --import ./scripts/proxy-origin.mjs build` (see `npm start`
-// and the Dockerfile). adapter-node v6 ignores ORIGIN and, without a protocol
-// header, assumes https, so SvelteKit rejects form posts made over plain http as
-// cross-site. This makes the request origin explicit and safe:
+// and the Dockerfile). Without a protocol header adapter-node assumes https, so
+// SvelteKit rejects form posts made over plain http as cross-site. This makes the
+// request origin explicit and safe:
 //
 //  - PUBLIC_URL (or BETTER_AUTH_URL / ORIGIN) set: that origin is used for every
 //    request, whatever headers the client sends.
@@ -50,6 +50,13 @@ function configuredOrigin() {
 }
 
 const fixed = configuredOrigin();
+
+// adapter-node (6.0.2 and later) reads ORIGIN itself, uses it for every request and refuses to
+// start when it is set but empty or not a URL. Hand it the origin chosen above (PUBLIC_URL wins
+// over BETTER_AUTH_URL and ORIGIN, as in config.ts), or nothing, so a blank ORIGIN means "unset".
+if (fixed) process.env.ORIGIN = fixed.origin;
+else delete process.env.ORIGIN;
+
 const first = (value) =>
 	String(Array.isArray(value) ? value[0] : (value ?? ''))
 		.split(',')[0]

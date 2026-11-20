@@ -1,6 +1,6 @@
 # Orchestrator handoff
 
-_Updated 2026-11-19. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable facts go to
+_Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable facts go to
 `docs/dev/STATUS.md`._
 
 ## Rules in force right now
@@ -10,6 +10,15 @@ _Updated 2026-11-19. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 - **The site is live (first deploy 2026-11-19, image `sha-8eb3f1e`).** The baseline migration
   `drizzle/0000_baseline.sql` is applied to the live database and frozen: schema changes add
   `0001_…` and later.
+- **Real users since 2026-11-20.** The maintainer has shared the site with a few makers, so
+  the live database holds data that must survive every update. Schema changes are additive
+  and backward-compatible (add columns and tables, with defaults; backfill in the migration;
+  drop or rename only in a later migration after the code stops using the old shape). No
+  migration that deletes or rewrites user rows without the maintainer's yes. Every pull
+  request that adds a migration says so in its description, and before it merges the
+  maintainer takes a `pg_dump` and the migration is rehearsed on a restored copy (deploy
+  routine in `docs/dev/dev-environments.md`). Startup and seeding never overwrite
+  user-owned rows. Stricter input checks never make existing stored values fail to load.
 - Pull request and issue text: no internal process notes. Run `npx prettier --write` on edited
   docs before committing.
 
