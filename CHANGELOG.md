@@ -25,6 +25,7 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 - Leave a team, or delete one, from its Members page. The only owner chooses who takes over before leaving; deleting asks for the team's name and lists what goes. Removing a member hands their builds and printers in that team to an owner.
 - "Send feedback" in the footers opens a new issue on GitHub.
 - Hosting guide and deploy files for Fly.io, Railway and your own server behind a Cloudflare Tunnel, with a Supabase database.
+- Print some parts of a plate: if you split a plate in your slicer, use "Print some parts…" on the plate to mark (or log) only the parts that are on this print. They start as one print with one Undo and the rest stays To print. Now printing shows "3 of 4 parts" with their share of the grams and time, and with a printer connected "Where is it printing?" names the parts so the printer's job follows only them.
 
 ### Changed
 
