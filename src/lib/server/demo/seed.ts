@@ -1,7 +1,7 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Db } from '../db';
 import { first } from '../db';
-import { templates } from '../db/schema';
+import { buildFilaments, templates } from '../db/schema';
 import {
 	addRun,
 	printingAction,
@@ -63,14 +63,21 @@ export async function seedDemoBuild(db: Db, userId: string): Promise<string> {
 		userId
 	);
 
-	let view = (await loadBuildView(db, buildId, userId))!;
-	for (const f of view.filaments) {
-		const c = SAMPLE_COLORS[f.key];
-		if (c) await updateFilament(db, buildId, userId, f.key, { name: c.name, hex: c.hex });
+	// Each query is a round trip to the database and the seed makes hundreds, so it reads only what
+	// it needs: the color slots straight from their table (not through the whole build view), and
+	// the view once, for its plates and assembly steps.
+	const slots = await db
+		.select({ key: buildFilaments.roleKey })
+		.from(buildFilaments)
+		.where(eq(buildFilaments.buildId, buildId));
+	const present = new Set(slots.map((r) => r.key));
+	for (const [key, c] of Object.entries(SAMPLE_COLORS)) {
+		if (present.has(key))
+			await updateFilament(db, buildId, userId, key, { name: c.name, hex: c.hex });
 	}
 	await updateBuild(db, buildId, userId, { phase: 'printing' });
 
-	view = (await loadBuildView(db, buildId, userId))!;
+	const view = (await loadBuildView(db, buildId, userId))!;
 	// Single-run plates with parts, in plate order.
 	const plates = view.plates.filter((p) => p.runs === 1 && !p.perPartRuns && p.parts.length > 0);
 	if (plates.length < 6) throw new Error('the demo kit needs at least six single-run plates');
@@ -121,7 +128,6 @@ export async function seedDemoBuild(db: Db, userId: string): Promise<string> {
 		when: new Date(Date.now() - 2 * 3_600_000).toISOString()
 	});
 
-	view = (await loadBuildView(db, buildId, userId))!;
 	let ticked = 0;
 	for (const step of view.assembly.steps) {
 		if (ticked >= 2) break;

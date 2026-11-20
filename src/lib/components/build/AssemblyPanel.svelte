@@ -58,6 +58,21 @@
 	const set = (key: string, patch: { done?: boolean; note?: string }) =>
 		ctx.act(() => setAssemblyItem(ctx.id, key, patch));
 	const item = (key: string) => view.assembly.items[key];
+
+	// "Mark step done" is never blocked: with parts of the step still unprinted it asks first, inline.
+	let confirming = $state<string | null>(null);
+	const unprintedOf = (step: AssemblyStep) =>
+		step.parts.filter((slug) => statusOf(slug) !== 'Printed').length;
+	const unprintedText = (n: number) =>
+		`${n === 1 ? "1 part for this step isn't" : `${n} parts for this step aren't`} printed yet. Mark it done anyway?`;
+	function markDone(step: AssemblyStep) {
+		if (unprintedOf(step) > 0) confirming = step.key;
+		else void set(step.key, { done: true });
+	}
+	function confirmDone(step: AssemblyStep) {
+		confirming = null;
+		void set(step.key, { done: true });
+	}
 </script>
 
 <section class="stack asm">
@@ -160,7 +175,6 @@
 												<span class="pst ok">Printed</span>
 											{:else}
 												<span class="pst warnchip">{st}</span>
-												<span class="warntext">{partName(slug)} isn't printed yet</span>
 											{/if}
 										</li>
 									{/each}
@@ -174,7 +188,7 @@
 								<ul class="ticks">
 									{#each step.hardware as h (h.name)}
 										<li>
-											<label>
+											<label class="tick-row">
 												<input
 													type="checkbox"
 													checked={item(hwItemKey(step.key, h.name))?.done ?? false}
@@ -197,7 +211,7 @@
 									{#each step.checks as c (c.key)}
 										{@const ci = item(checkItemKey(step.key, c.key))}
 										<li>
-											<label>
+											<label class="tick-row">
 												<input
 													type="checkbox"
 													checked={ci?.done ?? false}
@@ -235,7 +249,20 @@
 										: ''}</span
 								>
 							{/if}
-							{#if ctx.canEdit}
+							{#if ctx.canEdit && confirming === step.key && !sp.done}
+								{@const n = unprintedOf(step)}
+								<div class="confirm" role="group" aria-label="Mark step done anyway?">
+									<p>{unprintedText(n)}</p>
+									<div class="confirm-btns">
+										<button type="button" class="btn" onclick={() => (confirming = null)}
+											>Not yet</button
+										>
+										<button type="button" class="btn primary" onclick={() => confirmDone(step)}
+											>Mark done anyway</button
+										>
+									</div>
+								</div>
+							{:else if ctx.canEdit}
 								{#if sp.done}
 									<button
 										type="button"
@@ -243,10 +270,8 @@
 										onclick={() => set(step.key, { done: false })}>Reopen step</button
 									>
 								{:else}
-									<button
-										type="button"
-										class="btn primary"
-										onclick={() => set(step.key, { done: true })}>Mark step done</button
+									<button type="button" class="btn primary" onclick={() => markDone(step)}
+										>Mark step done</button
 									>
 								{/if}
 							{/if}
@@ -378,10 +403,6 @@
 		gap: 8px;
 		flex-wrap: wrap;
 	}
-	.warntext {
-		color: var(--warn);
-		font-size: var(--fs-sm);
-	}
 	.pst {
 		font: 600 var(--fs-xs) var(--f-body);
 		padding: 2px 8px;
@@ -398,23 +419,28 @@
 		color: var(--warn);
 		border-color: transparent;
 	}
-	.ticks label {
+	/* The whole row is the tap target: full width, 44px tall, 24px box. */
+	.tick-row {
 		display: flex;
-		align-items: flex-start;
-		gap: 10px;
-		min-height: 32px;
+		align-items: center;
+		gap: 12px;
+		flex: 1;
+		min-width: 0;
+		min-height: 44px;
+		box-sizing: border-box;
+		padding-block: 4px;
 		cursor: pointer;
 	}
-	.ticks input {
-		width: 20px;
-		height: 20px;
-		margin-top: 1px;
+	.tick-row input {
+		width: 24px;
+		height: 24px;
 		flex: none;
+		margin: 0;
 	}
 	.ticks li {
 		display: flex;
 		gap: 8px;
-		align-items: baseline;
+		align-items: center;
 		justify-content: space-between;
 	}
 	.who {
@@ -448,6 +474,31 @@
 		margin-right: auto;
 		color: var(--ok);
 		font-size: var(--fs-sm);
+	}
+	.confirm {
+		flex: 1 1 100%;
+		display: grid;
+		gap: 8px;
+		padding: 10px 12px;
+		border: 1px solid var(--warn);
+		border-radius: var(--r-md);
+		background: var(--warn-soft);
+	}
+	.confirm p {
+		margin: 0;
+		color: var(--ink);
+	}
+	.confirm-btns {
+		display: flex;
+		gap: 10px;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+	}
+	@media (pointer: coarse), (max-width: 760px) {
+		.confirm-btns .btn {
+			min-height: 44px;
+			box-sizing: border-box;
+		}
 	}
 	@media (max-width: 760px) {
 		footer .btn.primary {

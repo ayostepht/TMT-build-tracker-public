@@ -22,11 +22,10 @@ import type {
 	TemplateModelInfo
 } from '#lib/domain/types.ts';
 import { materialFamily } from '#lib/filament-catalog.ts';
-import type { PlateTimeEstimate } from '#lib/domain/time-estimate.ts';
-import { buildAccess } from '../access';
+import { buildTimeModel, type PlateTimeEstimate } from '#lib/domain/time-estimate.ts';
 import { hardwareModelUrl } from '../models/hardware';
 import { first, type DbOrTx } from '../db';
-import { estimateArrangedPlates, loadTimeModel } from './time-model';
+import { estimateArrangedPlates } from './time-model';
 import { loadProfileRows, resolveProfiles } from './part-profiles';
 import {
 	activity,
@@ -52,26 +51,8 @@ import {
 	templates,
 	user
 } from '../db/schema';
-import { normalizeRole } from '../access';
+import { canEditRole, normalizeRole } from '../access';
 import { layoutBed } from '#lib/printers/layout-bed.ts';
-
-async function defaultLayoutKey(db: DbOrTx, templateId: string): Promise<string | null> {
-	return (
-		(
-			await first(
-				db
-					.select({ key: templatePlateLayouts.key })
-					.from(templatePlateLayouts)
-					.where(
-						and(
-							eq(templatePlateLayouts.templateId, templateId),
-							eq(templatePlateLayouts.isDefault, true)
-						)
-					)
-			)
-		)?.key ?? null
-	);
-}
 
 /** Printer jobs linked to the build that are running right now (printing or paused). */
 export async function loadLiveJobs(db: DbOrTx, buildId: string): Promise<LiveJobs> {
@@ -149,12 +130,120 @@ export async function loadBuildView(
 	buildId: string,
 	userId: string
 ): Promise<BuildView | null> {
-	const access = await buildAccess(db, buildId, userId);
-	if (!access) return null;
-	const b = await first(db.select().from(builds).where(eq(builds.id, buildId)));
-	if (!b) return null;
-	const tpl = await first(db.select().from(templates).where(eq(templates.id, b.templateId)));
-	if (!tpl) return null;
+	// Round trips dominate on a remote database, so reads that do not depend on each other go out
+	// together (`Promise.all`). Wave 1 is the build, its template and the viewer's membership in the
+	// owning team (one query; no build or no membership = no view). Wave 2 is everything else, which
+	// needs only ids from wave 1.
+	const head = await first(
+		db
+			.select({ b: builds, tpl: templates, memberId: member.id, memberRole: member.role })
+			.from(builds)
+			.innerJoin(templates, eq(templates.id, builds.templateId))
+			.leftJoin(
+				member,
+				and(eq(member.organizationId, builds.organizationId), eq(member.userId, userId))
+			)
+			.where(eq(builds.id, buildId))
+	);
+	if (!head?.memberId) return null;
+	const { b, tpl } = head;
+	const role = normalizeRole(head.memberRole);
+	const access = { role, canEdit: canEditRole(role) };
+	const isDraft = b.kind === 'draft';
+	const [
+		tRoleRows,
+		filamentRows,
+		partRows,
+		buildPartRows,
+		tplPlateRows,
+		layoutRows,
+		rawPlates,
+		profileRows,
+		runRows,
+		actRows,
+		memberRows,
+		modelRow,
+		placementRows,
+		guideRows,
+		hardwareRows,
+		assemblyStepRows,
+		assemblyItemRows,
+		photoRows,
+		handoff,
+		liveJobs
+	] = await Promise.all([
+		db
+			.select()
+			.from(templateFilamentRoles)
+			.where(eq(templateFilamentRoles.templateId, tpl.id))
+			// SQLite returned these in primary-key (key) order; keep that slot order.
+			.orderBy(asc(templateFilamentRoles.key)),
+		db
+			.select()
+			.from(buildFilaments)
+			.where(eq(buildFilaments.buildId, buildId))
+			// no implicit row order in Postgres: a stable one for the colors a design added
+			.orderBy(asc(buildFilaments.roleKey)),
+		db
+			.select()
+			.from(templateParts)
+			.where(eq(templateParts.templateId, tpl.id))
+			.orderBy(asc(templateParts.sort)),
+		db.select().from(buildParts).where(eq(buildParts.buildId, buildId)),
+		db.select().from(templatePlates).where(eq(templatePlates.templateId, tpl.id)),
+		db.select().from(templatePlateLayouts).where(eq(templatePlateLayouts.templateId, tpl.id)),
+		db
+			.select()
+			.from(buildPlates)
+			.where(eq(buildPlates.buildId, buildId))
+			.orderBy(asc(buildPlates.number)),
+		loadProfileRows(db, buildId),
+		db
+			.select({ r: printRuns, userName: user.name })
+			.from(printRuns)
+			.leftJoin(user, eq(user.id, printRuns.userId))
+			.where(eq(printRuns.buildId, buildId))
+			.orderBy(asc(printRuns.date), asc(printRuns.id)),
+		db
+			.select({ a: activity, userName: user.name })
+			.from(activity)
+			.leftJoin(user, eq(user.id, activity.userId))
+			.where(eq(activity.buildId, buildId))
+			.orderBy(desc(activity.at), desc(activity.id))
+			.limit(50),
+		db
+			.select({ userId: member.userId, name: user.name, role: member.role })
+			.from(member)
+			.innerJoin(user, eq(user.id, member.userId))
+			.where(eq(member.organizationId, b.organizationId)),
+		first(db.select().from(templateModels).where(eq(templateModels.templateId, tpl.id))),
+		db.select().from(templatePartPlacements).where(eq(templatePartPlacements.templateId, tpl.id)),
+		db
+			.select()
+			.from(templateGuidePages)
+			.where(eq(templateGuidePages.templateId, tpl.id))
+			.orderBy(asc(templateGuidePages.sort)),
+		db.select().from(templateHardware).where(eq(templateHardware.templateId, tpl.id)),
+		db
+			.select()
+			.from(templateAssemblySteps)
+			.where(eq(templateAssemblySteps.templateId, tpl.id))
+			.orderBy(asc(templateAssemblySteps.sort)),
+		db
+			.select({ a: buildAssembly, userName: user.name })
+			.from(buildAssembly)
+			.leftJoin(user, eq(user.id, buildAssembly.doneBy))
+			.where(eq(buildAssembly.buildId, buildId)),
+		db
+			.select({ p: buildPhotos, userName: user.name })
+			.from(buildPhotos)
+			.leftJoin(user, eq(user.id, buildPhotos.createdBy))
+			.where(eq(buildPhotos.buildId, buildId))
+			.orderBy(asc(buildPhotos.createdAt), asc(buildPhotos.id)),
+		loadHandoff(db, buildId, access.canEdit),
+		// Drafts are never started (buildStarted ignores jobs and runs for them).
+		isDraft ? Promise.resolve(undefined) : loadLiveJobs(db, buildId)
+	]);
 
 	const design = (b.design ?? null) as {
 		partRoles?: Record<string, string>;
@@ -168,24 +257,8 @@ export async function loadBuildView(
 			: []
 	);
 
-	const tRoles = new Map(
-		(
-			await db
-				.select()
-				.from(templateFilamentRoles)
-				.where(eq(templateFilamentRoles.templateId, tpl.id))
-				// SQLite returned these in primary-key (key) order; keep that slot order.
-				.orderBy(asc(templateFilamentRoles.key))
-		).map((r) => [r.key, r])
-	);
-	const filaments = (
-		await db
-			.select()
-			.from(buildFilaments)
-			.where(eq(buildFilaments.buildId, buildId))
-			// no implicit row order in Postgres: a stable one for the colors a design added
-			.orderBy(asc(buildFilaments.roleKey))
-	).map((f) => {
+	const tRoles = new Map(tRoleRows.map((r) => [r.key, r]));
+	const filaments = filamentRows.map((f) => {
 		const t = tRoles.get(f.roleKey);
 		return {
 			key: f.roleKey,
@@ -233,13 +306,7 @@ export async function loadBuildView(
 	const inactive = inactiveSlugs(variantGroups, variantChoices);
 	const variantOf = variantOfPart(variantGroups);
 
-	const allParts: PartDef[] = (
-		await db
-			.select()
-			.from(templateParts)
-			.where(eq(templateParts.templateId, tpl.id))
-			.orderBy(asc(templateParts.sort))
-	).map((p) => ({
+	const allParts: PartDef[] = partRows.map((p) => ({
 		slug: p.slug,
 		name: p.name,
 		section: p.section,
@@ -265,7 +332,7 @@ export async function loadBuildView(
 	const parts = allParts.filter((p) => !inactive.has(p.slug));
 
 	const state: Record<string, PartState> = {};
-	for (const s of await db.select().from(buildParts).where(eq(buildParts.buildId, buildId))) {
+	for (const s of buildPartRows) {
 		if (inactive.has(s.partSlug)) continue;
 		state[s.partSlug] = {
 			slug: s.partSlug,
@@ -294,36 +361,21 @@ export async function loadBuildView(
 		};
 	}
 
-	const runNotes = new Map(
-		(
-			await db
-				.select({ number: templatePlates.number, runNote: templatePlates.runNote })
-				.from(templatePlates)
-				.where(eq(templatePlates.templateId, tpl.id))
-		).map((p) => [p.number, p.runNote])
-	);
+	const runNotes = new Map(tplPlateRows.map((p) => [p.number, p.runNote]));
 	// Plates copied from a built-in layout take their run note from that layout.
 	const layoutNotes = new Map<string, Map<number, string | null>>();
-	for (const l of await db
-		.select()
-		.from(templatePlateLayouts)
-		.where(eq(templatePlateLayouts.templateId, tpl.id)))
+	for (const l of layoutRows)
 		layoutNotes.set(l.key, new Map(l.plates.map((p) => [p.number, p.runNote ?? null])));
 	const noteFor = (source: string | null, number: number): string | null => {
 		if (source?.startsWith('layout:')) return layoutNotes.get(source.slice(7))?.get(number) ?? null;
 		if (source?.startsWith('upload:') || source === 'arranged') return null;
 		return runNotes.get(number) ?? null;
 	};
-	const rawPlates = await db
-		.select()
-		.from(buildPlates)
-		.where(eq(buildPlates.buildId, buildId))
-		.orderBy(asc(buildPlates.number));
 	// Time precedence: a manual entry (build_plates.manual_est_seconds) > slicer (uploaded sliced 3MF) > MakeGood's profile time > our estimate.
 	// Arranged plates carry no time of their own; estimate it from MakeGood's X/P/A times.
 	// The build's print template (per-part data learned from a sliced file) comes before MakeGood's numbers.
 	const { profiles: partProfiles, template: printTemplate } = resolveProfiles(
-		await loadProfileRows(db, buildId),
+		profileRows,
 		allParts,
 		filaments.map((f) => f.key)
 	);
@@ -344,7 +396,14 @@ export async function loadBuildView(
 	const arrangedEst =
 		arrangedRows.length || learnedRows.length
 			? estimateArrangedPlates(
-					await loadTimeModel(db, tpl.id, learned),
+					// The same model `loadTimeModel` reads, built from rows this view already has.
+					buildTimeModel(
+						partRows,
+						(layoutRows.find((l) => l.key === 'xpa') ?? layoutRows.find((l) => l.isDefault))
+							?.plates ?? tplPlateRows,
+						tpl.variantGroups ?? [],
+						learned
+					),
 					[...arrangedRows, ...learnedRows].map((p) => ({
 						number: p.number,
 						runs: p.runs,
@@ -417,14 +476,7 @@ export async function loadBuildView(
 		.map((p) => ({ ...p, parts: p.parts.filter((s) => !inactive.has(s)) }))
 		.filter((p) => p.parts.length > 0);
 
-	const runs: PrintRun[] = (
-		await db
-			.select({ r: printRuns, userName: user.name })
-			.from(printRuns)
-			.leftJoin(user, eq(user.id, printRuns.userId))
-			.where(eq(printRuns.buildId, buildId))
-			.orderBy(asc(printRuns.date), asc(printRuns.id))
-	).map(({ r, userName }) => ({
+	const runs: PrintRun[] = runRows.map(({ r, userName }) => ({
 		id: r.id,
 		plateNumber: r.plateNumber,
 		partSlug: r.partSlug,
@@ -441,15 +493,7 @@ export async function loadBuildView(
 		createdAt: r.createdAt ? r.createdAt.getTime() : null
 	}));
 
-	const acts: ActivityItem[] = (
-		await db
-			.select({ a: activity, userName: user.name })
-			.from(activity)
-			.leftJoin(user, eq(user.id, activity.userId))
-			.where(eq(activity.buildId, buildId))
-			.orderBy(desc(activity.at), desc(activity.id))
-			.limit(50)
-	).map(({ a, userName }) => ({
+	const acts: ActivityItem[] = actRows.map(({ a, userName }) => ({
 		id: a.id,
 		userId: a.userId,
 		userName,
@@ -458,28 +502,18 @@ export async function loadBuildView(
 		at: a.at.toISOString()
 	}));
 
-	const members = (
-		await db
-			.select({ userId: member.userId, name: user.name, role: member.role })
-			.from(member)
-			.innerJoin(user, eq(user.id, member.userId))
-			.where(eq(member.organizationId, b.organizationId))
-	).map((m) => ({ userId: m.userId, name: m.name, role: normalizeRole(m.role) }));
+	const members = memberRows.map((m) => ({
+		userId: m.userId,
+		name: m.name,
+		role: normalizeRole(m.role)
+	}));
 
-	const modelRow = await first(
-		db.select().from(templateModels).where(eq(templateModels.templateId, tpl.id))
-	);
 	const model: TemplateModelInfo | null = modelRow
 		? {
 				url: `/api/templates/${encodeURIComponent(tpl.id)}/model.glb?v=${encodeURIComponent(modelRow.version)}`,
 				version: modelRow.version,
 				hardwareUrl: hardwareModelUrl(tpl.id),
-				placements: (
-					await db
-						.select()
-						.from(templatePartPlacements)
-						.where(eq(templatePartPlacements.templateId, tpl.id))
-				).map((r): PartPlacement => ({
+				placements: placementRows.map((r): PartPlacement => ({
 					slug: r.slug,
 					matrix: r.matrix,
 					instances: r.instances,
@@ -522,32 +556,25 @@ export async function loadBuildView(
 		printTemplate,
 		plates,
 		runs,
-		guidePages: (
-			await db
-				.select()
-				.from(templateGuidePages)
-				.where(eq(templateGuidePages.templateId, tpl.id))
-				.orderBy(asc(templateGuidePages.sort))
-		).map((g) => ({ page: g.page, title: g.title, sort: g.sort, hasImage: !!g.imagePath })),
-		hardware: (
-			await db.select().from(templateHardware).where(eq(templateHardware.templateId, tpl.id))
-		).map((h) => ({ name: h.name, qty: h.qty, note: h.note })),
+		guidePages: guideRows.map((g) => ({
+			page: g.page,
+			title: g.title,
+			sort: g.sort,
+			hasImage: !!g.imagePath
+		})),
+		hardware: hardwareRows.map((h) => ({ name: h.name, qty: h.qty, note: h.note })),
 		activity: acts,
 		members,
 		printer: (b.printer as BuildPrinter | null) ?? null,
 		layoutPrinter: b.printer
 			? null
-			: layoutBed(b.plateLayout ?? (await defaultLayoutKey(db, tpl.id))),
-		assembly: await loadAssembly(db, buildId, tpl.id, variantChoices, parts),
-		photos: await loadPhotos(db, buildId),
-		handoff: await loadHandoff(db, buildId, access.canEdit),
+			: layoutBed(b.plateLayout ?? layoutRows.find((l) => l.isDefault)?.key ?? null),
+		assembly: buildAssemblyView(assemblyStepRows, assemblyItemRows, variantChoices, parts),
+		photos: photoRows.map(photoOf),
+		handoff,
 		started: undefined as never
 	};
-	// Drafts are never started (buildStarted ignores jobs and runs for them).
-	result.started = buildStarted(
-		result,
-		kind === 'draft' ? undefined : await loadLiveJobs(db, buildId)
-	);
+	result.started = buildStarted(result, liveJobs);
 	return result;
 }
 
@@ -593,6 +620,12 @@ export async function applyPatches(
 	patches: PartPatch[],
 	now: Date
 ): Promise<void> {
+	const update = (slug: string, set: Partial<typeof buildParts.$inferInsert>) =>
+		db
+			.update(buildParts)
+			.set(set)
+			.where(and(eq(buildParts.buildId, buildId), eq(buildParts.partSlug, slug)));
+	const sets: [string, Partial<typeof buildParts.$inferInsert>][] = [];
 	for (const { slug, ...p } of patches) {
 		const set: Partial<typeof buildParts.$inferInsert> = { updatedAt: now };
 		if (p.status !== undefined) set.status = p.status;
@@ -602,27 +635,22 @@ export async function applyPatches(
 		if (p.comps !== undefined) set.comps = p.comps;
 		if ('assigneeUserId' in p) set.assigneeUserId = p.assigneeUserId ?? null;
 		if ('manualGrams' in p) set.manualGrams = p.manualGrams ?? null;
-		await db
-			.update(buildParts)
-			.set(set)
-			.where(and(eq(buildParts.buildId, buildId), eq(buildParts.partSlug, slug)));
+		sets.push([slug, set]);
 	}
+	// Distinct parts are independent rows, so their updates go out together (one round trip on a
+	// transaction's connection instead of one each). Two patches for the same part keep their order.
+	if (new Set(sets.map(([slug]) => slug)).size === sets.length)
+		await Promise.all(sets.map(([slug, set]) => update(slug, set)));
+	else for (const [slug, set] of sets) await update(slug, set);
 }
 
-async function loadAssembly(
-	db: DbOrTx,
-	buildId: string,
-	templateId: string,
+function buildAssemblyView(
+	stepRows: (typeof templateAssemblySteps.$inferSelect)[],
+	itemRows: { a: typeof buildAssembly.$inferSelect; userName: string | null }[],
 	choices: Record<string, string>,
 	activeParts: PartDef[]
-): Promise<BuildAssembly> {
-	const rows = (
-		await db
-			.select()
-			.from(templateAssemblySteps)
-			.where(eq(templateAssemblySteps.templateId, templateId))
-			.orderBy(asc(templateAssemblySteps.sort))
-	).map((r) => ({
+): BuildAssembly {
+	const rows = stepRows.map((r) => ({
 		key: r.key,
 		title: r.title,
 		description: r.description,
@@ -634,11 +662,7 @@ async function loadAssembly(
 	}));
 	const steps = filterSteps(rows, choices, new Set(activeParts.map((p) => p.slug)));
 	const items: BuildAssembly['items'] = {};
-	for (const { a, userName } of await db
-		.select({ a: buildAssembly, userName: user.name })
-		.from(buildAssembly)
-		.leftJoin(user, eq(user.id, buildAssembly.doneBy))
-		.where(eq(buildAssembly.buildId, buildId))) {
+	for (const { a, userName } of itemRows) {
 		items[a.itemKey] = {
 			done: a.done,
 			note: a.note,
@@ -650,25 +674,22 @@ async function loadAssembly(
 	return { steps, items };
 }
 
-async function loadPhotos(db: DbOrTx, buildId: string): Promise<BuildPhoto[]> {
-	return (
-		await db
-			.select({ p: buildPhotos, userName: user.name })
-			.from(buildPhotos)
-			.leftJoin(user, eq(user.id, buildPhotos.createdBy))
-			.where(eq(buildPhotos.buildId, buildId))
-			.orderBy(asc(buildPhotos.createdAt), asc(buildPhotos.id))
-	).map(({ p, userName }) => ({
-		id: p.id,
-		kind: p.kind as PhotoKind,
-		caption: p.caption,
-		width: p.width,
-		height: p.height,
-		createdBy: p.createdBy,
-		createdByName: userName,
-		createdAt: p.createdAt.toISOString()
-	}));
-}
+const photoOf = ({
+	p,
+	userName
+}: {
+	p: typeof buildPhotos.$inferSelect;
+	userName: string | null;
+}): BuildPhoto => ({
+	id: p.id,
+	kind: p.kind as PhotoKind,
+	caption: p.caption,
+	width: p.width,
+	height: p.height,
+	createdBy: p.createdBy,
+	createdByName: userName,
+	createdAt: p.createdAt.toISOString()
+});
 
 /** The recipient contact is team-internal: only owners and editors receive it. */
 async function loadHandoff(

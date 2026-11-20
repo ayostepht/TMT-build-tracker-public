@@ -133,7 +133,7 @@
 	.lb-root {
 		display: grid;
 		gap: 20px;
-		margin-top: 20px;
+		margin-top: 12px;
 	}
 	.lb {
 		display: grid;

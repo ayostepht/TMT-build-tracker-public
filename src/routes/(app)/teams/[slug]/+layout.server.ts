@@ -12,15 +12,20 @@ export const load: LayoutServerLoad = async ({ params, locals, request }) => {
 	// Signed out (e.g. the reload right after sign-out): same as the (app) layout.
 	if (!locals.user) redirect(303, '/login');
 	const db = getDb();
-	const org = await first(db.select().from(organization).where(eq(organization.slug, params.slug)));
-	if (!org) error(404, 'Not found');
-	const m = await first(
+	// One query for the team and the caller's membership (not a member: the same 404 as no team).
+	const found = await first(
 		db
-			.select({ role: member.role })
-			.from(member)
-			.where(and(eq(member.organizationId, org.id), eq(member.userId, locals.user.id)))
+			.select({ org: organization, role: member.role })
+			.from(organization)
+			.innerJoin(
+				member,
+				and(eq(member.organizationId, organization.id), eq(member.userId, locals.user.id))
+			)
+			.where(eq(organization.slug, params.slug))
 	);
-	if (!m) error(404, 'Not found');
+	if (!found) error(404, 'Not found');
+	const { org } = found;
+	const m = { role: found.role };
 	const role = normalizeRole(m.role);
 
 	const active = (locals.session as { activeOrganizationId?: string | null } | null)
