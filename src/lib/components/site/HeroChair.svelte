@@ -14,6 +14,7 @@
 	let {
 		model,
 		partRoles,
+		hidden = [],
 		palette,
 		poster,
 		alt
@@ -21,6 +22,8 @@
 		model: TemplateModelInfo | null;
 		/** part slug → color role key */
 		partRoles: Record<string, string>;
+		/** slugs of variant parts that are not drawn (the template's non-default options) */
+		hidden?: string[];
 		/** role key → hex */
 		palette: Record<string, string>;
 		poster: string;
@@ -68,6 +71,7 @@
 				<ChairViewer
 					{model}
 					{colors}
+					{hidden}
 					autoRotate={!still}
 					showHardware={false}
 					quiet

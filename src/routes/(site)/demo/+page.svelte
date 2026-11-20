@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SocialMeta from '#lib/components/site/SocialMeta.svelte';
 	import { providerPhrase } from '#lib/sign-in-providers.ts';
 	import { onMount } from 'svelte';
 	import { enhance } from '$app/forms';
@@ -74,13 +75,10 @@
 	const isBusy = $derived(data.busy || form?.busy === true);
 </script>
 
-<svelte:head>
-	<title>Try the demo · TMT Build Tracker</title>
-	<meta
-		name="description"
-		content="Try TMT Build Tracker with a sample chair build. No account needed; the demo is deleted after 24 hours."
-	/>
-</svelte:head>
+<SocialMeta
+	title="Try the demo · TMT Build Tracker"
+	description="Try TMT Build Tracker with a sample chair build. No account needed; the demo is deleted after 24 hours."
+/>
 
 <article class="demo-page">
 	<header class="demo-head">
