@@ -24,25 +24,22 @@ _Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## State
 
-- `main` at the evening batch (40b281b and later): #4, #7, #8, #9, #10, #11 merged
-  2026-11-20, all green on `public-ci`, no migrations. The live server still runs the image
-  from #6 (fourth deploy) until the maintainer pulls `:latest`.
-- With that update the maintainer removes `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET`
-  (Discord sign-in hidden: only its callback trips Chrome Safe Browsing) and adds
-  `ANALYTICS_PROVIDER=cloudflare` + `CF_ANALYTICS_TOKEN`; optionally the Turnstile keys.
-- No pull requests open. No agents running.
-- Sibling repository: the resource-limit back-port is open there (`fix/resource-limits`);
-  its developer lands it. Carry-overs listed in STATUS Open items.
+- Live: fifth deploy (`sha-2568f4e`), with Discord sign-in off and Cloudflare Web Analytics and
+  Turnstile on (real widget verified).
+- `main` ahead of live: #12 (strict Turnstile checks) and #13 (way back to the home page).
+  No migrations. The maintainer pulls `:latest` once its `public-ci` run publishes.
+- In progress: `app-shell` follow-up for signed-out guards (see STATUS open items), branch
+  `fix/signed-out-guards`.
+- Sibling repository: resource-limit back-port open there (`fix/resource-limits`); carry-overs
+  in STATUS.
 - Google Safe Browsing review of the domain requested; don't share widely until it clears.
 
 ## Next step
 
-1. After the maintainer updates: add the fifth deploy to `docs/dev/CHANGELOG.md`; check the
-   log for boot warnings (analytics token, half-set Turnstile keys); if Turnstile keys were
-   set, confirm a demo starts with the widget.
-2. With the maintainer: nightly backup (`pg_dump` through a `postgres:17` container, kept
-   off the server), repository settings.
-3. STATUS open items, smallest first (picker edge fade, the timing test, `printers.host`).
+1. Tell the maintainer when `:latest` for `main` after #13 is published; after they update,
+   log the sixth deploy and have them start and leave a demo once.
+2. Land the signed-out guards follow-up (verifier, pull request, merge).
+3. With the maintainer: nightly backup, repository settings.
 
 ## Questions waiting for the maintainer
 

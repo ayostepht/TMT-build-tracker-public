@@ -18,7 +18,8 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 - Per-account limits so one account cannot use up the site (by default 10 teams per person, 50 active builds per team, 1 GB of uploads per team, 95 MB per 3MF file), all configurable.
 - Optional cookieless analytics (Plausible, Umami or Cloudflare Web Analytics): page views only, with ids removed, and nothing at all for browsers that send Do Not Track or Global Privacy Control.
 - Site admins can let a hidden design be shared again, from a list of hidden designs on the gallery page or from the design itself. The author sees a short notice while a design is hidden.
-- Optional Cloudflare Turnstile check before a demo starts (`TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`), against bots filling the demo slots. Off unless both keys are set.
+- Optional Cloudflare Turnstile check before a demo starts (`TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`), against bots filling the demo slots. Off unless both keys are set. The server checks the answer's action and hostname (`PUBLIC_URL`'s host, plus `TURNSTILE_HOSTNAMES`), and the demo page says so with a Reload button when the check can't load.
+- A way back to the home page: the home page opens for signed-in visitors too, the app has a "Home page" link in the footer and account menu, the demo banner has "Leave the demo", and signing out lands on the home page. The installed app still opens on your builds.
 - Hosting guide and deploy files for Fly.io, Railway and your own server behind a Cloudflare Tunnel, with a Supabase database.
 
 ### Changed

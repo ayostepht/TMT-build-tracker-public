@@ -29,10 +29,10 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - **Real users since 2026-11-20:** the site was shared with a first few makers. Updates
   must keep their data: additive, backward-compatible migrations only, a backup and a
   rehearsal before any migration reaches `main` (rules in `docs/dev/HANDOFF.md`).
-- **Evening batch 2026-11-20 merged** (#4 dependency updates with the adapter-node `ORIGIN`
-  fix, #7 provider-aware sign-in wording, #8 text limits, #9 compact picker, #10 admin "Allow
-  sharing again" for hidden gallery designs, #11 optional Turnstile on `/demo`). No
-  migrations. Deploy pending on the maintainer's server.
+- **Live (fifth deploy, 2026-11-20):** evening batch #4, #7–#11; Discord sign-in off,
+  Cloudflare Web Analytics and Turnstile on. **Merged, not yet deployed:** #12 (strict
+  Turnstile action/hostname checks, reload message) and #13 (a way back to the home page,
+  Leave the demo, demo links do a full load so the Turnstile CSP applies). No migrations.
 - **Migrations:** one baseline, `drizzle/0000_baseline.sql`, applied to the live database on
   2026-11-19. **Frozen from now on:** schema changes add new migrations; never edit or
   regenerate the baseline. `0001_drop_duplicate_org_slug_index` merged and applied 2026-11-19 (#3). Team creation now retries on a slug conflict.
@@ -47,10 +47,8 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   Dependabot.
 - Review the screenshots and the demo on the live site.
 - Choice: whether the service worker drops cached kit models on sign-out (shared devices).
-- Turnstile on `/demo` (#11) is built but off until `TURNSTILE_SITE_KEY` and
-  `TURNSTILE_SECRET_KEY` are set; the real widget and Cloudflare verification have not run
-  anywhere yet (cloud sessions can't reach Cloudflare): check a demo start once after setting
-  the keys.
+- After the next deploy (#12, #13): start a demo once (strict action and hostname checks run
+  for the first time against the real widget) and leave a demo once.
 - Sibling repository: the upload and export resource limits also apply to the self-hosted
   0.9.x line; back-port them there and cut a patch release (timing and tag are yours).
 
@@ -64,6 +62,12 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   adapter-node 6.0.2, the `ORIGIN` handling in `scripts/proxy-origin.mjs` (#4).
 - Color picker: the desktop brand-chip row scrolls sideways with no visual hint at its edge;
   a fade would help [design-studio-ui].
+- Every link to `/demo` needs `data-sveltekit-reload` (the Turnstile CSP is sent only with the
+  `/demo` document); `e2e/way-home.spec.ts` asserts it.
+- Signed-out robustness [app-shell]: loads in `account`, `builds/new`, `builds/[id]/setup`,
+  `onboarding` and `studio` use `locals.user!`, so signing out on those pages can flash an
+  error during the refresh; the `teams/[slug]/members` form actions answer 500 instead of
+  401 without a session (nothing is read or changed). Follow-up in progress.
 - `stats/workspace.test.ts` "50 builds with 500 runs each" asserts a 300 ms wall-clock budget
   and overran once (362 ms) under a loaded full run; make it robust [build-state].
 

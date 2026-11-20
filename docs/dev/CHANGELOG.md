@@ -14,6 +14,12 @@ repository was split off on 2026-11-19) is in the sibling repository,
 
 ## 2026-11
 
+- **2026-11-20, fifth deploy.** Image `sha-2568f4e` (`main` 2568f4e: #4 dependency updates with
+  the adapter-node `ORIGIN` fix, #7, #8, #9, #10, #11). No migration. Discord sign-in removed
+  from the container env; Cloudflare Web Analytics and Turnstile keys added. First real
+  Turnstile run: keys were swapped at first (the secret was served as the site key), secret
+  rotated, then the check passed and a demo started. Found: client-side navigation to `/demo`
+  kept the previous page's CSP, so the widget did not load (fixed in #13).
 - **2026-11-19, fourth deploy.** Image from `main` f55391d (#6: the 3MF export follows the
   chosen MakeGood plate layout when its bed matches the printer; the fresh-arrangement note
   only when it can't). No migration. Maintainer checked an X1 / P1 / A1 export: looks right.
