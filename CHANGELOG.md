@@ -28,6 +28,7 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 - "Send feedback" in the footers opens a new issue on GitHub.
 - Hosting guide and deploy files for Fly.io, Railway and your own server behind a Cloudflare Tunnel, with a Supabase database.
 - Print some parts of a plate: if you split a plate in your slicer, use "Print some parts…" on the plate to mark (or log) only the parts that are on this print. They start as one print with one Undo and the rest stays To print. Now printing shows "3 of 4 parts" with their share of the grams and time, and with a printer connected "Where is it printing?" names the parts so the printer's job follows only them.
+- Print some pieces of a part: a part made of several pieces (for example Harness and Straps, nine pieces on its own plate) has a "Print some pieces…" button, on the part row and on its plate when it is the only part left to print. Pick the pieces that are on this print and mark them as printing, or log them as a print. Now printing shows "3 of 9 pieces" with their names and their share of the grams and time (by piece count, marked approximate). A successful print ticks exactly those pieces, and the part becomes Printed when the last piece is ticked; a failed print ticks nothing and flags the part for reprint. Undo, editing or deleting such a log, ticking pieces by hand and "Take off printer" keep the ticks and the status in step. Not offered on plates that print more than once or one part per run, nor while another print of the part is on the printer.
 
 ### Changed
 
