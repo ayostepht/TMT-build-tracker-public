@@ -132,6 +132,9 @@ test.describe('browser console noise', () => {
 		await signUp(page, 'Policy Check', uniqueEmail('policy'));
 		await page.goto('/workspace');
 		await page.waitForLoadState('networkidle');
+		// A static document served by the asset handler carries the same headers.
+		await page.goto('/offline.html');
+		await page.waitForLoadState('networkidle');
 		const bad = messages.filter((t) => /permissions-policy|unrecognized feature/i.test(t));
 		expect(bad).toEqual([]);
 	});
