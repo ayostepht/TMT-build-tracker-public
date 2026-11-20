@@ -17,6 +17,8 @@
 	let widgetEl = $state<HTMLElement>();
 	let widgetId: string | undefined;
 	let hasToken = $state(false);
+	// The check could not load or errored (blocked script, network, widget error): offer a reload.
+	let checkFailed = $state(false);
 
 	const theme = () => {
 		const set = document.documentElement.dataset.theme;
@@ -27,25 +29,46 @@
 	// Explicit render, managed mode: Cloudflare decides whether the visitor sees anything.
 	onMount(() => {
 		if (!siteKey) return;
-		const w = window as unknown as { turnstile?: TurnstileApi; __tmtTurnstileReady?: () => void };
+		const w = window as unknown as { turnstile?: TurnstileApi };
+		const fail = () => {
+			hasToken = false;
+			checkFailed = true;
+		};
 		const render = () => {
 			if (!w.turnstile || !widgetEl || widgetId) return;
-			widgetId = w.turnstile.render(widgetEl, {
-				sitekey: siteKey,
-				theme: theme(),
-				callback: () => (hasToken = true),
-				'expired-callback': () => (hasToken = false),
-				'error-callback': () => (hasToken = false)
-			});
+			try {
+				widgetId = w.turnstile.render(widgetEl, {
+					sitekey: siteKey,
+					action: data.turnstileAction,
+					theme: theme(),
+					callback: () => {
+						hasToken = true;
+						checkFailed = false;
+					},
+					'expired-callback': () => (hasToken = false),
+					'error-callback': () => {
+						fail();
+						return true;
+					}
+				});
+			} catch {
+				fail();
+			}
 		};
+		// The script never loaded after a while (blocked by the page's CSP, offline): say so. A slow widget is not a failure.
+		const timer = setTimeout(() => {
+			if (!w.turnstile) fail();
+		}, 8000);
 		if (w.turnstile) render();
 		else {
 			const script = document.createElement('script');
 			script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 			script.async = true;
 			script.onload = render;
+			script.onerror = fail;
 			document.head.appendChild(script);
 		}
+		return () => clearTimeout(timer);
 	});
 
 	const isBusy = $derived(data.busy || form?.busy === true);
@@ -131,6 +154,12 @@
 			>
 				{#if siteKey}
 					<div class="demo-challenge" bind:this={widgetEl} data-testid="demo-turnstile"></div>
+					{#if checkFailed}
+						<div class="demo-checkfail" role="status" data-testid="demo-turnstile-failed">
+							<p>The bot check didn't load. Reload the page to try again.</p>
+							<button type="button" class="btn" onclick={() => location.reload()}>Reload</button>
+						</div>
+					{/if}
 				{/if}
 				<button
 					class="btn primary go"
@@ -149,6 +178,13 @@
 </article>
 
 <style>
+	.demo-checkfail {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--sp-4);
+		margin-bottom: var(--sp-4);
+	}
 	.demo-page {
 		width: min(46rem, 100%);
 		margin: 0 auto;

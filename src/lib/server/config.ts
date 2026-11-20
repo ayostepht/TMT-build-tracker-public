@@ -299,15 +299,63 @@ export function turnstileConfig(
 	return siteKey && secretKey ? { siteKey, secretKey } : null;
 }
 
-/** Boot warnings for a half-set Turnstile configuration (the demo then starts without a challenge). */
+/**
+ * Hostnames a Turnstile answer may carry: the host of the public URL plus the optional
+ * comma-separated `TURNSTILE_HOSTNAMES` (exact hostnames, trimmed and lower-cased). There is no
+ * default: an empty list means the check is misconfigured and verification fails closed.
+ */
+export function turnstileHostnames(e: Record<string, string | undefined> = env): string[] {
+	return turnstileHostnameParts(e).hosts;
+}
+
+/** Only bare hostnames count: no scheme, port, path, wildcard or trailing dot, no spaces. */
+const BARE_HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+
+function turnstileHostnameParts(e: Record<string, string | undefined>): {
+	hosts: string[];
+	rejected: string[];
+} {
+	const rejected: string[] = [];
+	const out = new Set<string>();
+	for (const name of PUBLIC_URL_VARS) {
+		const value = (e[name] ?? '').trim();
+		if (!value) continue;
+		try {
+			const host = new URL(value).hostname.toLowerCase();
+			if (host) out.add(host);
+		} catch {
+			/* an unparseable URL contributes nothing */
+		}
+		break;
+	}
+	for (const part of (e.TURNSTILE_HOSTNAMES ?? '').split(',')) {
+		const host = part.trim().toLowerCase();
+		if (!host) continue;
+		if (BARE_HOSTNAME.test(host)) out.add(host);
+		else rejected.push(host);
+	}
+	return { hosts: [...out], rejected };
+}
+
+/** Boot warnings for a half-set or hostname-less Turnstile configuration. */
 export function turnstileProblems(e: Record<string, string | undefined> = env): string[] {
 	const site = !!(e.TURNSTILE_SITE_KEY ?? '').trim();
 	const secret = !!(e.TURNSTILE_SECRET_KEY ?? '').trim();
-	return site !== secret
-		? [
-				'Set both TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY to turn on the demo challenge; with only one the demo starts without it.'
-			]
-		: [];
+	if (site !== secret)
+		return [
+			'Set both TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY to turn on the demo challenge; with only one the demo starts without it.'
+		];
+	if (!site) return [];
+	const { hosts, rejected } = turnstileHostnameParts(e);
+	const out = rejected.map(
+		(h) =>
+			`TURNSTILE_HOSTNAMES entry "${h.slice(0, 80)}" is not a bare hostname (no scheme, port, path, wildcard or trailing dot) and is ignored.`
+	);
+	if (hosts.length === 0)
+		out.push(
+			'Turnstile is on but no hostname is expected: set PUBLIC_URL (or TURNSTILE_HOSTNAMES). Until then every demo start is refused.'
+		);
+	return out;
 }
 
 export interface TrustedProxy {

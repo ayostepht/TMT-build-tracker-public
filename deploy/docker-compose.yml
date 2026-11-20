@@ -51,6 +51,7 @@ services:
       # Optional Cloudflare Turnstile on the demo start (both or neither).
       TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      TURNSTILE_HOSTNAMES: ${TURNSTILE_HOSTNAMES:-}
     volumes:
       # Uploads (photos, 3MF files, converted models). The kit pack is inside the image.
       - tmt-data:/data
