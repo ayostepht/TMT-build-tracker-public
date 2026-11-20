@@ -570,6 +570,18 @@ describe('G. a plate printed in runs of its own is one plate, laid out for one p
 		expect(p.estGrams).toEqual({ accent: 50 });
 	});
 
+	it('a plate printed more often than its part count implies shows the grams of one run (tires)', () => {
+		// one part of 800 g that the source prints twice: the arranger counts one unit, one run
+		const tires = part('tires', 'accent', 100, 100, { grams: 800 });
+		const r = arrangeFromSource(input([tires, other]), [
+			{ number: 1, name: 'Tires', runs: 2, parts: ['tires'] },
+			{ number: 2, name: 'Other', parts: ['o1'] }
+		]);
+		const p = plateOf(r, 1)! as (typeof r.plates)[number];
+		expect(p.runs).toBe(2);
+		expect(p.estGrams).toEqual({ accent: 400 });
+	});
+
 	it('detects a run plate with no flag when it is printed several times', () => {
 		const r = arrangeFromSource(input([...rims(), other]), rimSrc({ perPartRuns: undefined }));
 		expect(r.plates.map((p) => p.number)).toEqual([1, 2]);

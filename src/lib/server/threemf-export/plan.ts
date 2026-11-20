@@ -260,10 +260,12 @@ export function buildExportPlan(input: PlanInput): ExportPlan {
 				message: `Plate ${pl.number} (${pl.name}) is one print of the same object, printed ${pl.runs} ${pl.runs === 1 ? 'time' : 'times'} for each of ${names.join(' and ')} (${colors.join(' and ')}): the file holds one print, so change the color in your slicer for the other ${pl.parts.length - 1 === 1 ? 'one' : 'ones'}.`
 			});
 		}
+		// every bed load of the plate: a plate printed in runs of its own (the rims) is `runs` per part
+		const prints = pl.runs * (pl.perPartRuns ? Math.max(1, pl.parts.length) : 1);
 		plates.push({
 			index: plates.length + 1,
 			number: pl.number,
-			name: pl.runs > 1 ? `${pl.name} (print x${pl.runs})` : pl.name,
+			name: prints > 1 ? `${pl.name} (print x${prints})` : pl.name,
 			runs: pl.runs,
 			roles: pl.roles,
 			items,
