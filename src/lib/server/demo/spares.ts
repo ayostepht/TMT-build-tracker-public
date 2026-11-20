@@ -36,6 +36,12 @@ export const isClaimedDemo = and(
  * timestamps across runs and activity rows, and costs one background seed per spare every few hours.
  */
 export const SPARE_MAX_AGE_MS = 4 * 3_600_000;
+/**
+ * A spare is claimable only while younger than the age limit minus this margin, so the claimable and
+ * recyclable ranges never overlap even when a claim's clock was read a little before it got the lock.
+ */
+export const SPARE_CLAIM_MARGIN_MS = 5 * 60_000;
+export const SPARE_EXPIRED_PREFIX = 'spare-expired-';
 /** A reservation that never became ready (a crash mid-seed) is dropped after this long. */
 export const SPARE_BUILDING_MAX_MS = 5 * 60_000;
 /** How often the pool checks itself. */
@@ -56,7 +62,7 @@ export async function claimSpare(tx: DbOrTx, now = new Date()): Promise<ClaimedU
 			and(
 				eq(user.isDemo, true),
 				like(user.email, SPARE_READY_PREFIX + '%' + SPARE_SUFFIX),
-				gt(user.createdAt, new Date(now.getTime() - SPARE_MAX_AGE_MS))
+				gt(user.createdAt, new Date(now.getTime() - SPARE_MAX_AGE_MS + SPARE_CLAIM_MARGIN_MS))
 			)
 		)
 		.orderBy(desc(user.createdAt))
@@ -126,41 +132,33 @@ export async function fillSpares(db: Db, opts: SpareFillOptions = {}): Promise<n
 	const seed = opts.seed ?? seedDemoBuild;
 
 	// Recycle: ready spares past their age, and reservations that never finished.
-	const old = await db
-		.select({ id: user.id })
-		.from(user)
-		.where(
-			and(
-				eq(user.isDemo, true),
-				isSpare,
-				or(
-					and(
-						like(user.email, SPARE_BUILDING_PREFIX + '%'),
-						lt(user.createdAt, new Date(now.getTime() - SPARE_BUILDING_MAX_MS))
-					),
-					lt(user.createdAt, new Date(now.getTime() - SPARE_MAX_AGE_MS))
-				)
-			)
-		);
-	for (const r of old) {
+	for (const id of await takeStaleSpares(db, now)) {
 		if (stopped()) return 0;
-		try {
-			await deleteDemoUser(db, r.id);
-		} catch (e) {
-			if ((e as { status?: number }).status !== 404) throw e;
-		}
+		await deleteSpareRow(db, id);
 	}
 
 	// Reserve the missing rows; the lock makes count-then-insert atomic across instances.
-	const reserved = await db.transaction(async (tx) => {
+	const reservation = await db.transaction(async (tx) => {
 		await advisoryLock(tx, 'demo-spares');
 		const [{ n }] = await tx
 			.select({ n: sql<number>`count(*)::int` })
 			.from(user)
 			.where(and(eq(user.isDemo, true), isSpare));
+		if (n > target) {
+			// More spares than wanted (DEMO_SPARES was lowered): retire the oldest ready ones.
+			const extra = await tx
+				.select({ id: user.id })
+				.from(user)
+				.where(and(eq(user.isDemo, true), like(user.email, SPARE_READY_PREFIX + '%')))
+				.orderBy(asc(user.createdAt))
+				.limit(n - target)
+				.for('update', { skipLocked: true });
+			for (const r of extra) await markExpired(tx, r.id);
+			return { trim: extra.map((r) => r.id), rows: [] as { id: string }[] };
+		}
 		const missing = Math.max(0, target - n);
-		if (!missing) return [];
-		return tx
+		if (!missing) return { trim: [] as string[], rows: [] as { id: string }[] };
+		const rows = await tx
 			.insert(user)
 			.values(
 				Array.from({ length: missing }, () => ({
@@ -174,7 +172,10 @@ export async function fillSpares(db: Db, opts: SpareFillOptions = {}): Promise<n
 				}))
 			)
 			.returning({ id: user.id });
+		return { trim: [] as string[], rows };
 	});
+	for (const id of reservation.trim) await deleteSpareRow(db, id);
+	const reserved = reservation.rows;
 
 	const held = opts.held;
 	for (const r of reserved) held?.add(r.id);
@@ -211,6 +212,53 @@ export async function fillSpares(db: Db, opts: SpareFillOptions = {}): Promise<n
 		}
 	}
 	return ready;
+}
+
+async function markExpired(tx: DbOrTx, id: string): Promise<void> {
+	await tx
+		.update(user)
+		.set({ email: `${SPARE_EXPIRED_PREFIX}${crypto.randomUUID()}${SPARE_SUFFIX}` })
+		.where(and(eq(user.id, id), eq(user.isDemo, true)));
+}
+
+/** Delete a retired spare row with everything of its; a row already gone is fine. */
+async function deleteSpareRow(db: Db, id: string): Promise<void> {
+	try {
+		await deleteDemoUser(db, id);
+	} catch (e) {
+		if ((e as { status?: number }).status !== 404) throw e;
+	}
+}
+
+/**
+ * Retire spares past their age, reservations that never finished and anything already retired:
+ * each is re-checked under `FOR UPDATE SKIP LOCKED` and renamed to a `spare-expired-` address in the
+ * same short transaction, so a spare claimed in the meantime is skipped and a retired one can no
+ * longer be claimed. Returns the ids to delete (the caller deletes them; works with any `DEMO_SPARES`).
+ */
+export async function takeStaleSpares(db: Db, now = new Date()): Promise<string[]> {
+	return db.transaction(async (tx) => {
+		const rows = await tx
+			.select({ id: user.id })
+			.from(user)
+			.where(
+				and(
+					eq(user.isDemo, true),
+					isSpare,
+					or(
+						like(user.email, SPARE_EXPIRED_PREFIX + '%'),
+						and(
+							like(user.email, SPARE_BUILDING_PREFIX + '%'),
+							lt(user.createdAt, new Date(now.getTime() - SPARE_BUILDING_MAX_MS))
+						),
+						lt(user.createdAt, new Date(now.getTime() - SPARE_MAX_AGE_MS))
+					)
+				)
+			)
+			.for('update', { skipLocked: true });
+		for (const r of rows) await markExpired(tx, r.id);
+		return rows.map((r) => r.id);
+	});
 }
 
 function errorLabel(e: unknown): string {

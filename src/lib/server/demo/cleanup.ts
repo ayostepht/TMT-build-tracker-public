@@ -3,7 +3,7 @@ import { deleteAccount } from '../account';
 import { demoConfig } from '../config';
 import type { Db } from '../db';
 import { user } from '../db/schema';
-import { isClaimedDemo } from './spares';
+import { isClaimedDemo, takeStaleSpares } from './spares';
 
 /** Delete one demo sandbox user with everything of theirs (builds, files, sessions). Refuses real users. */
 export async function deleteDemoUser(db: Db, userId: string): Promise<void> {
@@ -49,6 +49,15 @@ export async function cleanupExpiredDemos(
 				.limit(BATCH);
 		});
 		let n = 0;
+		// Spares past their age go too, whatever `DEMO_SPARES` is now (0 or lowered leaves old ones behind).
+		for (const id of await takeStaleSpares(db, now)) {
+			try {
+				await deleteDemoUser(db, id);
+			} catch (e) {
+				if ((e as { status?: number }).status !== 404)
+					console.error('[tmt] demo cleanup failed', e);
+			}
+		}
 		for (const r of rows) {
 			try {
 				await deleteDemoUser(db, r.id);

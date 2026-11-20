@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { and, eq, like } from 'drizzle-orm';
+import { and, eq, like, sql } from 'drizzle-orm';
 import { createAuth, type Auth } from '../auth';
 import { enableTestSignIn } from '../auth-test-helpers';
 import type { Db } from '../db';
@@ -17,6 +17,8 @@ import {
 	fillSpares,
 	requestSpareTopUp,
 	spareCount,
+	SPARE_CLAIM_MARGIN_MS,
+	takeStaleSpares,
 	SPARE_MAX_AGE_MS,
 	startSparePool,
 	stopSparePool
@@ -63,8 +65,8 @@ describe('spare demos', () => {
 		await fillSpares(db, { target: 2 });
 		expect(await liveDemoCount(db)).toBe(0);
 		vi.stubEnv('DEMO_MAX_LIVE', '1');
-		// cleanup far in the future leaves spares alone
-		expect(await cleanupExpiredDemos(db, new Date(Date.now() + 100 * 3_600_000))).toBe(0);
+		// cleanup leaves fresh spares alone (it only retires spares past their age)
+		expect(await cleanupExpiredDemos(db, new Date(Date.now() + 3_600_000))).toBe(0);
 		expect(await spareCount(db)).toBe(2);
 		expect(await db.select().from(session)).toHaveLength(0);
 	});
@@ -187,6 +189,66 @@ describe('spare demos', () => {
 		expect(await db.select().from(user).where(eq(user.id, old.id))).toHaveLength(0);
 		expect(await db.select().from(user).where(eq(user.id, 'orphan'))).toHaveLength(0);
 		expect(await spareRows('spare-ready-')).toHaveLength(2);
+	});
+
+	it('a spare being claimed or already claimed survives the recycler', async () => {
+		await fillSpares(db, { target: 2 });
+		const [a, b] = await spareRows('spare-ready-');
+		const old = new Date(Date.now() - SPARE_MAX_AGE_MS - 60_000);
+		await db.update(user).set({ createdAt: old }).where(eq(user.id, a.id));
+		// a claimed demo is no longer a spare: the recycler never sees it
+		await db.update(user).set({ email: 'demo-x@demo.invalid' }).where(eq(user.id, a.id));
+		expect(await takeStaleSpares(db)).toEqual([]);
+		// a stale spare locked by a claim in progress is skipped, and survives
+		await db.update(user).set({ email: a.email }).where(eq(user.id, a.id));
+		let release!: () => void;
+		const held = new Promise<void>((r) => (release = r));
+		let locked!: () => void;
+		const isLocked = new Promise<void>((r) => (locked = r));
+		const claimer = db.transaction(async (tx) => {
+			await tx.execute(sql`select id from "user" where id = ${a.id} for update`);
+			locked();
+			await held;
+			await tx.update(user).set({ email: 'demo-y@demo.invalid' }).where(eq(user.id, a.id));
+		});
+		await isLocked;
+		expect(await takeStaleSpares(db)).toEqual([]);
+		release();
+		await claimer;
+		expect((await db.select().from(user).where(eq(user.id, a.id)))[0].email).toBe(
+			'demo-y@demo.invalid'
+		);
+		expect(await db.select().from(user).where(eq(user.id, b.id))).toHaveLength(1);
+	});
+
+	it('claimable and recyclable ages do not overlap', async () => {
+		await fillSpares(db, { target: 1 });
+		const [a] = await spareRows('spare-ready-');
+		const nearly = new Date(Date.now() - SPARE_MAX_AGE_MS + SPARE_CLAIM_MARGIN_MS - 30_000);
+		await db.update(user).set({ createdAt: nearly }).where(eq(user.id, a.id));
+		expect(await db.transaction(async (tx) => claimSpare(tx))).toBeUndefined();
+		expect(await takeStaleSpares(db)).toEqual([]);
+	});
+
+	it('cleanup removes spares past their age even with DEMO_SPARES=0', async () => {
+		await fillSpares(db, { target: 2 });
+		const [a] = await spareRows('spare-ready-');
+		await db
+			.update(user)
+			.set({ createdAt: new Date(Date.now() - SPARE_MAX_AGE_MS - 60_000) })
+			.where(eq(user.id, a.id));
+		vi.stubEnv('DEMO_SPARES', '0');
+		await cleanupExpiredDemos(db);
+		expect(await db.select().from(user).where(eq(user.id, a.id))).toHaveLength(0);
+		expect(await spareCount(db)).toBe(1);
+	});
+
+	it('a fill trims surplus spares when the target was lowered', async () => {
+		await fillSpares(db, { target: 3 });
+		expect(await spareCount(db)).toBe(3);
+		await fillSpares(db, { target: 1 });
+		expect(await spareCount(db)).toBe(1);
+		expect(await spareRows('spare-ready-')).toHaveLength(1);
 	});
 
 	it('two fills at once do not make more than the target (advisory lock)', async () => {
