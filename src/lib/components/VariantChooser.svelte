@@ -101,6 +101,21 @@
 	.parts {
 		font-size: 0.85em;
 	}
+	/* phone: the whole option row is the tap target and the radio is easy to see */
+	@media (pointer: coarse), (max-width: 760px) {
+		.opt {
+			min-height: 44px;
+			box-sizing: border-box;
+			align-items: center;
+		}
+		.opt input {
+			flex: none;
+			width: 22px;
+			height: 22px;
+			margin: 0;
+			accent-color: var(--accent);
+		}
+	}
 	fieldset:disabled .opt {
 		cursor: default;
 	}

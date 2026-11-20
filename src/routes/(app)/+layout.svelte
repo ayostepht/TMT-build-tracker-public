@@ -433,7 +433,7 @@
 		color: var(--ink);
 		text-decoration: underline;
 	}
-	@media (pointer: coarse) {
+	@media (pointer: coarse), (max-width: 760px) {
 		.app-footer a {
 			min-height: 44px;
 			padding-inline: 4px;

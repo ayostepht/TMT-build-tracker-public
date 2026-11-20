@@ -66,7 +66,12 @@
 	const safetyOk = $derived(safetyComplete(view));
 	const problems = $derived(
 		[
-			prog.done < prog.total ? `${prog.total - prog.done} assembly step(s) are not done` : '',
+			prog.done < prog.total
+				? (() => {
+						const n = prog.total - prog.done;
+						return n === 1 ? '1 assembly step is not done' : `${n} assembly steps are not done`;
+					})()
+				: '',
 			safety && !safetyOk ? 'Not every safety check is ticked' : '',
 			!h?.safetyChecked ? 'The safety sign-off is not confirmed' : ''
 		].filter(Boolean)

@@ -84,6 +84,35 @@
 	let searchEl = $state<HTMLInputElement>();
 	let sheetEl = $state<HTMLDivElement>();
 
+	/**
+	 * Marks a sideways scroller with data-fade-start / data-fade-end while content is hidden on that
+	 * side, so the CSS can fade that edge (a hint that the row scrolls). Only when it really scrolls.
+	 */
+	function edgeFade(node: HTMLElement) {
+		const measure = () => {
+			const scrolls =
+				getComputedStyle(node).overflowX === 'auto' && node.scrollWidth > node.clientWidth + 2;
+			node.toggleAttribute('data-fade-start', scrolls && node.scrollLeft > 2);
+			node.toggleAttribute(
+				'data-fade-end',
+				scrolls && node.scrollLeft + node.clientWidth < node.scrollWidth - 2
+			);
+		};
+		measure();
+		node.addEventListener('scroll', measure, { passive: true });
+		const ro = new ResizeObserver(measure);
+		ro.observe(node);
+		const mo = new MutationObserver(measure);
+		mo.observe(node, { childList: true, subtree: true });
+		return {
+			destroy() {
+				node.removeEventListener('scroll', measure);
+				ro.disconnect();
+				mo.disconnect();
+			}
+		};
+	}
+
 	onMount(() => {
 		// Non-modal panel: on close, focus goes back to the control that opened it (the panel it
 		// hid reappears in the same update, so wait for it).
@@ -465,7 +494,7 @@
 			{/if}
 		</div>
 
-		<div class="filters" role="group" aria-label="Filters">
+		<div class="filters" role="group" aria-label="Filters" use:edgeFade>
 			{#if typeOpts.length > 2}
 				<select
 					class="typesel"
@@ -537,7 +566,7 @@
 					{/if}
 				</select>
 			{/if}
-			<div class="chips brandchips" role="group" aria-label="Brands">
+			<div class="chips brandchips" role="group" aria-label="Brands" use:edgeFade>
 				<button
 					type="button"
 					class="ds-badge sp-chip"
@@ -883,6 +912,35 @@
 	}
 	.brandchips {
 		flex-wrap: nowrap;
+	}
+	/* A faded edge says "more this way" on a row that scrolls sideways. It is dropped while a
+	   control inside has focus so the focus ring is never faded. Colors come from the mask only. */
+	.filters:global([data-fade-end]):not(:focus-within),
+	.brandchips:global([data-fade-end]):not(:focus-within) {
+		-webkit-mask-image: linear-gradient(to right, black calc(100% - 32px), transparent);
+		mask-image: linear-gradient(to right, black calc(100% - 32px), transparent);
+	}
+	.filters:global([data-fade-start]):not(:focus-within),
+	.brandchips:global([data-fade-start]):not(:focus-within) {
+		-webkit-mask-image: linear-gradient(to right, transparent, black 32px);
+		mask-image: linear-gradient(to right, transparent, black 32px);
+	}
+	.filters:global([data-fade-start]):global([data-fade-end]):not(:focus-within),
+	.brandchips:global([data-fade-start]):global([data-fade-end]):not(:focus-within) {
+		-webkit-mask-image: linear-gradient(
+			to right,
+			transparent,
+			black 32px,
+			black calc(100% - 32px),
+			transparent
+		);
+		mask-image: linear-gradient(
+			to right,
+			transparent,
+			black 32px,
+			black calc(100% - 32px),
+			transparent
+		);
 	}
 	.sp-chip {
 		white-space: nowrap;

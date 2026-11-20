@@ -1672,25 +1672,21 @@ label.field input[type='file'] {
 }
 
 /* ---- touch targets (design-studio-ui) ----
-   Every .btn variant is at least 44px high on touch screens at every width; desktop (fine
-   pointer) keeps its density. Last in the file so it wins over the phone-width 40px rules above.
-   .pill-link stays a compact badge to the eye and gets its 44px hit area from an ::after band
-   (badges sit in dense chip rows, a 44px visual pill would break them). */
-@media (pointer: coarse) {
+   Every .btn variant, .pill-link and page-tab link is at least 44px high on touch screens and on
+   phone-width windows; desktop (fine pointer, wide) keeps its density. Last in the file so it wins
+   over the phone-width 40px rules above. The phone-width query covers touch emulation that
+   reports a fine pointer. */
+@media (pointer: coarse), (max-width: 760px) {
 	.btn,
 	.btn.sm {
 		box-sizing: border-box;
 		min-height: 44px;
 	}
 	.pill-link {
-		position: relative;
+		box-sizing: border-box;
+		min-height: 44px;
 	}
-	.pill-link::after {
-		content: '';
-		position: absolute;
-		inset-inline: 0;
-		top: 50%;
-		height: 44px;
-		transform: translateY(-50%);
+	.tabs a {
+		min-height: 44px;
 	}
 }
