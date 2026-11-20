@@ -24,25 +24,26 @@ _Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## State
 
-- `main`: live. #1 (docs for the hosted edition) and #2 (repository links, accurate comments,
-  working `preview:demo`) merged 2026-11-19; each publishes a new `:latest`.
-- #3 merged 2026-11-19 (`22f2b01`): migration `0001` (drops the duplicate `organization.slug`
-  index) and team creation retries on a slug conflict. Deployed and applied 2026-11-19.
-- Sibling repository: the resource-limit back-port is open there as a pull request into `edge`
-  (`fix/resource-limits`); the self-hosted project's developer reviews and lands it.
-- Google Safe Browsing flagged the new domain (false positive, likely because it is new and its
-  main buttons are third-party sign-in); the maintainer requested a review in Search Console
-  and filed a false-positive report. Don't share the site widely until it clears.
+- `main` at the evening batch (40b281b and later): #4, #7, #8, #9, #10, #11 merged
+  2026-11-20, all green on `public-ci`, no migrations. The live server still runs the image
+  from #6 (fourth deploy) until the maintainer pulls `:latest`.
+- With that update the maintainer removes `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET`
+  (Discord sign-in hidden: only its callback trips Chrome Safe Browsing) and adds
+  `ANALYTICS_PROVIDER=cloudflare` + `CF_ANALYTICS_TOKEN`; optionally the Turnstile keys.
+- No pull requests open. No agents running.
+- Sibling repository: the resource-limit back-port is open there (`fix/resource-limits`);
+  its developer lands it. Carry-overs listed in STATUS Open items.
+- Google Safe Browsing review of the domain requested; don't share widely until it clears.
 
 ## Next step
 
-1. STATUS open items: `printers.host` placeholder (needs a printers-side change before a
-   migration can drop it), Turnstile on `/demo`, the gallery "Allow sharing again" button,
-   `maxlength` on build text fields.
-2. With the maintainer: analytics provider, backup schedule (script given in the session:
-   nightly `pg_dump` through a `postgres:17` container), repository settings.
+1. After the maintainer updates: add the fifth deploy to `docs/dev/CHANGELOG.md`; check the
+   log for boot warnings (analytics token, half-set Turnstile keys); if Turnstile keys were
+   set, confirm a demo starts with the widget.
+2. With the maintainer: nightly backup (`pg_dump` through a `postgres:17` container, kept
+   off the server), repository settings.
+3. STATUS open items, smallest first (picker edge fade, the timing test, `printers.host`).
 
 ## Questions waiting for the maintainer
 
-- See STATUS "Waiting on the maintainer" (analytics choice, backups, repository settings,
-  gallery and demo choices, the sibling back-port).
+- See STATUS "Waiting on the maintainer".

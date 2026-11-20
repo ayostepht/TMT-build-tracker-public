@@ -17,6 +17,8 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 - Delete your account yourself from the Account page, after typing your email to confirm.
 - Per-account limits so one account cannot use up the site (by default 10 teams per person, 50 active builds per team, 1 GB of uploads per team, 95 MB per 3MF file), all configurable.
 - Optional cookieless analytics (Plausible, Umami or Cloudflare Web Analytics): page views only, with ids removed, and nothing at all for browsers that send Do Not Track or Global Privacy Control.
+- Site admins can let a hidden design be shared again, from a list of hidden designs on the gallery page or from the design itself. The author sees a short notice while a design is hidden.
+- Optional Cloudflare Turnstile check before a demo starts (`TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`), against bots filling the demo slots. Off unless both keys are set.
 - Hosting guide and deploy files for Fly.io, Railway and your own server behind a Cloudflare Tunnel, with a Supabase database.
 
 ### Changed
@@ -25,6 +27,9 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 - Printers connect only through OctoEverywhere shared links (Elegoo, Klipper with Moonraker, OctoPrint), or are added as "not connected" to log prints by hand. The server never connects to your home network.
 - Chapters are called teams everywhere.
 - A new look: warm paper and ink colors with one brick accent, in light and dark.
+- Text fields stop at the length the server accepts, so a long note is never refused on save.
+- The color picker's controls take less room on desktop, so more colors show without scrolling.
+- Sign-in wording names only the providers the site has switched on.
 - The signed-in start page moved to `/workspace`; `/` is the public home page.
 - Kit admin and print-geometry import are for site admins only.
 - The client address used for rate limits comes from Cloudflare (`TRUST_CLOUDFLARE=1`) or from a header your own proxy sets; the server refuses to start in production without one.

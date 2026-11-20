@@ -1,6 +1,6 @@
 # Project status
 
-_Last updated: 2026-11-19 (repository split from the self-hosted project; first deploy pending)._
+_Last updated: 2026-11-20._
 
 This file holds **current facts only** for the hosted edition: what works, what's open,
 what's decided. Deploy history goes in `docs/dev/CHANGELOG.md`; how things work goes in
@@ -29,6 +29,10 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - **Real users since 2026-11-20:** the site was shared with a first few makers. Updates
   must keep their data: additive, backward-compatible migrations only, a backup and a
   rehearsal before any migration reaches `main` (rules in `docs/dev/HANDOFF.md`).
+- **Evening batch 2026-11-20 merged** (#4 dependency updates with the adapter-node `ORIGIN`
+  fix, #7 provider-aware sign-in wording, #8 text limits, #9 compact picker, #10 admin "Allow
+  sharing again" for hidden gallery designs, #11 optional Turnstile on `/demo`). No
+  migrations. Deploy pending on the maintainer's server.
 - **Migrations:** one baseline, `drizzle/0000_baseline.sql`, applied to the live database on
   2026-11-19. **Frozen from now on:** schema changes add new migrations; never edit or
   regenerate the baseline. `0001_drop_duplicate_org_slug_index` merged and applied 2026-11-19 (#3). Team creation now retries on a slug conflict.
@@ -42,20 +46,26 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   checks, no force push), private vulnerability reporting, the `ghcr.io` package visibility,
   Dependabot.
 - Review the screenshots and the demo on the live site.
-- Choices: an "Allow sharing again" admin button for designs hidden from the gallery (the
-  API exists); Cloudflare Turnstile on `/demo` against slot-filling from many addresses;
-  whether the service worker drops cached kit models on sign-out (shared devices).
+- Choice: whether the service worker drops cached kit models on sign-out (shared devices).
+- Turnstile on `/demo` (#11) is built but off until `TURNSTILE_SITE_KEY` and
+  `TURNSTILE_SECRET_KEY` are set; the real widget and Cloudflare verification have not run
+  anywhere yet (cloud sessions can't reach Cloudflare): check a demo start once after setting
+  the keys.
 - Sibling repository: the upload and export resource limits also apply to the self-hosted
   0.9.x line; back-port them there and cut a patch release (timing and tag are yours).
 
 ## Open items
 
 - Sibling repository (self-hosted): carry over by hand when convenient (not security fixes):
-  the color picker scroll fix (#5, `SwatchPicker.svelte` + `e2e/picker-scroll.spec.ts`), the
-  export following the chosen layout (#6, `threemf-export/index.ts`, `builds/arrange-plan.ts`),
-  and `maxlength="200"` on the build recipient/hospital fields.
-- Color picker on short windows: the controls (search, filters, brand chips) take most of the
-  height before the swatches; a more compact control row is a possible design follow-up.
+  the color picker scroll fix (#5) and compact desktop controls (#9) in `SwatchPicker.svelte`
+  with `e2e/picker-scroll.spec.ts`; the export following the chosen layout (#6,
+  `threemf-export/index.ts`, `builds/arrange-plan.ts`); the shared text limits (#8,
+  `domain/limits.ts` and the `maxlength` attributes); and, when the sibling takes
+  adapter-node 6.0.2, the `ORIGIN` handling in `scripts/proxy-origin.mjs` (#4).
+- Color picker: the desktop brand-chip row scrolls sideways with no visual hint at its edge;
+  a fade would help [design-studio-ui].
+- `stats/workspace.test.ts` "50 builds with 500 runs each" asserts a 300 ms wall-clock budget
+  and overran once (362 ms) under a loaded full run; make it robust [build-state].
 
 - Supabase performance advisor (informational, fine at launch scale): about 20 foreign keys to `user` without a covering index (add when user
   deletion or those joins get slow).
