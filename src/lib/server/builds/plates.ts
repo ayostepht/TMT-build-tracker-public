@@ -58,7 +58,9 @@ import {
 	hasPlateRuns,
 	layoutHintFor,
 	loadFootprints,
+	PLANNER_VERSION,
 	planArrangement,
+	planForBuild,
 	signature,
 	carryManuals,
 	manualTimes,
@@ -609,7 +611,8 @@ export async function applyUpload(
 			if (b.arrange === true) {
 				// re-read the view so the arrangement sees the new data
 				const fresh = (await loadBuildView(tx, buildId, userId))!;
-				const plan = planArrangement(
+				const plan = await planForBuild(
+					tx,
 					fresh,
 					await loadFootprints(tx, fresh.build.templateId),
 					await layoutHintFor(tx, fresh.build.templateId)
@@ -777,11 +780,12 @@ export async function arrangeForPrinter(
 	let result = { plates: 0, convertedRuns: 0, warnings: [] as ArrangeWarning[] };
 	await mutateBuild(db, buildId, userId, async (tx, view) => {
 		if (!view.printer) bad('Choose a printer first');
-		const plan = planArrangement(
+		const plan = (await planForBuild(
+			tx,
 			view,
 			await loadFootprints(tx, view.build.templateId),
 			await layoutHintFor(tx, view.build.templateId)
-		)!;
+		))!;
 		const convertRuns = await guardPlateReplace(tx, buildId, view, flags);
 		requireConversion(view, convertRuns);
 		const convertedRuns = await convertPlateRuns(tx, buildId, view);
@@ -873,7 +877,13 @@ export async function buildArrangement(
 	const onPlates = new Set(stored.flatMap((pl) => pl.parts));
 	await ensureSilhouettes(db, view.build.templateId, onPlates);
 	const footprints = await loadFootprints(db, view.build.templateId);
-	const plan = planArrangement(view, footprints, await layoutHintFor(db, view.build.templateId));
+	const hint = await layoutHintFor(db, view.build.templateId);
+	const plan = await planForBuild(db, view, footprints, hint);
+	// Plates stored before the kit layout came first were planned by the plain arranger: they are
+	// "stale" only when that planner would now plan something else (a color or variant change), never
+	// just because the planner changed. Their numbers and plates stay as they are.
+	const legacy = stored.length > 0 && stored.every((pl) => pl.v !== PLANNER_VERSION);
+	const compare = legacy ? planArrangement(view, footprints, hint, undefined, 'legacy') : plan;
 	const used: Record<string, PrintFootprint> = {};
 	for (const pl of stored)
 		for (const s of pl.parts) {
@@ -916,8 +926,8 @@ export async function buildArrangement(
 				pl.items.some((i) => typeof i === 'object' && i !== null && 'pose' in i)
 			) ||
 			(row?.plateLayout === ARRANGED_LAYOUT &&
-				!!plan &&
-				signature(plan.result.plates) !== signature(stored)) ||
+				!!compare &&
+				signature(compare.result.plates) !== signature(stored)) ||
 			(row?.plateLayout !== ARRANGED_LAYOUT && !!plan && templateColorsChanged(view)),
 		template: view.printTemplate
 			? { fileName: view.printTemplate.fileName, printer: view.printTemplate.printer }

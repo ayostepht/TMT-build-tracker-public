@@ -5,6 +5,37 @@ filament, and where each part sits. It is pure and deterministic: the same input
 the same plates. The server applies the result to a build (`build_plates`), and an
 exporter can turn each plate into a 3MF.
 
+## The kit layout comes first
+
+The app does not call `arrange()` straight for a build. `planArrangement(..., kit)` in
+`builds/arrange-plan.ts` hands the kit's own plate layout (or the plates of the file the maker
+uploaded) to `arrangeFromSource` in `arrange-source.ts`, and `arrange()` only places what the source
+cannot (`loadKitSource` picks the layout: the build's own MakeGood profile, else the one whose bed is
+the biggest the printer still holds):
+
+- **A plate stays** (same number, name, parts, positions) while its parts still print together: one
+  filament, or different filaments that the kit already printed in different colors, and the printer's
+  slots and materials allow it. It is placed alone (never merged, no brim margin: "as authored"); the
+  pack stores membership only, so positions come from `arrange()` of that one plate, at a gap that steps
+  down to 2 mm and with a few-parts order/turn search and an outline nester (`options.thorough`) so the
+  plate fits where the author's did. A source that carries positions (`SourcePlate.items`) keeps them.
+- **Only what must move moves**: a part whose filament no longer matches the rest of its plate (a design
+  that colors two parts of one kit color differently), a part that does not fit this bed, and parts the
+  source does not list go to NEW plates numbered after the last, packed together by `arrange()`. They
+  never join an existing plate. The largest same-filament group stays in place.
+- **A plate with one part in the source is sacred** (`soloParts`, `options.solo`): it never gets another
+  part, and may use the relaxed edge margin (`SOLO_MARGIN`, 1 mm) when the printer's margin leaves no room.
+- **Brims count** for parts the arranger places (`ArrangePart.brims`, from `pieceBrimMm`): the footprint
+  used for the gap to neighbours, the bed edge and keep-outs is the outline grown by the brim; the item
+  box `w` x `d` includes it. A part that fits only without its brim is placed without it (warning `brim`).
+- **No layout for the bed** (a layout for a bigger bed than the printer's, a custom kit): plain
+  `arrange()` with `options.solo` from the nearest layout.
+- Plates carry `v` (`PLANNER_VERSION` 2). Arrangements stored without it were planned by the plain
+  arranger: they are left alone and their "stale" check still compares with that planner
+  (`planArrangement(..., 'legacy')`).
+
+Plain `arrange()` without `solo`, `brims` and `thorough` is unchanged (`arrange-tmt-snapshot.test.ts`).
+
 ## Getting the arranged plates for a build
 
 Server side (preferred):

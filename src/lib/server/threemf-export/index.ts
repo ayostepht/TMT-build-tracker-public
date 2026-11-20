@@ -12,7 +12,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { ApiError } from '../access';
 import { buildArrangement, buildLayouts } from '../builds/plates';
-import { loadFootprints, placeOnPlates, planArrangement } from '../builds/arrange-plan';
+import { loadFootprints, placeOnPlates, planForBuild } from '../builds/arrange-plan';
 import { loadBuildView } from '../builds/view';
 import type { DbOrTx } from '../db';
 import { printDir, readPieceMesh } from '../print-geometry/store';
@@ -27,6 +27,7 @@ import {
 import { checkPlacement } from './check';
 import { slug, writePlainZip, writeThreeMf, type WriteOptions } from './writer';
 import type { ArrangedPlate } from '#lib/domain/arrange.ts';
+import type { SourceMove } from '#lib/domain/arrange-source.ts';
 import type { PrintFootprint } from '#lib/domain/print-footprint.ts';
 import type { BuildPrinter, BuildView } from '#lib/domain/types.ts';
 import type { ExportPreview } from '#lib/domain/export-types.ts';
@@ -72,17 +73,53 @@ async function kitLayoutFor(
 	view: BuildView
 ): Promise<{ name: string; bed: BuildPrinter; fits: boolean } | null> {
 	if (!view.plates.length || !view.printer) return null;
+	// the maker's own file: its plates are the source, whatever bed it was sliced for
+	if (view.plates.every((p) => p.source.startsWith('upload:')))
+		return { name: 'your uploaded file', bed: view.printer, fits: true };
 	if (!view.plates.every((p) => p.source === 'template' || p.source.startsWith('layout:')))
 		return null;
 	const { layouts, current } = await buildLayouts(db, buildId, userId);
 	const bed = layoutBed(current);
 	if (!bed) return null;
-	const same = (a: number, b: number) => Math.abs(a - b) < 0.5;
+	// a layout made for a bed the printer holds (the same or a bigger one) can be followed; a layout for
+	// a bigger bed than the printer's cannot
+	const within = (a: number, b: number) => a <= b + 0.5;
 	return {
 		name: layouts.find((l) => l.key === current)?.name ?? bed.name,
 		bed,
-		fits: same(bed.bedX, view.printer.bedX) && same(bed.bedY, view.printer.bedY)
+		fits: within(bed.bedX, view.printer.bedX) && within(bed.bedY, view.printer.bedY)
 	};
+}
+
+/** One info note per source plate that gave up parts: which parts, where they went and why. */
+function moveNotes(moves: SourceMove[], view: BuildView): ExportWarning[] {
+	const nameOf = (n: number) => view.plates.find((p) => p.number === n)?.name ?? `Plate ${n}`;
+	const partName = (slug: string) => view.parts.find((p) => p.slug === slug)?.name ?? slug;
+	const out: ExportWarning[] = [];
+	const from = [...new Set(moves.map((m) => m.from))];
+	for (const f of from) {
+		const mine = moves.filter((m) => m.from === f);
+		const to = [...new Set(mine.map((m) => m.to))].sort((a, b) => a - b);
+		const names = mine.map((m) => partName(m.slug)).join(', ');
+		const where = to.length === 1 ? `plate ${to[0]}` : `plates ${to.join(', ')}`;
+		const bed = mine.every((m) => m.reason === 'bed');
+		if (f == null)
+			out.push({
+				code: 'arrangement',
+				severity: 'info',
+				message: `${names} ${mine.length === 1 ? 'is' : 'are'} not on any plate of the layout, so ${mine.length === 1 ? 'it was' : 'they were'} placed on new ${to.length === 1 ? 'plate' : 'plates'} (${where}).`
+			});
+		else
+			out.push({
+				code: 'arrangement',
+				severity: 'info',
+				plate: f,
+				message: bed
+					? `Plate ${f} (${nameOf(f)}) does not fit one ${view.printer?.bedX} × ${view.printer?.bedY} mm bed on ${view.printer?.name}, so ${names} moved to ${where} (extra ${to.length === 1 ? 'plate' : 'plates'} after the last). The other plates match the Print tab.`
+					: `On plate ${f} (${nameOf(f)}), ${names} no longer ${mine.length === 1 ? 'shares' : 'share'} a filament with the rest of the plate, so ${mine.length === 1 ? 'it' : 'they'} moved to ${where}. The other parts stay where they are.`
+			});
+	}
+	return out;
 }
 
 /** Resolve the plan for a build: access check, arrangement, geometry. Throws ApiError. */
@@ -115,15 +152,9 @@ export async function prepareExport(
 		const placed = kit?.fits ? placeOnPlates(view, footprints, null) : null;
 		if (kit?.fits && placed?.plates.length) {
 			plates = placed.plates;
-			for (const o of placed.overflow)
-				notes.push({
-					code: 'arrangement',
-					severity: 'info',
-					plate: o.number,
-					message: `Plate ${o.number} (${o.name}) does not fit one ${view.printer.bedX} × ${view.printer.bedY} mm bed on ${view.printer.name}, so ${o.extra === 1 ? 'one extra plate' : `${o.extra} extra plates`} ${o.extra === 1 ? 'was' : 'were'} added at the end ("${o.name} (continued)"). The other plates match the Print tab.`
-				});
+			notes.push(...moveNotes(placed.moves, view));
 		} else {
-			const plan = planArrangement(view, footprints, null);
+			const plan = await planForBuild(db, view, footprints, null);
 			if (!plan) throw new ApiError(400, 'Choose a printer first.');
 			plates = plan.result.plates;
 			const how = `On the Files tab choose "Arrange for my bed" (or "Re-arrange plates") to match`;
