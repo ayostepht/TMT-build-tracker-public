@@ -253,7 +253,8 @@ export function e2eAuthEnabled(): boolean {
 /**
  * Demo sandbox limits, all env-configurable (digits, or `off` where a limit may be removed):
  * `DEMO_MAX_LIVE` (live demo users, default 500), `DEMO_PER_IP_PER_HOUR` (default 5), `DEMO_STARTS_PER_MINUTE` (all addresses together, default 20),
- * `DEMO_TTL_HOURS` (default 24, 1 to 72) and `DEMO_BUILDS` (builds one demo may hold, default 2).
+ * `DEMO_TTL_HOURS` (default 24, 1 to 72), `DEMO_BUILDS` (builds one demo may hold, default 2) and
+ * `DEMO_SPARES` (ready-made demos kept in reserve so starting one is quick, default 2; `0` builds each demo on request).
  */
 export interface DemoConfig {
 	maxLive: number;
@@ -262,6 +263,8 @@ export interface DemoConfig {
 	startsPerMinute: number;
 	ttlMs: number;
 	buildsPerDemo: number;
+	/** Ready-made spare demos to keep; 0 turns the pool off. */
+	spares: number;
 }
 
 function demoInt(name: string, fallback: number, min: number, max: number): number {
@@ -278,7 +281,8 @@ export function demoConfig(): DemoConfig {
 		perIpPerHour: demoInt('DEMO_PER_IP_PER_HOUR', 5, 0, 1000),
 		startsPerMinute: demoInt('DEMO_STARTS_PER_MINUTE', 20, 0, 10_000),
 		ttlMs: demoInt('DEMO_TTL_HOURS', 24, 1, 72) * 3600 * 1000,
-		buildsPerDemo: demoInt('DEMO_BUILDS', 2, 1, 10)
+		buildsPerDemo: demoInt('DEMO_BUILDS', 2, 1, 10),
+		spares: demoInt('DEMO_SPARES', 2, 0, 20)
 	};
 }
 

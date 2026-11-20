@@ -77,6 +77,37 @@ test('the demo page says what you get and starts a demo with tracking first', as
 	expect(res.status()).toBe(200);
 });
 
+test('starting a demo claims a ready-made spare and the pool makes the next one', async ({
+	page
+}) => {
+	const spareIds = () =>
+		withE2eDb(
+			(sql) =>
+				sql`select id from "user" where is_demo and email like 'spare-ready-%'` as Promise<
+					{ id: string }[]
+				>
+		);
+	await expect.poll(async () => (await spareIds()).length, { timeout: 60_000 }).toBeGreaterThan(0);
+	const before = new Set((await spareIds()).map((r) => r.id));
+	const buildId = await startDemo(page);
+	// The claimed spare is now an ordinary demo (renamed, counted live) with this session, and owns the build.
+	const claimed = await withE2eDb(
+		(sql) => sql`
+			select u.id, u.email from "user" u
+			join member m on m.user_id = u.id
+			join builds b on b.organization_id = m.organization_id
+			where b.id = ${buildId}`
+	);
+	expect(claimed).toHaveLength(1);
+	expect(before.has(claimed[0].id)).toBe(true);
+	expect(claimed[0].email).toMatch(/^demo-.+@demo\.invalid$/);
+	await expect(page.getByTestId('demo-banner')).toContainText("You're in a demo");
+	// The next spare is made in the background.
+	await expect
+		.poll(async () => (await spareIds()).some((r) => !before.has(r.id)), { timeout: 60_000 })
+		.toBe(true);
+});
+
 test('the server refuses uploads, printers, teams, invitations and export to a demo', async ({
 	page
 }) => {
