@@ -18,6 +18,8 @@ import {
 } from '#lib/domain/arrange.ts';
 import {
 	arrangeFromSource,
+	RULES_V2,
+	RULES_V3,
 	soloParts,
 	type SourceArrangeResult,
 	type SourceMove,
@@ -45,11 +47,17 @@ export const ARRANGED_LAYOUT = 'arranged';
 export const ARRANGED_SOURCE = 'arranged';
 
 /**
- * Version of the planner that wrote an arrangement. 2 = the kit's layout comes first (`arrangeFromSource`).
- * Arrangements stored without it were planned by the plain arranger: they are left alone, and their
- * "stale" check still compares against that planner (`planArrangement(..., 'legacy')`).
+ * Version of the planner that wrote an arrangement. 2 = the kit's layout comes first (`arrangeFromSource`);
+ * 3 = plates printed in runs of their own stay one plate (the wheel rims) and a part that moved may join
+ * an existing multi-part plate (`RULES_V3`). Arrangements stored without a version were planned by the
+ * plain arranger and version 2 ones by the planner of rules `RULES_V2`: they are left alone, and their
+ * "stale" check still compares against the planner that made them (`planArrangement(..., 'legacy')`,
+ * `planArrangement(..., kit, 2)`), so a planner change never flags or rewrites an existing build.
  */
-export const PLANNER_VERSION = 2;
+export const PLANNER_VERSION = 3;
+
+/** Source-planner rules of a stored planner version (the current ones for anything newer). */
+export const rulesFor = (version: number) => (version <= 2 ? RULES_V2 : RULES_V3);
 
 /** Edge margin stored by builds planned before the default became 1 mm; read as the new default. */
 export const OLD_DEFAULT_MARGIN = 5;
@@ -204,13 +212,14 @@ export async function loadKitSource(db: DbOrTx, view: BuildView): Promise<KitSou
 	if (!p) return null;
 	const active = new Set(view.parts.map((x) => x.slug));
 	const asSource = (
-		plates: { number: number; name: string; runs: number; parts: string[] }[]
+		plates: { number: number; name: string; runs: number; perPartRuns?: boolean; parts: string[] }[]
 	): SourcePlate[] =>
 		plates
 			.map((x) => ({
 				number: x.number,
 				name: x.name,
 				runs: x.runs,
+				...(x.perPartRuns ? { perPartRuns: true } : {}),
 				parts: x.parts.filter((s) => active.has(s))
 			}))
 			.filter((x) => x.parts.length)
@@ -291,7 +300,8 @@ export function planArrangement(
 	footprints: Map<string, PrintFootprint>,
 	layoutHint: string | null = null,
 	options?: ArrangeOptions,
-	kit: KitSource | 'legacy' | null = null
+	kit: KitSource | 'legacy' | null = null,
+	version: number = PLANNER_VERSION
 ): Plan | null {
 	const input = arrangeInputFor(view, footprints, layoutHint, options);
 	if (!input) return null;
@@ -304,7 +314,7 @@ export function planArrangement(
 		return { result: arrange(plain), unsized, learned: learnedOf(view) };
 	}
 	if (kit?.plates) {
-		const r: SourceArrangeResult = arrangeFromSource(input, kit.plates);
+		const r: SourceArrangeResult = arrangeFromSource(input, kit.plates, rulesFor(version));
 		return {
 			result: { plates: r.plates, warnings: r.warnings },
 			unsized,
@@ -327,9 +337,17 @@ export async function planForBuild(
 	db: DbOrTx,
 	view: BuildView,
 	footprints: Map<string, PrintFootprint>,
-	layoutHint: string | null = null
+	layoutHint: string | null = null,
+	version: number = PLANNER_VERSION
 ): Promise<Plan | null> {
-	return planArrangement(view, footprints, layoutHint, undefined, await loadKitSource(db, view));
+	return planArrangement(
+		view,
+		footprints,
+		layoutHint,
+		undefined,
+		await loadKitSource(db, view),
+		version
+	);
 }
 
 export interface LayoutPlacement {
@@ -359,6 +377,7 @@ export function placeOnPlates(
 		number: pl.number,
 		name: pl.name,
 		runs: pl.runs,
+		...(pl.perPartRuns ? { perPartRuns: true } : {}),
 		parts: pl.parts
 	}));
 	const r = arrangeFromSource(input, source);
@@ -442,7 +461,13 @@ export function carryManuals(h: PlateManuals) {
 }
 
 /** Replace the build's plates with a plan. Callers must have dealt with plate-attached runs. */
-export async function writePlan(tx: DbOrTx, buildId: string, plan: Plan): Promise<number> {
+export async function writePlan(
+	tx: DbOrTx,
+	buildId: string,
+	plan: Plan,
+	/** Planner version stamped on the plates (`PLANNER_VERSION`); older ones only for tests of stored arrangements. */
+	version: number = PLANNER_VERSION
+): Promise<number> {
 	const tplId = (
 		await first(tx.select({ t: builds.templateId }).from(builds).where(eq(builds.id, buildId)))
 	)?.t;
@@ -467,11 +492,11 @@ export async function writePlan(tx: DbOrTx, buildId: string, plan: Plan): Promis
 			name: pl.name,
 			estSeconds: est?.get(pl.number)?.estSeconds ?? null,
 			runs: pl.runs,
-			perPartRuns: false,
+			perPartRuns: !!pl.perPartRuns,
 			parts: pl.parts,
 			...carryManuals(manualFor(pl.number, pl.parts)),
 			source: ARRANGED_SOURCE,
-			arrangement: { ...pl, v: PLANNER_VERSION }
+			arrangement: { ...pl, v: version }
 		});
 	await tx.update(builds).set({ plateLayout: ARRANGED_LAYOUT }).where(eq(builds.id, buildId));
 	return plan.result.plates.length;

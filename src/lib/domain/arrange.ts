@@ -173,6 +173,11 @@ export interface ArrangedPlate {
 	roles: string[];
 	/** Times the plate is printed (rims: 2). */
 	runs: number;
+	/**
+	 * Set on a plate whose parts are printed in runs of their own (the wheel rims: the same object in two
+	 * colors): one print has only ONE of the parts on the bed (`items`), every part is printed `runs` times.
+	 */
+	perPartRuns?: true;
 	/** Estimated grams per run by role key. */
 	estGrams: Record<string, number>;
 	/** Footprint area / usable bed area, 0..1. */

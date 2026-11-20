@@ -734,9 +734,15 @@ const NEST_STEP = 2;
  * leftmost spot over a 2 mm grid where it keeps `spacing` to the items already placed and the usable
  * edges and keep-out areas, trying every angle offered. Lets parts nest into each other's concave
  * sides where a box packer sees no room. Flat rotations only. Returns null when one does not fit.
+ * `fixed` items (stored position, turn and pivot, as `OptItem`) are already on the plate: they stay
+ * exactly where they are and the new items keep `spacing` to them (not checked among the fixed ones).
  * Deterministic; work is bounded by the grid and the few items it is given.
  */
-export function nestOutlines(items: readonly NestItem[], setup: OptSetup): NestPlacement[] | null {
+export function nestOutlines(
+	items: readonly NestItem[],
+	setup: OptSetup,
+	fixed: readonly OptItem[] = []
+): NestPlacement[] | null {
 	const opt: OptItem[] = items.map((i) => ({
 		outline: i.outline,
 		rotatable: false,
@@ -746,11 +752,16 @@ export function nestOutlines(items: readonly NestItem[], setup: OptSetup): NestP
 		w: 0,
 		d: 0
 	}));
-	const L = new Layout(opt, setup);
+	const L = new Layout([...fixed, ...opt], setup);
 	const placed: { t: Turn; x: number; y: number; w: World }[] = [];
+	// items already on the plate (never moved or turned): the new ones keep `spacing` to them
+	fixed.forEach((f, k) => {
+		const t = L.turn(L.nodes[k], f.rot);
+		placed.push({ t, x: f.x, y: f.y, w: L.world(t, f.x, f.y) });
+	});
 	const out: NestPlacement[] = new Array(items.length);
 	for (let k = 0; k < items.length; k++) {
-		const node = L.nodes[k];
+		const node = L.nodes[fixed.length + k];
 		let best: { t: Turn; x: number; y: number; key: [number, number] } | null = null;
 		for (const a of new Set(items[k].angles.map(norm))) {
 			const t = L.turn(node, a);

@@ -882,8 +882,15 @@ export async function buildArrangement(
 	// Plates stored before the kit layout came first were planned by the plain arranger: they are
 	// "stale" only when that planner would now plan something else (a color or variant change), never
 	// just because the planner changed. Their numbers and plates stay as they are.
-	const legacy = stored.length > 0 && stored.every((pl) => pl.v !== PLANNER_VERSION);
-	const compare = legacy ? planArrangement(view, footprints, hint, undefined, 'legacy') : plan;
+	// Plates stored by planner 2 (before run plates and joins) are compared with that planner's rules.
+	const storedV =
+		stored.length && stored.every((pl) => pl.v === stored[0].v) ? stored[0].v : undefined;
+	const compare =
+		stored.length === 0 || storedV === PLANNER_VERSION
+			? plan
+			: storedV === 2
+				? await planForBuild(db, view, footprints, hint, 2)
+				: planArrangement(view, footprints, hint, undefined, 'legacy');
 	const used: Record<string, PrintFootprint> = {};
 	for (const pl of stored)
 		for (const s of pl.parts) {
