@@ -14,6 +14,12 @@ repository was split off on 2026-11-19) is in the sibling repository,
 
 ## 2026-11
 
+- **2026-11-20, sixth deploy.** Image `sha-828df84` (`main` 828df84: #12 to #26; strict
+  Turnstile checks, way back to the home page, signed-out guards, hero wheel fix and link
+  previews, first-time journey fixes, faster navigation and build loading, clean shutdown,
+  tracking loop on a phone, touch targets, demo start from a ready-made spare). No migration.
+  Maintainer: "so much faster now". Watch: demo start in the first minutes after a restart
+  (slow path until a spare is ready); `DATABASE_PREPARE=on` not yet tried.
 - **2026-11-20, fifth deploy.** Image `sha-2568f4e` (`main` 2568f4e: #4 dependency updates with
   the adapter-node `ORIGIN` fix, #7, #8, #9, #10, #11). No migration. Discord sign-in removed
   from the container env; Cloudflare Web Analytics and Turnstile keys added. First real

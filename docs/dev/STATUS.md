@@ -29,14 +29,8 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - **Real users since 2026-11-20:** the site was shared with a first few makers. Updates
   must keep their data: additive, backward-compatible migrations only, a backup and a
   rehearsal before any migration reaches `main` (rules in `docs/dev/HANDOFF.md`).
-- **Live:** the maintainer's server runs the fifth or sixth deploy (they update by hand; the
-  last image they were told about is `sha-d28d128`). **Ready, not yet deployed:** `main` after
-  #26 (the image tag is the short sha of the last green `main` push): #14 signed-out guards,
-  #15 hero wheel fix and link previews, #16 first-time journey fixes, #17 printer counts in
-  one query, #18 faster navigation with a warm pool and clean shutdown, #19 build loader in
-  two waves, #20 tracking loop on a phone, #21 console warnings, #22 photo viewer focus, #23
-  phone touch targets, #24 demo start from a ready-made spare, #25 and #26 test reliability.
-  No migrations.
+- **Live (sixth deploy, 2026-11-20):** `sha-828df84`, everything through #26. No
+  migrations since `0001`. The maintainer confirmed the speed-up on the live site.
 - **Speed (2026-11-20):** pages were slow because of sequential database round trips (the app
   and the database are a network hop apart). Measured through a latency proxy at 40 ms per
   round trip, before → after #18/#19: build page 2.3 s → 0.6 s, builds list 3.0 → 1.1 s, team

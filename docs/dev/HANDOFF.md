@@ -24,9 +24,8 @@ _Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## State
 
-- `main` holds #14 to #26 (see STATUS "Where we are"); each was green on `public-ci` before
-  its merge. The image to deploy is the one from the last green `main` push. The maintainer
-  updates the server by hand; nothing from this batch is live until they pull.
+- `main` 828df84 is live (sixth deploy, `sha-828df84`, #12 to #26); the maintainer confirmed
+  the site is much faster.
 - No pull requests open, no agents running. The session's worktrees and the journey audit
   screenshots were session-local.
 - Sibling repository: resource-limit back-port open there (`fix/resource-limits`); carry-overs
@@ -35,10 +34,8 @@ _Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## Next step
 
-1. After the maintainer updates: log the deploy in `docs/dev/CHANGELOG.md` (image sha, #14 to
-   #26, no migration) and ask what they saw: home page wheel, a link preview, speed of the
-   team page and a build, a demo start (near-instant after the first minute or two), toasts
-   and the assembly checklist on a phone.
+1. Ask what else they saw after the update: home page wheel, a link preview, a demo start,
+   toasts and the assembly checklist on a phone.
 2. Offer `DATABASE_PREPARE=on` as a try-and-see (about 2× on warm requests; remove it to
    undo), and the Supabase pool size check.
 3. With the maintainer: Fly.io or not (where is the server relative to US East?), reprint
