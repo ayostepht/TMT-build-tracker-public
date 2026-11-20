@@ -27,6 +27,34 @@ export const MIGRATIONS_FOLDER = './drizzle';
 /** Arbitrary constant; two starting containers serialise on this advisory lock. */
 const MIGRATION_LOCK_KEY = 7_346_201_001;
 
+/**
+ * Seconds an unused connection stays open (`DATABASE_IDLE_TIMEOUT_S`, default 600, 0 = never close).
+ * A new connection to a remote database costs several round trips (TCP, TLS, login), a few hundred
+ * milliseconds that the next request would wait for, so idle ones are kept for a while. The TCP
+ * keep-alive (60 s, postgres-js's default) and `max_lifetime` still weed out dead ones.
+ */
+export function databaseIdleTimeoutSeconds(): number {
+	const raw = (process.env.DATABASE_IDLE_TIMEOUT_S ?? '').trim();
+	return /^\d+$/.test(raw) ? Math.min(Number(raw), 86_400) : 600;
+}
+
+/** Connections `warmPool` opens (`DATABASE_WARM_CONNECTIONS`, default 3, 0 = off), never more than the pool holds. */
+export function databaseWarmConnections(): number {
+	const raw = (process.env.DATABASE_WARM_CONNECTIONS ?? '').trim();
+	return /^\d+$/.test(raw) ? Math.min(Number(raw), 20) : 3;
+}
+
+/**
+ * `DATABASE_PREPARE=on`: reuse server-side prepared statements. Off by default. Drizzle sends every
+ * query with `prepare: false`, and postgres-js then asks the server for the parameter types first,
+ * so a query with a text parameter costs two round trips; a prepared statement costs one after its
+ * first use on a connection. Needs a direct connection or Supabase's session pooler (port 5432),
+ * not a transaction pooler (port 6543), which cannot hold prepared statements.
+ */
+export function databasePrepare(): boolean {
+	return /^(on|1|true|yes)$/i.test((process.env.DATABASE_PREPARE ?? '').trim());
+}
+
 export interface OpenDbOptions {
 	/** Connections in the pool (default `DATABASE_POOL_MAX` or 10; at least 2). */
 	max?: number;
@@ -34,24 +62,55 @@ export interface OpenDbOptions {
 	statementTimeoutMs?: number;
 }
 
+type Prepareable = {
+	unsafe: (...args: never[]) => unknown;
+	begin?: (...args: never[]) => unknown;
+	savepoint?: (...args: never[]) => unknown;
+};
+
 /**
- * Open a connection pool and wrap it in drizzle. `prepare: false` keeps it compatible with
- * Supabase's transaction pooler (pgbouncer), which cannot hold named prepared statements.
+ * Make every `unsafe` call (drizzle's only way in) a prepared statement, on the pool and on the
+ * handle of each transaction and savepoint opened from it. Drizzle passes `prepare: false` for
+ * the queries it does not name, and a statement left unprepared costs an extra round trip.
+ */
+function preparing(c: Prepareable): void {
+	const unsafe = c.unsafe.bind(c) as (...a: unknown[]) => unknown;
+	c.unsafe = ((query: string, args?: unknown[], options?: Record<string, unknown>) =>
+		unsafe(query, args, { ...options, prepare: true })) as never;
+	for (const name of ['begin', 'savepoint'] as const) {
+		const open = c[name]?.bind(c) as ((...a: unknown[]) => unknown) | undefined;
+		if (!open) continue;
+		// `begin([options,] fn)` and `savepoint([name,] fn)`: the callback is always last.
+		c[name] = ((...args: unknown[]) => {
+			const fn = args.pop() as (tx: Prepareable) => unknown;
+			return open(...args, (tx: Prepareable) => {
+				preparing(tx);
+				return fn(tx);
+			});
+		}) as never;
+	}
+}
+
+/**
+ * Open a connection pool and wrap it in drizzle. `prepare` is off unless `DATABASE_PREPARE=on`, which
+ * keeps it compatible with Supabase's transaction pooler (pgbouncer): that cannot hold named prepared statements.
  * `sslmode=require` in the URL turns TLS on (postgres-js reads it).
  */
 export function openDb(url: string, opts: OpenDbOptions = {}): Db {
 	const timeout = opts.statementTimeoutMs ?? databaseStatementTimeoutMs(url);
 	const client = postgres(url, {
 		max: Math.max(MIN_POOL_MAX, opts.max ?? databasePoolMax()),
-		prepare: false,
+		prepare: databasePrepare(),
 		onnotice: () => {},
 		connect_timeout: 15,
-		// Idle connections are returned after 30 s and every connection is recycled within the hour,
-		// so a dropped or half-open one does not stay in the pool.
-		idle_timeout: 30,
+		// Idle connections are kept for `DATABASE_IDLE_TIMEOUT_S` (10 min) so a request after a quiet
+		// moment does not pay for a new TLS connection; every connection is recycled within the hour
+		// and the keep-alive probes detect a dropped one, so a dead connection does not stay.
+		idle_timeout: databaseIdleTimeoutSeconds(),
 		max_lifetime: 60 * 60,
 		...(timeout > 0 ? { connection: { statement_timeout: timeout } } : {})
 	});
+	if (databasePrepare()) preparing(client);
 	return drizzle(client, { schema }) as Db;
 }
 
@@ -86,9 +145,47 @@ export function getDb(): Db {
 	return instance;
 }
 
+/**
+ * Open a few connections now (in parallel, so each is really a separate one) and touch them again
+ * every `everyMs` so they never reach the idle timeout. The first requests after a start, or after a
+ * quiet hour, then find warm connections instead of each paying the handshake with the database.
+ * Failures are ignored: a cold connection is only slower. The timer does not keep the process alive.
+ * Returns a function that stops it.
+ */
+export function warmPool(
+	db: Db = getDb(),
+	connections: number = databaseWarmConnections(),
+	everyMs = 4 * 60_000
+): () => void {
+	const n = Math.min(connections, db.$client.options.max ?? connections);
+	if (n <= 0) return () => {};
+	stopWarming(); // one warm-up timer per process
+	warmed = db;
+	const touch = () =>
+		Promise.all(
+			// pg_sleep keeps each statement busy long enough that the pool opens a connection for each.
+			Array.from({ length: n }, () => db.execute(sql`select pg_sleep(0.05)`))
+		).catch(() => {});
+	void touch();
+	const timer = setInterval(() => void touch(), everyMs);
+	timer.unref();
+	const stop = () => {
+		clearInterval(timer);
+		if (stopWarming === stop) stopWarming = () => {};
+	};
+	stopWarming = stop;
+	return stop;
+}
+
+/** Stops the warm-up timer of this process (set by `warmPool`). */
+let stopWarming: () => void = () => {};
+let warmed: Db | null = null;
+
 /** Close a pool (default: the singleton). For shutdown and tests. */
 export async function closeDb(db?: Db): Promise<void> {
 	const target = db ?? instance;
+	// The warm-up touches one pool: stop it when that pool closes, so its timer and queries end too.
+	if (!target || target === warmed) stopWarming();
 	if (!target) return;
 	if (target === instance) instance = undefined;
 	await target.$client.end({ timeout: 5 });

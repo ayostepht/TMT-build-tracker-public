@@ -26,6 +26,18 @@ export interface LiveStreamOptions<E> {
 	heartbeatMs?: number;
 }
 
+/** Cleanups of the streams that are open right now (see `closeLiveStreams`). */
+const openStreams = new Set<() => void>();
+
+/**
+ * End every open stream. Called when the process is told to stop: an HTTP server waits for open
+ * connections before it finishes closing, and these never end by themselves, so a stop would
+ * otherwise wait out the whole shutdown timeout. Browsers reconnect to the next instance.
+ */
+export function closeLiveStreams(): void {
+	for (const cleanup of [...openStreams]) cleanup();
+}
+
 export function liveStream<E>(o: LiveStreamOptions<E>): Response {
 	const enc = new TextEncoder();
 	let cleanup = () => {};
@@ -50,6 +62,7 @@ export function liveStream<E>(o: LiveStreamOptions<E>): Response {
 			cleanup = () => {
 				if (done) return;
 				done = true;
+				openStreams.delete(cleanup);
 				clearInterval(beat);
 				unsub();
 				o.release();
@@ -59,6 +72,7 @@ export function liveStream<E>(o: LiveStreamOptions<E>): Response {
 					/* already closed */
 				}
 			};
+			openStreams.add(cleanup);
 			function send(s: string) {
 				try {
 					controller.enqueue(enc.encode(s));
