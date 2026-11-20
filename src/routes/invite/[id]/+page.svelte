@@ -1,10 +1,12 @@
 <script lang="ts">
+	import { providerPhrase } from '#lib/sign-in-providers.ts';
 	import AppMark from '#lib/components/AppMark.svelte';
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
+	const providerText = $derived(providerPhrase(data.signInProviders));
 	const back = $derived(encodeURIComponent(`/invite/${data.invitation.id}`));
 </script>
 
@@ -26,8 +28,8 @@
 			<p class="muted">This invitation is {data.invitation.status}.</p>
 		{:else if !data.signedIn}
 			<p class="muted">
-				Sign in with the Google, GitHub or Discord account that uses the invited email address. You
-				come back to this page afterwards.
+				Sign in with the {providerText ? `${providerText} ` : ''}account that uses the invited email
+				address. You come back to this page afterwards.
 			</p>
 			<a class="btn primary" href={resolve(`/login?redirect=${back}`)}>Sign in</a>
 		{:else if data.isDemo}

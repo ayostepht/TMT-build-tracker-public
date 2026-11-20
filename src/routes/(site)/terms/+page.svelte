@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { providerPhrase } from '#lib/sign-in-providers.ts';
 	import { resolve } from '$app/paths';
 	import LegalPage from '#lib/components/LegalPage.svelte';
 	import { MAKEGOOD_GUIDE_URL } from '#lib/makegood.ts';
@@ -6,6 +7,7 @@
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+	const providerText = $derived(providerPhrase(data.signInProviders));
 </script>
 
 <svelte:head><title>Terms · TMT Build Tracker</title></svelte:head>
@@ -70,8 +72,8 @@
 	<h2>Your account</h2>
 	<ul>
 		<li>
-			You sign in with Google, GitHub or Discord. Keep that account secure; what happens in your
-			account is your responsibility.
+			You sign in with {providerText || 'a supported provider'}. Keep that account secure; what
+			happens in your account is your responsibility.
 		</li>
 		<li>
 			You can delete your account yourself on <a href={resolve('/(app)/account')}

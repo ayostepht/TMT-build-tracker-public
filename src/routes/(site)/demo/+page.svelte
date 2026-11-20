@@ -1,9 +1,11 @@
 <script lang="ts">
+	import { providerPhrase } from '#lib/sign-in-providers.ts';
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
+	const providerText = $derived(providerPhrase(data.signInProviders));
 	let busy = $state(false);
 	const isBusy = $derived(data.busy || form?.busy === true);
 </script>
@@ -86,7 +88,8 @@
 				</button>
 			</form>
 			<p class="demo-fine">
-				Or <a href={resolve('/login')}>sign in</a> with Google, GitHub or Discord to keep your own builds.
+				Or <a href={resolve('/login')}>sign in</a>{providerText ? ` with ${providerText}` : ''} to keep
+				your own builds.
 			</p>
 		{/if}
 	</section>
