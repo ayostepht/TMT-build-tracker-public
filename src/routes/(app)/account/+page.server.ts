@@ -19,7 +19,8 @@ const freshSession = (session: { createdAt: Date } | null) =>
 	!!session && Date.now() - new Date(session.createdAt).getTime() < FRESH_SESSION_MS;
 
 export const load: PageServerLoad = async ({ locals }) => {
-	const u = locals.user!;
+	if (!locals.user) redirect(303, '/login');
+	const u = locals.user;
 	// A demo has no account to manage: it ends on its own (the banner says when) or at sign-out.
 	if (isDemoUser(u as { id: string; isDemo?: boolean })) redirect(303, '/workspace');
 	const db = getDb();

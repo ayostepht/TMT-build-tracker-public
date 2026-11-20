@@ -18,6 +18,7 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 
 export const actions: Actions = {
 	default: async ({ request, locals }) => {
+		if (!locals.user) return fail(401, { error: 'Sign in to continue' });
 		const f = await request.formData();
 		const s = (k: string) => String(f.get(k) ?? '').trim() || null;
 		const db = getDb();
@@ -34,7 +35,7 @@ export const actions: Actions = {
 					hospital: s('hospital'),
 					setup: true
 				},
-				locals.user!.id
+				locals.user.id
 			);
 		} catch (e) {
 			if (e instanceof ApiError) return fail(e.status, { error: e.message });

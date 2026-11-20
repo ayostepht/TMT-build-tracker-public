@@ -9,9 +9,10 @@ import { createTeamWithSlug } from '#lib/server/teams.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
-	const email = locals.user!.email.toLowerCase();
+	if (!locals.user) redirect(303, '/login');
+	const email = locals.user.email.toLowerCase();
 	// Only a provider-verified email (never the demo) may see or accept invitations.
-	if (!mayUseInvitations(locals.user!)) return { invitations: [] };
+	if (!mayUseInvitations(locals.user)) return { invitations: [] };
 	const invitations = (
 		await getDb()
 			.select({
