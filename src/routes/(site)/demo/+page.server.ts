@@ -5,7 +5,7 @@ import { DemoBusyError, DemoRateError, startDemo } from '#lib/server/demo/index.
 import { getDb } from '#lib/server/db/index.ts';
 import { liveDemoCount } from '#lib/server/demo/cleanup.ts';
 import { clientAddress } from '#lib/server/client-ip.ts';
-import { verifyTurnstile, turnstileMessage } from '#lib/server/turnstile.ts';
+import { verifyTurnstile, turnstileMessage, TURNSTILE_DEMO_ACTION } from '#lib/server/turnstile.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, setHeaders }) => {
@@ -17,6 +17,7 @@ export const load: PageServerLoad = async ({ locals, setHeaders }) => {
 		inDemo: !!locals.user,
 		hours: Math.round(cfg.ttlMs / 3_600_000),
 		turnstileSiteKey: turnstileConfig()?.siteKey ?? null,
+		turnstileAction: TURNSTILE_DEMO_ACTION,
 		busy: (await liveDemoCount(getDb())) >= cfg.maxLive
 	};
 };
@@ -38,7 +39,7 @@ export const actions: Actions = {
 			const result = await verifyTurnstile(
 				form.get('cf-turnstile-response'),
 				clientAddress(request.headers, getClientAddress),
-				{ secretKey: turnstile.secretKey }
+				{ secretKey: turnstile.secretKey, expectedAction: TURNSTILE_DEMO_ACTION }
 			);
 			if (result !== 'ok') return fail(403, { error: turnstileMessage(result), challenge: true });
 		}

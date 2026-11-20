@@ -3,7 +3,7 @@
  * see `config.ts`). Verification is fail closed: no token, a rejected token, a network error, a
  * timeout or an unreadable answer all refuse. Neither the secret nor the token is ever logged.
  */
-import { publicUrl, turnstileConfig } from '#lib/server/config.ts';
+import { turnstileConfig, turnstileHostnames } from '#lib/server/config.ts';
 import type { CspSources } from '#lib/server/analytics.ts';
 
 export type PageCspSources = CspSources & { frameSrc?: string[] };
@@ -13,6 +13,9 @@ export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 export const TURNSTILE_TIMEOUT_MS = 5000;
 /** Cloudflare tokens are at most 2048 characters. */
 const MAX_TOKEN = 2048;
+
+/** The action the demo widget is rendered with and the answer must carry. */
+export const TURNSTILE_DEMO_ACTION = 'demo-start';
 
 export type TurnstileResult = 'ok' | 'missing' | 'failed' | 'error';
 
@@ -29,18 +32,9 @@ export function withTurnstile(base: CspSources): Required<PageCspSources> {
 	};
 }
 
-function publicHost(): string | null {
-	try {
-		const u = publicUrl();
-		return u ? new URL(u).hostname : null;
-	} catch {
-		return null;
-	}
-}
-
 /**
  * Checks a widget token with Cloudflare. `missing`: no usable token (nothing was sent);
- * `failed`: Cloudflare said no; `error`: it could not be asked or answered oddly. Only `ok` lets a demo start.
+ * `failed`: Cloudflare said no or the action/hostname is wrong; `error`: it could not be asked, answered oddly, or no hostname is configured. Only `ok` lets a demo start.
  */
 export async function verifyTurnstile(
 	token: unknown,
@@ -49,10 +43,16 @@ export async function verifyTurnstile(
 		secretKey: string;
 		fetch?: typeof fetch;
 		timeoutMs?: number;
-		expectedHost?: string | null;
+		/** Defaults to `TURNSTILE_DEMO_ACTION`. */
+		expectedAction?: string;
+		/** Defaults to `turnstileHostnames()`; an empty list fails closed with `error`. */
+		expectedHosts?: string[];
 	}
 ): Promise<TurnstileResult> {
 	if (typeof token !== 'string' || !token || token.length > MAX_TOKEN) return 'missing';
+	const hosts = (opts.expectedHosts ?? turnstileHostnames()).map((h) => h.toLowerCase());
+	if (hosts.length === 0) return 'error';
+	const action = opts.expectedAction ?? TURNSTILE_DEMO_ACTION;
 	const body = new URLSearchParams({ secret: opts.secretKey, response: token });
 	if (remoteIp) body.set('remoteip', remoteIp);
 	try {
@@ -63,13 +63,16 @@ export async function verifyTurnstile(
 			signal: AbortSignal.timeout(opts.timeoutMs ?? TURNSTILE_TIMEOUT_MS)
 		});
 		if (!res.ok) return 'error';
-		const json = (await res.json()) as { success?: unknown; hostname?: unknown };
+		const json = (await res.json()) as {
+			success?: unknown;
+			action?: unknown;
+			hostname?: unknown;
+		} | null;
 		if (!json || json.success !== true) return 'failed';
-		// A token minted for another site's widget must not pass: compare with PUBLIC_URL when both are known.
-		if (typeof json.hostname === 'string' && json.hostname) {
-			const expected = opts.expectedHost === undefined ? publicHost() : opts.expectedHost;
-			if (expected && json.hostname.toLowerCase() !== expected.toLowerCase()) return 'failed';
-		}
+		// Cloudflare's canonical checks: the token was minted for this action and for one of our hostnames.
+		if (json.action !== action) return 'failed';
+		if (typeof json.hostname !== 'string' || !hosts.includes(json.hostname.toLowerCase()))
+			return 'failed';
 		return 'ok';
 	} catch {
 		return 'error';

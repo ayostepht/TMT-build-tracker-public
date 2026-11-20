@@ -134,11 +134,15 @@ The image already sets `NODE_ENV=production`, `DATA_DIR=/data`, `MAX_3MF_MB=95` 
 
 **Optional bot check for the demo (Cloudflare Turnstile).** Someone rotating many addresses can fill the demo's slots (`DEMO_MAX_LIVE`) and make it show "busy" to everyone. To stop that, add a free Turnstile check to the start button:
 
-1. In Cloudflare, open **Turnstile > Add widget**. Give it a name, add your site's domain (for example `tmt.example.com`) as the hostname, choose the **Managed** widget mode and create it.
-2. Copy the **site key** and the **secret key** into `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` (the secret key goes only in the secret store).
+1. In Cloudflare, open **Turnstile > Add widget**. Give it a name, add every hostname the site is served on (for example `tmt.example.com`) as a hostname, choose the **Managed** widget mode and create it.
+2. Set `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` in your host's secret store (never in git or a chat). The site key is public but is set the same way, so the container is the only place that knows it.
 3. Restart the container. `/demo` now shows the widget, the server checks the answer with Cloudflare before it counts the start against any limit, and refuses the start if the check is missing, wrong or cannot be made. Only `/demo` loads Cloudflare's script (its web address, `https://challenges.cloudflare.com`, is added to that page's content security policy) and the privacy page gets a sentence about it.
 
 Both variables must be set; with only one the server logs a warning at start and the demo runs without the check. Leave both empty to keep it off.
+
+The server accepts an answer only if Cloudflare says it succeeded, the answer's action is `demo-start` (the widget is rendered with it) and its hostname is one the site expects: the host of `PUBLIC_URL`, plus any in the optional `TURNSTILE_HOSTNAMES` (comma separated, exact hostnames). Set `TURNSTILE_HOSTNAMES` only if the site is also served on another host, for example `www`; a redirect from `www` to the main host is simpler. With the check on and no expected hostname the server warns at start and refuses every demo start.
+
+Cloudflare's test keys return the hostname `example.com` and no action, so for a local manual try set `TURNSTILE_HOSTNAMES=example.com` and expect the action check to refuse the start. Only the real keys on the real site test the whole path end to end.
 
 Put them only in your host's secret store (Fly secrets, Railway variables, a `.env` file with permissions `600` that is never committed). Never in the Dockerfile, a compose file you commit or a chat.
 
