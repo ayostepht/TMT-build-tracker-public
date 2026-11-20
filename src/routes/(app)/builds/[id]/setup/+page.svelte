@@ -70,7 +70,18 @@
 				'Choose a MakeGood profile or your printer first: the export needs a bed size and filament slots.';
 			return;
 		}
-		if (typeof to === 'number' && to > (ctx.view.build.setupStep ?? 5)) {
+		if (to === 'done') {
+			// Finishing clears the setup state right away, however the maker leaves afterwards.
+			if (ctx.view.build.setupStep != null) {
+				try {
+					await setSetupStep(ctx.id, null);
+					await ctx.refresh();
+				} catch (e) {
+					error = e instanceof Error ? e.message : 'Could not finish setup';
+					return;
+				}
+			}
+		} else if (to > (ctx.view.build.setupStep ?? 5)) {
 			try {
 				await setSetupStep(ctx.id, to);
 				await ctx.refresh();
@@ -87,8 +98,10 @@
 	async function finish(to: 'overview' | 'stay' = 'overview') {
 		busy = true;
 		try {
-			await setSetupStep(ctx.id, null);
-			await ctx.refresh();
+			if (ctx.view.build.setupStep != null) {
+				await setSetupStep(ctx.id, null);
+				await ctx.refresh();
+			}
 			if (to === 'overview') await goto(resolve('/(app)/builds/[id]', { id: ctx.id }));
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not finish setup';
@@ -313,6 +326,9 @@
 <style>
 	.wizard {
 		display: grid;
+		/* One column that can shrink: an implicit "auto" column grows with its widest child, which
+		   pushed the sticky bar 3 px past a 390 px screen on step 3. */
+		grid-template-columns: minmax(0, 1fr);
 		gap: 16px;
 		min-width: 0;
 	}

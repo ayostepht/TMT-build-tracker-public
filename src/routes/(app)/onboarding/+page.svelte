@@ -32,8 +32,22 @@
 	<form class="card stack" method="post" action="?/create" use:enhance>
 		<h2>Create a team</h2>
 		{#if form?.error}<div class="error" role="alert">{form.error}</div>{/if}
-		<label class="field">Team name<input name="name" required maxlength={TEAM_NAME_MAX} /></label>
-		<button class="btn primary">Create team</button>
+		{#if form?.duplicate}
+			<div class="warn" role="alert" data-testid="team-duplicate">
+				You already have a team called {form.duplicate}. Press the button again to create another
+				one with the same name, or choose a different name.
+			</div>
+			<input type="hidden" name="confirm" value={form.duplicate} />
+		{/if}
+		<label class="field"
+			>Team name<input
+				name="name"
+				required
+				maxlength={TEAM_NAME_MAX}
+				value={form?.duplicate ?? ''}
+			/></label
+		>
+		<button class="btn primary">{form?.duplicate ? 'Create anyway' : 'Create team'}</button>
 	</form>
 
 	<p>
@@ -42,3 +56,14 @@
 		>
 	</p>
 </section>
+
+<style>
+	.warn {
+		background: var(--warn-soft, var(--accent-soft));
+		color: var(--ink);
+		border: 1px solid var(--warn, var(--accent));
+		padding: var(--sp-4) var(--sp-5);
+		border-radius: var(--r-md);
+		font-size: var(--fs-md);
+	}
+</style>

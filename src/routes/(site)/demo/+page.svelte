@@ -91,33 +91,6 @@
 		</p>
 	</header>
 
-	<section class="demo-body" aria-labelledby="demo-gets">
-		<h2 id="demo-gets">What you get</h2>
-		<ul class="demo-list">
-			<li>
-				<b>The tracking view first.</b> Every part and plate with its status: some printed, one plate
-				printing now, a part waiting for a reprint, a couple of assembly steps done.
-			</li>
-			<li>
-				<b>The whole path.</b> Print logs, filament used, the assembly checklist and the hand-off.
-			</li>
-			<li>
-				<b>Colors, if you like.</b> Change the sample chair's colors and arrange parts onto plates.
-			</li>
-		</ul>
-		<h2>What is switched off</h2>
-		<p>
-			No file uploads, no printers, no teams or invitations and no sharing, since there is nobody
-			else in the demo. Everything else works.
-		</p>
-		<h2>What happens to it</h2>
-		<p>
-			The demo is yours alone and is <b>deleted after {data.hours} hours</b>, or when you sign out
-			of it. Nothing moves to a real account: signing in later starts a fresh one. See the
-			<a href={resolve('/(site)/privacy')}>Privacy</a> notes.
-		</p>
-	</section>
-
 	<section class="demo-start" aria-label="Start the demo">
 		{#if isBusy}
 			<div class="demo-busy" role="status" data-testid="demo-busy">
@@ -172,6 +145,33 @@
 				your own builds.
 			</p>
 		{/if}
+	</section>
+
+	<section class="demo-body" aria-labelledby="demo-gets">
+		<h2 id="demo-gets">What you get</h2>
+		<ul class="demo-list">
+			<li>
+				<b>The tracking view first.</b> Every part and plate with its status: some printed, one plate
+				printing now, a part waiting for a reprint, a couple of assembly steps done.
+			</li>
+			<li>
+				<b>The whole path.</b> Print logs, filament used, the assembly checklist and the hand-off.
+			</li>
+			<li>
+				<b>Colors, if you like.</b> Change the sample chair's colors and arrange parts onto plates.
+			</li>
+		</ul>
+		<h2>What is switched off</h2>
+		<p>
+			No file uploads, no printers, no teams or invitations and no sharing, since there is nobody
+			else in the demo. Everything else works.
+		</p>
+		<h2>What happens to it</h2>
+		<p>
+			The demo is yours alone and is <b>deleted after {data.hours} hours</b>, or when you sign out
+			of it. Nothing moves to a real account: signing in later starts a fresh one. See the
+			<a href={resolve('/(site)/privacy')}>Privacy</a> notes.
+		</p>
 	</section>
 </article>
 
@@ -262,5 +262,22 @@
 	.demo-busy {
 		display: grid;
 		gap: var(--sp-4);
+	}
+	@media (max-width: 600px) {
+		.demo-page {
+			padding-top: var(--sp-8);
+			gap: var(--sp-8);
+		}
+		.demo-start {
+			padding: var(--sp-6);
+			justify-items: stretch;
+		}
+		.demo-start form {
+			justify-items: stretch;
+		}
+		.demo-start .btn.go {
+			width: 100%;
+			justify-content: center;
+		}
 	}
 </style>

@@ -8,6 +8,7 @@
 	import AppMark from '#lib/components/AppMark.svelte';
 	import Toast from '#lib/components/Toast.svelte';
 	import DemoBanner from '#lib/components/demo/DemoBanner.svelte';
+	import { FEEDBACK_URL } from '#lib/repo.ts';
 	import { authClient } from '#lib/auth-client.ts';
 	import type { LayoutProps } from './$types';
 
@@ -394,6 +395,10 @@
 			<a href={resolve('/(site)')} data-testid="footer-home">Home page</a>
 			<a href={resolve('/(site)/privacy')} data-testid="footer-privacy">Privacy</a>
 			<a href={resolve('/(site)/terms')} data-testid="footer-terms">Terms</a>
+			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+			<a href={FEEDBACK_URL} target="_blank" rel="noopener noreferrer" data-testid="footer-feedback"
+				>Send feedback</a
+			>
 		</nav>
 	</footer>
 </div>
@@ -814,6 +819,10 @@
 			display: block;
 			width: 100%;
 			max-width: none;
+		}
+		/* The closed select shows one line; the open list wraps a long team name onto two. */
+		.chapter option {
+			white-space: normal;
 		}
 		.create-chapter {
 			display: none;
