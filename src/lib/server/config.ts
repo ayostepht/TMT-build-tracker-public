@@ -282,6 +282,34 @@ export function demoConfig(): DemoConfig {
 	};
 }
 
+export interface TurnstileConfig {
+	siteKey: string;
+	secretKey: string;
+}
+
+/**
+ * Optional Cloudflare Turnstile on starting a demo: on only when both `TURNSTILE_SITE_KEY` and
+ * `TURNSTILE_SECRET_KEY` are set. Half-set counts as off (see `turnstileProblems`).
+ */
+export function turnstileConfig(
+	e: Record<string, string | undefined> = env
+): TurnstileConfig | null {
+	const siteKey = (e.TURNSTILE_SITE_KEY ?? '').trim();
+	const secretKey = (e.TURNSTILE_SECRET_KEY ?? '').trim();
+	return siteKey && secretKey ? { siteKey, secretKey } : null;
+}
+
+/** Boot warnings for a half-set Turnstile configuration (the demo then starts without a challenge). */
+export function turnstileProblems(e: Record<string, string | undefined> = env): string[] {
+	const site = !!(e.TURNSTILE_SITE_KEY ?? '').trim();
+	const secret = !!(e.TURNSTILE_SECRET_KEY ?? '').trim();
+	return site !== secret
+		? [
+				'Set both TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY to turn on the demo challenge; with only one the demo starts without it.'
+			]
+		: [];
+}
+
 export interface TrustedProxy {
 	/** Lower-cased header carrying the client address (adapter-node `ADDRESS_HEADER`). */
 	header: string;

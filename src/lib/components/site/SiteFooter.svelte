@@ -26,8 +26,8 @@
 			<a href={REPO_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
 		</nav>
 		<p class="site-foot__cookie">
-			We only use a sign-in cookie. Analytics are cookieless. <a href={resolve('/(site)/privacy')}
-				>Details</a
+			This site only sets a sign-in cookie. Analytics are cookieless. <a
+				href={resolve('/(site)/privacy')}>Details</a
 			>
 		</p>
 	</div>

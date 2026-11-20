@@ -31,6 +31,20 @@ async function shots(page: Page, name: string) {
 	}
 }
 
+test('without Turnstile keys the demo shows no challenge and the privacy page says nothing about one', async ({
+	page
+}) => {
+	await page.goto('/demo');
+	await settled(page);
+	await expect(page.getByTestId('demo-turnstile')).toHaveCount(0);
+	await expect(page.getByTestId('demo-start')).toBeEnabled();
+	expect(await page.content()).not.toContain('challenges.cloudflare.com');
+	const csp = (await page.request.get('/demo')).headers()['content-security-policy'] ?? '';
+	expect(csp).not.toContain('challenges.cloudflare.com');
+	await page.goto('/privacy');
+	await expect(page.getByTestId('privacy-turnstile')).toHaveCount(0);
+});
+
 test('the demo page says what you get and starts a demo with tracking first', async ({ page }) => {
 	await page.goto('/demo');
 	await settled(page);

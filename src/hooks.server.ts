@@ -9,13 +9,20 @@ import {
 	shouldWarnUndeclaredProxy,
 	UNDECLARED_PROXY_WARNING
 } from '#lib/server/client-ip.ts';
-import { bodyLimitWarning, bootProblems, trustedProxy } from '#lib/server/config.ts';
+import {
+	bodyLimitWarning,
+	bootProblems,
+	trustedProxy,
+	turnstileConfig,
+	turnstileProblems
+} from '#lib/server/config.ts';
 import {
 	bodyCapFor,
 	declaredTooLarge,
 	limitRequest,
 	tooLargeResponse
 } from '#lib/server/body-limits.ts';
+import { withTurnstile, type PageCspSources } from '#lib/server/turnstile.ts';
 import { analyticsConfig, analyticsCspSources, analyticsProblems } from '#lib/server/analytics.ts';
 import { securityHeaders, withHeaders } from '#lib/server/security-headers.ts';
 import { writeRateResponse } from '#lib/server/write-rate.ts';
@@ -31,6 +38,7 @@ export const init: ServerInit = async () => {
 		process.exit(1);
 	}
 	for (const p of analyticsProblems()) console.warn(`[tmt] ${p}`);
+	for (const p of turnstileProblems()) console.warn(`[tmt] ${p}`);
 	const warning = bodyLimitWarning();
 	if (warning) console.warn(`[tmt] ${warning}`);
 	await startup();
@@ -112,6 +120,15 @@ const handleLimited = async (
 // Read once: the environment does not change while the server runs.
 const analyticsSources = analyticsCspSources(analyticsConfig());
 
+const turnstileOn = turnstileConfig() !== null;
+
+/** Extra exact origins for the page CSP: analytics everywhere, Turnstile on the demo page only. */
+function pageCspSources(pathname: string) {
+	const sources: PageCspSources =
+		turnstileOn && pathname === '/demo' ? withTurnstile(analyticsSources) : analyticsSources;
+	return sources.scriptSrc.length || sources.frameSrc?.length ? sources : undefined;
+}
+
 export const handle: Handle = async (input) => {
 	if (building) return input.resolve(input.event);
 	const res = await handleRequest(input);
@@ -124,7 +141,7 @@ export const handle: Handle = async (input) => {
 			contentType: res.headers.get('content-type'),
 			hasCsp: res.headers.has('content-security-policy'),
 			existingCsp: res.headers.get('content-security-policy'),
-			extraSources: analyticsSources.scriptSrc.length ? analyticsSources : undefined
+			extraSources: pageCspSources(input.event.url.pathname)
 		})
 	);
 };

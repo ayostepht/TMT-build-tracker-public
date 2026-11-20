@@ -41,6 +41,8 @@ const PRIVATE_URL_PATHS = /^\/invite(\/|$)/;
 export interface CspExtraSources {
 	scriptSrc: string[];
 	connectSrc: string[];
+	/** Optional: exact origins for `frame-src` (Turnstile on /demo). */
+	frameSrc?: string[];
 }
 
 /** An origin that is safe to put in a CSP: `https://host[:port]`, nothing else (no `*`, path, bare scheme or keyword). */
@@ -64,11 +66,16 @@ export function withExtraCspSources(csp: string, extra: CspExtraSources): string
 			directives.push(`${name} ${safe.join(' ')}`);
 			return;
 		}
-		const have = directives[i].split(/\s+/).slice(1);
+		// `'none'` cannot sit beside real sources (browsers ignore it then); the origins replace it.
+		const have = directives[i]
+			.split(/\s+/)
+			.slice(1)
+			.filter((v) => v !== "'none'");
 		directives[i] = [name, ...have, ...safe.filter((o) => !have.includes(o))].join(' ');
 	};
 	add('script-src', extra.scriptSrc);
 	add('connect-src', extra.connectSrc);
+	add('frame-src', extra.frameSrc ?? []);
 	return directives.join('; ');
 }
 

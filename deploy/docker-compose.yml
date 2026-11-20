@@ -48,6 +48,9 @@ services:
       DEMO_PER_IP_PER_HOUR: ${DEMO_PER_IP_PER_HOUR:-}
       DEMO_TTL_HOURS: ${DEMO_TTL_HOURS:-}
       DEMO_BUILDS: ${DEMO_BUILDS:-}
+      # Optional Cloudflare Turnstile on the demo start (both or neither).
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
     volumes:
       # Uploads (photos, 3MF files, converted models). The kit pack is inside the image.
       - tmt-data:/data
