@@ -26,13 +26,18 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   pack); sign-in with Google verified; home page and demo checked. Supabase check after the
   first start: 37 app tables, RLS on everywhere with no policies (the intended lockdown);
   security advisor shows only that informational notice.
+- **Real users since 2026-11-20:** the site was shared with a first few makers. Updates
+  must keep their data: additive, backward-compatible migrations only, a backup and a
+  rehearsal before any migration reaches `main` (rules in `docs/dev/HANDOFF.md`).
 - **Migrations:** one baseline, `drizzle/0000_baseline.sql`, applied to the live database on
   2026-11-19. **Frozen from now on:** schema changes add new migrations; never edit or
   regenerate the baseline. `0001_drop_duplicate_org_slug_index` merged and applied 2026-11-19 (#3). Team creation now retries on a slug conflict.
 
 ## Waiting on the maintainer
 
-- Choose an analytics provider (or leave it off) and set up the database backup schedule.
+- Set up the nightly database backup now that there are real users (`pg_dump` through a
+  `postgres:17` container, kept off the server), and choose an analytics provider (or leave
+  it off).
 - Repository settings for the new repo: branch protection on `main` (required `public-ci`
   checks, no force push), private vulnerability reporting, the `ghcr.io` package visibility,
   Dependabot.
