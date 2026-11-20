@@ -21,37 +21,39 @@ export const load: PageServerLoad = async ({ parent, locals }) => {
 	if (!locals.user || !rows.length) return { builds: rows, landing: { views: [], more: 0 } };
 
 	// Builds with a part on a printer always come first, then the most recently active unfinished
-	// ones. `loadBuildView` applies the same member check as the build page itself.
-	const printingIds = new Set(
-		(
-			await db
-				.select({ id: buildParts.buildId })
-				.from(buildParts)
-				.innerJoin(builds, eq(builds.id, buildParts.buildId))
-				.where(
-					and(
-						eq(builds.organizationId, team.id),
-						eq(builds.kind, 'build'),
-						eq(buildParts.status, 'Printing'),
-						inArray(
-							builds.id,
-							rows.map((r) => r.id)
-						)
+	// ones. `loadBuildView` applies the same member check as the build page itself. The two reads
+	// do not depend on each other, so they run together (each query is a round trip to the database).
+	const [printing, recent] = await Promise.all([
+		db
+			.select({ id: buildParts.buildId })
+			.from(buildParts)
+			.innerJoin(builds, eq(builds.id, buildParts.buildId))
+			.where(
+				and(
+					eq(builds.organizationId, team.id),
+					eq(builds.kind, 'build'),
+					eq(buildParts.status, 'Printing'),
+					inArray(
+						builds.id,
+						rows.map((r) => r.id)
 					)
 				)
-		).map((r) => r.id)
-	);
-	const candidates = (await recentBuilds(db, [team.id], rows.length)).filter(
+			),
+		recentBuilds(db, [team.id], rows.length)
+	]);
+	const printingIds = new Set(printing.map((r) => r.id));
+	const candidates = recent.filter(
 		(b) => printingIds.has(b.id) || (b.setupStep === null && b.total > 0 && b.printed < b.total)
 	);
 	const ordered = [
 		...candidates.filter((b) => printingIds.has(b.id)),
 		...candidates.filter((b) => !printingIds.has(b.id))
 	];
-	const views: BuildView[] = [];
-	for (const b of ordered.slice(0, LANDING_BUILD_CAP)) {
-		const v = await loadBuildView(db, b.id, locals.user.id);
-		if (v) views.push(v);
-	}
+	const userId = locals.user.id;
+	// Side by side, in the same order as `ordered`.
+	const loaded = await Promise.all(
+		ordered.slice(0, LANDING_BUILD_CAP).map((b) => loadBuildView(db, b.id, userId))
+	);
+	const views = loaded.filter((v): v is BuildView => !!v);
 	return { builds: rows, landing: { views, more: Math.max(0, ordered.length - views.length) } };
 };

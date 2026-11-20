@@ -48,6 +48,11 @@ function freeText(v: unknown, field: string, max: number): string | null {
 	return v.trim() || null;
 }
 
+/** Multi-row insert in chunks (well under Postgres' 65535 bind parameters per statement). */
+async function insertRows<T>(rows: T[], run: (chunk: T[]) => PromiseLike<unknown>): Promise<void> {
+	for (let i = 0; i < rows.length; i += 500) await run(rows.slice(i, i + 500));
+}
+
 /** Create a build from a template (and optional color design) in one transaction. Returns the new id. */
 export async function createBuild(
 	db: Db,
@@ -135,33 +140,37 @@ export async function createBuild(
 				.returning({ id: builds.id })
 		);
 
+		// Everything below hangs off the new build id and is independent, so the reads go out together,
+		// then the inserts (multi-row, one statement per table) go out together in the same order as
+		// before: filaments, parts, plates, activity.
+		const [roleRows, partRows, tplPlates] = await Promise.all([
+			tx.select().from(templateFilamentRoles).where(eq(templateFilamentRoles.templateId, tpl.id)),
+			// Rows for every part, active or not, so switching variants keeps any progress.
+			tx
+				.select({ slug: templateParts.slug })
+				.from(templateParts)
+				.where(eq(templateParts.templateId, tpl.id)),
+			layout
+				? Promise.resolve([])
+				: tx.select().from(templatePlates).where(eq(templatePlates.templateId, tpl.id))
+		]);
 		const overrides = new Map((design?.roles ?? []).map((r) => [r.key, r]));
-		for (const r of await tx
-			.select()
-			.from(templateFilamentRoles)
-			.where(eq(templateFilamentRoles.templateId, tpl.id))) {
+		const own = new Set(roleRows.map((r) => r.key));
+		const filaments: (typeof buildFilaments.$inferInsert)[] = roleRows.map((r) => {
 			const o = overrides.get(r.key);
-			await tx.insert(buildFilaments).values({
+			return {
 				buildId: id,
 				roleKey: r.key,
 				name: o?.name ?? r.name,
 				material: o?.material ?? r.material,
 				hex: o?.hex ?? r.hex,
 				spools: r.recommendedSpools
-			});
-		}
+			};
+		});
 		// Colors a design added beyond the kit's own slots.
-		const own = new Set(
-			(
-				await tx
-					.select({ key: templateFilamentRoles.key })
-					.from(templateFilamentRoles)
-					.where(eq(templateFilamentRoles.templateId, tpl.id))
-			).map((r) => r.key)
-		);
 		for (const r of design?.roles ?? []) {
 			if (own.has(r.key)) continue;
-			await tx.insert(buildFilaments).values({
+			filaments.push({
 				buildId: id,
 				roleKey: r.key,
 				name: r.name,
@@ -170,16 +179,8 @@ export async function createBuild(
 				spools: 0
 			});
 		}
-		// Rows for every part, active or not, so switching variants keeps any progress.
-		for (const p of await tx
-			.select({ slug: templateParts.slug })
-			.from(templateParts)
-			.where(eq(templateParts.templateId, tpl.id))) {
-			await tx.insert(buildParts).values({ buildId: id, partSlug: p.slug });
-		}
-		if (layout) {
-			for (const p of layout.plates)
-				await tx.insert(buildPlates).values({
+		const plates: (typeof buildPlates.$inferInsert)[] = layout
+			? layout.plates.map((p) => ({
 					buildId: id,
 					number: p.number,
 					name: p.name,
@@ -188,27 +189,30 @@ export async function createBuild(
 					perPartRuns: p.perPartRuns ?? false,
 					parts: p.parts,
 					source: `layout:${layout.key}`
-				});
-		}
-		for (const p of layout
-			? []
-			: await tx.select().from(templatePlates).where(eq(templatePlates.templateId, tpl.id))) {
-			await tx.insert(buildPlates).values({
+				}))
+			: tplPlates.map((p) => ({
+					buildId: id,
+					number: p.number,
+					name: p.name,
+					estSeconds: p.estSeconds,
+					runs: p.runs,
+					perPartRuns: p.perPartRuns,
+					parts: p.parts
+				}));
+		await Promise.all([
+			insertRows(filaments, (v) => tx.insert(buildFilaments).values(v)),
+			insertRows(
+				partRows.map((p) => ({ buildId: id, partSlug: p.slug })),
+				(v) => tx.insert(buildParts).values(v)
+			),
+			insertRows(plates, (v) => tx.insert(buildPlates).values(v)),
+			tx.insert(activity).values({
 				buildId: id,
-				number: p.number,
-				name: p.name,
-				estSeconds: p.estSeconds,
-				runs: p.runs,
-				perPartRuns: p.perPartRuns,
-				parts: p.parts
-			});
-		}
-		await tx.insert(activity).values({
-			buildId: id,
-			userId,
-			kind: 'build.create',
-			payload: input.kind === 'draft' ? { name, draft: true } : { name }
-		});
+				userId,
+				kind: 'build.create',
+				payload: input.kind === 'draft' ? { name, draft: true } : { name }
+			})
+		]);
 		return id;
 	});
 	// A printer without an explicit layout: plan the plates for it right away.
