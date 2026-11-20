@@ -143,3 +143,27 @@ export function deriveUnits(
 		return { unitsPerPlate: qty, copies: counts.map((c) => c / qty) };
 	return { unitsPerPlate: 1, copies: counts.map((c) => Math.max(1, c)) };
 }
+
+/** Widest brim the arranger reserves room for, mm (a mistyped setting must not eat the bed). */
+export const MAX_BRIM_MM = 20;
+
+/**
+ * Brim width in mm a piece is printed with: the author's object settings (`brim_type` other than
+ * "no_brim" with `brim_width`), else the part's own "10 mm" text (kit seed, the plate legend's brim
+ * chip), else 0. The arranger counts it as part of the piece's footprint.
+ */
+export function pieceBrimMm(
+	piece: Pick<PrintPiece, 'settings' | 'partSettings'> | undefined,
+	partBrimText?: string | null
+): number {
+	const clamp = (n: number) => (Number.isFinite(n) && n > 0 ? Math.min(MAX_BRIM_MM, n) : 0);
+	const s = { ...(piece?.settings ?? {}), ...(piece?.partSettings ?? {}) };
+	if (s.brim_type !== undefined) {
+		if (/^no[_ ]?brim$/i.test(s.brim_type.trim())) return 0;
+		return clamp(parseFloat(s.brim_width ?? ''));
+	}
+	if (s.brim_width !== undefined && clamp(parseFloat(s.brim_width)) > 0)
+		return clamp(parseFloat(s.brim_width));
+	const m = /(\d+(?:[.,]\d+)?)\s*mm/i.exec(partBrimText ?? '');
+	return m ? clamp(parseFloat(m[1].replace(',', '.'))) : 0;
+}

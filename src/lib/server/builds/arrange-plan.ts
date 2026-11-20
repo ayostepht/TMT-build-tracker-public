@@ -16,18 +16,40 @@ import {
 	type ArrangeRole,
 	type ArrangedPlate
 } from '#lib/domain/arrange.ts';
-import type { PrintFootprint } from '#lib/domain/print-footprint.ts';
+import {
+	arrangeFromSource,
+	soloParts,
+	type SourceArrangeResult,
+	type SourceMove,
+	type SourcePlate
+} from '#lib/domain/arrange-source.ts';
+import { pieceBrimMm, type PrintFootprint } from '#lib/domain/print-footprint.ts';
 import type { LearnedTime } from '#lib/domain/time-estimate.ts';
 import type { BuildView } from '#lib/domain/types.ts';
+import { layoutBed } from '#lib/printers/layout-bed.ts';
 import { effectiveKeepOut } from '#lib/printers/printer.ts';
+import { asc } from 'drizzle-orm';
 import { first, type DbOrTx } from '../db';
-import { buildPlates, builds, templatePlateLayouts, templatePrintGeometry } from '../db/schema';
+import {
+	buildPlates,
+	builds,
+	templatePlateLayouts,
+	templatePlates,
+	templatePrintGeometry
+} from '../db/schema';
 import { gramsSourceOf, loadBuildView } from './view';
 import { estimateArrangedPlates, loadTimeModel } from './time-model';
 import { ensureSilhouettes } from '../print-geometry/store';
 
 export const ARRANGED_LAYOUT = 'arranged';
 export const ARRANGED_SOURCE = 'arranged';
+
+/**
+ * Version of the planner that wrote an arrangement. 2 = the kit's layout comes first (`arrangeFromSource`).
+ * Arrangements stored without it were planned by the plain arranger: they are left alone, and their
+ * "stale" check still compares against that planner (`planArrangement(..., 'legacy')`).
+ */
+export const PLANNER_VERSION = 2;
 
 /** Edge margin stored by builds planned before the default became 1 mm; read as the new default. */
 export const OLD_DEFAULT_MARGIN = 5;
@@ -111,6 +133,7 @@ function arrangeInputFor(
 			unsized.push({ slug: part.slug, name: part.name, role: part.role, grams: part.bomGrams });
 			continue;
 		}
+		const brims = fp.pieces.map((pc) => pieceBrimMm(pc, part.brim));
 		const bits: string[] = [];
 		if (part.variantGroup) {
 			const g = view.variantGroups.find((x) => x.key === part.variantGroup);
@@ -129,7 +152,9 @@ function arrangeInputFor(
 			units,
 			grams,
 			group: part.symmetryGroup ? `sym:${part.symmetryGroup}` : null,
-			hint: bits.join(' ') || null
+			hint: bits.join(' ') || null,
+			baseRole: part.defaultRole,
+			...(brims.some((b) => b > 0) ? { brims } : {})
 		});
 	}
 	return {
@@ -151,35 +176,177 @@ function arrangeInputFor(
 	};
 }
 
+/**
+ * The kit's own plate layout for a build, as the arranger's source (see `domain/arrange-source.ts`):
+ * `plates` null = no layout fits the build's bed (the arranger runs on its own, still keeping the
+ * parts that are alone on a plate in the kit alone: `solo`).
+ */
+export interface KitSource {
+	plates: SourcePlate[] | null;
+	/** Parts that are alone on their plate in the nearest kit layout (used when `plates` is null). */
+	solo: string[];
+	/** Layout key ('xpa', 'h2d', ..., 'upload', 'template') or null. */
+	layout: string | null;
+	/** Name for notes: "Bambu X1 / P1 / A1" or "your uploaded file". */
+	name: string;
+}
+
+const SAME_BED = 0.5;
+
+/**
+ * Pick the source layout for a build: the user's uploaded file when the plates are that; else the layout
+ * the build was set to (a MakeGood profile), else the kit's layout whose bed is the largest one the
+ * build's printer still holds (the default layout for a 256 bed, the H series one for a big bed). A
+ * layout made for a bigger bed than the printer's is no source (rule E). Null without a printer.
+ */
+export async function loadKitSource(db: DbOrTx, view: BuildView): Promise<KitSource | null> {
+	const p = view.printer;
+	if (!p) return null;
+	const active = new Set(view.parts.map((x) => x.slug));
+	const asSource = (
+		plates: { number: number; name: string; runs: number; parts: string[] }[]
+	): SourcePlate[] =>
+		plates
+			.map((x) => ({
+				number: x.number,
+				name: x.name,
+				runs: x.runs,
+				parts: x.parts.filter((s) => active.has(s))
+			}))
+			.filter((x) => x.parts.length)
+			.sort((a, b) => a.number - b.number);
+	if (view.plates.length && view.plates.every((x) => x.source.startsWith('upload:')))
+		return {
+			plates: asSource(view.plates),
+			solo: [],
+			layout: 'upload',
+			name: 'your uploaded file'
+		};
+	const b = await first(
+		db.select({ layout: builds.plateLayout }).from(builds).where(eq(builds.id, view.build.id))
+	);
+	const rows = await db
+		.select()
+		.from(templatePlateLayouts)
+		.where(eq(templatePlateLayouts.templateId, view.build.templateId))
+		.orderBy(asc(templatePlateLayouts.sort));
+	const layouts = rows.map((l) => ({
+		key: l.key,
+		name: l.name,
+		isDefault: l.isDefault,
+		bed: layoutBed(l.key),
+		plates: l.plates
+	}));
+	if (!layouts.length) {
+		const tpl = await db
+			.select()
+			.from(templatePlates)
+			.where(eq(templatePlates.templateId, view.build.templateId))
+			.orderBy(asc(templatePlates.number));
+		return {
+			plates: tpl.length ? asSource(tpl) : null,
+			solo: [],
+			layout: tpl.length ? 'template' : null,
+			name: 'the kit layout'
+		};
+	}
+	const fits = (l: (typeof layouts)[number]) =>
+		!l.bed || (l.bed.bedX <= p.bedX + SAME_BED && l.bed.bedY <= p.bedY + SAME_BED);
+	const bedArea = (l: (typeof layouts)[number]) => (l.bed ? l.bed.bedX * l.bed.bedY : 0);
+	const candidates = layouts.filter(fits);
+	const chosen =
+		candidates.find((l) => l.key === b?.layout) ??
+		[...candidates].sort(
+			(a, c) => bedArea(c) - bedArea(a) || Number(c.isDefault) - Number(a.isDefault)
+		)[0];
+	if (chosen)
+		return { plates: asSource(chosen.plates), solo: [], layout: chosen.key, name: chosen.name };
+	// no layout for this bed: the nearest one still says which parts stand alone
+	const target = p.bedX * p.bedY;
+	const near = [...layouts].sort(
+		(a, c) =>
+			Math.abs(bedArea(a) - target) - Math.abs(bedArea(c) - target) ||
+			Number(c.isDefault) - Number(a.isDefault)
+	)[0];
+	return { plates: null, solo: soloParts(asSource(near.plates)), layout: null, name: near.name };
+}
+
+export interface Plan {
+	result: ArrangeResult;
+	/** Slugs without a footprint. */
+	unsized: string[];
+	/** The build's print template, as time model input (per-part seconds and grams from the user's slice). */
+	learned?: Map<string, LearnedTime>;
+	/** Set when the plan follows a source layout (the kit's or the maker's file). */
+	source?: { layout: string | null; name: string; kept: number[]; moves: SourceMove[] };
+}
+
+/**
+ * Plan a build's plates. With a `kit` source the layout comes first (`arrangeFromSource`); without
+ * one the arranger runs on its own but keeps kit-solo parts alone. `'legacy'` is the plain arranger
+ * as it was before (no source, no brims): only for comparing with arrangements stored back then.
+ */
 export function planArrangement(
 	view: BuildView,
 	footprints: Map<string, PrintFootprint>,
 	layoutHint: string | null = null,
-	options?: ArrangeOptions
+	options?: ArrangeOptions,
+	kit: KitSource | 'legacy' | null = null
 ): Plan | null {
 	const input = arrangeInputFor(view, footprints, layoutHint, options);
 	if (!input) return null;
+	const unsized = (input.unsized ?? []).map((u) => u.slug);
+	if (kit === 'legacy') {
+		const plain = {
+			...input,
+			parts: input.parts.map((p) => ({ ...p, brims: undefined }))
+		};
+		return { result: arrange(plain), unsized, learned: learnedOf(view) };
+	}
+	if (kit?.plates) {
+		const r: SourceArrangeResult = arrangeFromSource(input, kit.plates);
+		return {
+			result: { plates: r.plates, warnings: r.warnings },
+			unsized,
+			learned: learnedOf(view),
+			source: { layout: kit.layout, name: kit.name, kept: r.kept, moves: r.moves }
+		};
+	}
 	return {
-		result: arrange(input),
-		unsized: (input.unsized ?? []).map((u) => u.slug),
+		result: arrange({
+			...input,
+			options: { ...input.options, solo: kit?.solo ?? [] }
+		}),
+		unsized,
 		learned: learnedOf(view)
 	};
 }
 
+/** `planArrangement` with the kit's source layout looked up for the build. */
+export async function planForBuild(
+	db: DbOrTx,
+	view: BuildView,
+	footprints: Map<string, PrintFootprint>,
+	layoutHint: string | null = null
+): Promise<Plan | null> {
+	return planArrangement(view, footprints, layoutHint, undefined, await loadKitSource(db, view));
+}
+
 export interface LayoutPlacement {
-	/** The build's plates (same numbers, names, runs and parts as the Print tab), with positions. */
+	/** The build's plates (the Print tab's numbers, names, runs and parts), with positions; plates that had to give up parts or bed room are followed by new ones. */
 	plates: ArrangedPlate[];
 	/** Plates whose parts needed more than one bed here: the number, name and how many extra plates were added. */
 	overflow: { number: number; name: string; extra: number }[];
+	/** Parts that are not on their source plate any more, and why. */
+	moves: SourceMove[];
 }
 
 /**
- * Place the parts of each of the build's existing plates (a MakeGood layout carries membership
- * only, no positions) flat on the bed, one plate at a time: the plate numbers, names, runs and
- * part grouping stay exactly as on the Print tab. Only flat Z rotations (see `arrange.ts`). A
- * plate whose parts do not fit one bed (other bed keep-outs, a recolor, parts bigger than the
- * bed) keeps its own number for the first bed; the rest goes to extra plates numbered after the
- * last, listed in `overflow`. Null without a printer.
+ * Place the build's existing plates (a MakeGood layout or the maker's file carries membership only, no
+ * positions) flat on the bed: the plate numbers, names and part grouping stay exactly as on the Print
+ * tab (`arrangeFromSource`). Only a part whose filament no longer matches its plate, or whose plate
+ * does not fit this bed, leaves it, for a new plate numbered after the last. Only flat Z rotations
+ * (see `arrange.ts`). Null without a printer.
  */
 export function placeOnPlates(
 	view: BuildView,
@@ -188,41 +355,27 @@ export function placeOnPlates(
 ): LayoutPlacement | null {
 	const input = arrangeInputFor(view, footprints, layoutHint);
 	if (!input) return null;
-	const bySlug = new Map(input.parts.map((p) => [p.slug, p]));
-	const out: ArrangedPlate[] = [];
-	const extras: { from: ArrangedPlate; src: number }[] = [];
-	const overflow: LayoutPlacement['overflow'] = [];
-	const roleOf = new Map(view.parts.map((p) => [p.slug, p.role]));
-	for (const pl of view.plates) {
-		const parts = pl.parts.map((s) => bySlug.get(s)).filter((p) => !!p);
-		if (!parts.length) {
-			// no part of this plate has a footprint: keep the plate so the export names the missing geometry
-			out.push({
-				number: pl.number,
-				name: pl.name,
-				items: [],
-				parts: pl.parts,
-				roles: [...new Set(pl.parts.map((s) => roleOf.get(s)).filter((r): r is string => !!r))],
-				runs: pl.runs,
-				estGrams: {},
-				utilisation: 0,
-				bed: { x: input.printer.bedX, y: input.printer.bedY, margin: input.printer.margin }
-			});
-			continue;
-		}
-		const r = arrange({ ...input, parts, unsized: [] });
-		const [first, ...rest] = r.plates;
-		if (!first) continue;
-		out.push({ ...first, number: pl.number, name: pl.name, runs: pl.runs });
-		if (rest.length) overflow.push({ number: pl.number, name: pl.name, extra: rest.length });
-		for (const x of rest) extras.push({ from: x, src: pl.number });
-	}
-	let next = Math.max(0, ...view.plates.map((p) => p.number)) + 1;
-	for (const { from, src } of extras) {
-		const base = view.plates.find((p) => p.number === src)!;
-		out.push({ ...from, number: next++, name: `${base.name} (continued)`, runs: base.runs });
-	}
-	return { plates: out.sort((a, b) => a.number - b.number), overflow };
+	const source: SourcePlate[] = view.plates.map((pl) => ({
+		number: pl.number,
+		name: pl.name,
+		runs: pl.runs,
+		parts: pl.parts
+	}));
+	const r = arrangeFromSource(input, source);
+	const byNumber = new Map(view.plates.map((p) => [p.number, p]));
+	const extra = new Map<number, Set<number>>();
+	for (const m of r.moves)
+		if (m.reason === 'bed' && m.from != null)
+			extra.set(m.from, (extra.get(m.from) ?? new Set()).add(m.to));
+	return {
+		plates: r.plates,
+		overflow: [...extra].map(([number, to]) => ({
+			number,
+			name: byNumber.get(number)?.name ?? `Plate ${number}`,
+			extra: to.size
+		})),
+		moves: r.moves
+	};
 }
 
 /** Stable identity of a plate set: what is on each plate in which color, no positions. */
@@ -318,7 +471,7 @@ export async function writePlan(tx: DbOrTx, buildId: string, plan: Plan): Promis
 			parts: pl.parts,
 			...carryManuals(manualFor(pl.number, pl.parts)),
 			source: ARRANGED_SOURCE,
-			arrangement: pl
+			arrangement: { ...pl, v: PLANNER_VERSION }
 		});
 	await tx.update(builds).set({ plateLayout: ARRANGED_LAYOUT }).where(eq(builds.id, buildId));
 	return plan.result.plates.length;
@@ -349,7 +502,13 @@ export async function autoRearrange(
 	// live printer job and under Printing parts. The plates go stale instead (banner offers a
 	// deliberate "Re-arrange"). Issue #56.
 	if (view.started.started) return false;
-	const plan = planArrangement(view, footprints, layoutHint);
+	const plan = planArrangement(
+		view,
+		footprints,
+		layoutHint,
+		undefined,
+		await loadKitSource(tx, view)
+	);
 	if (!plan) return false;
 	await writePlan(tx, buildId, plan);
 	return true;

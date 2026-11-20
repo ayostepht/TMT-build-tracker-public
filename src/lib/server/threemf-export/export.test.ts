@@ -12,6 +12,7 @@ import { ApiError } from '../access';
 import { planArrangement } from '../builds/arrange-plan';
 import { createBuild } from '../builds/create';
 import { setPrinter } from '../builds/actions';
+import { updateBuildDesign } from '../designs/mutate';
 import { arrangeForPrinter, buildArrangement, setPlateLayout } from '../builds/plates';
 import { loadBuildView } from '../builds/view';
 import { first, type Db } from '../db';
@@ -762,6 +763,74 @@ describe('exportBuild3mf with a database', () => {
 			expect(note?.message).toMatch(/Plate 1 \(/);
 			expect(p.plates.some((pl) => pl.number > last)).toBe(true);
 			expect(p.plates.some((pl) => pl.number === 1)).toBe(true);
+		});
+	});
+
+	describe('export follows the plates the app shows', () => {
+		const GEOM = Object.keys(SHAPES);
+		const slugsOf = (p: Awaited<ReturnType<typeof prepareExport>>['plan']) =>
+			p.plates.map((pl) => ({
+				number: pl.number,
+				slugs: [
+					...new Set(pl.items.map((i) => p.objects.find((o) => o.id === i.objectId)!.slug))
+				].sort()
+			}));
+
+		it('an arranged build: the same plates, numbers and parts as the Print tab', async () => {
+			const id = await mk();
+			await setPrinter(db, id, 'owner', { printer: cc });
+			await importSynthetic();
+			await arrangeForPrinter(db, id, 'owner');
+			const view = (await loadBuildView(db, id, 'owner'))!;
+			expect(view.plates.every((p) => p.source === 'arranged')).toBe(true);
+			const { plan: p } = await prepareExport(db, id, 'owner', { flavor: 'orca' });
+			expect(p.warnings.some((w) => /fresh arrangement/.test(w.message))).toBe(false);
+			const got = slugsOf(p);
+			expect(got.length).toBeGreaterThan(0);
+			for (const g of got) {
+				const shown = view.plates.find((pl) => pl.number === g.number)!;
+				expect(shown, `plate ${g.number} is on the Print tab`).toBeTruthy();
+				expect(g.slugs).toEqual(shown.parts.filter((s) => GEOM.includes(s)).sort());
+			}
+		});
+
+		it('a chosen layout nobody recolored: every exported plate is the Print tab plate', async () => {
+			const id = await mk();
+			await setPrinter(db, id, 'owner', { printer: cc });
+			await setPlateLayout(db, id, 'owner', { key: 'xpa' });
+			await importSynthetic();
+			const view = (await loadBuildView(db, id, 'owner'))!;
+			const { plan: p } = await prepareExport(db, id, 'owner', { flavor: 'orca' });
+			for (const g of slugsOf(p)) {
+				const shown = view.plates.find((pl) => pl.number === g.number)!;
+				expect(g.slugs).toEqual(shown.parts.filter((s) => GEOM.includes(s)).sort());
+			}
+		});
+
+		it('a recolored part leaves its kit plate for a new one; the rest of the plate stays', async () => {
+			const id = await mk();
+			await setPrinter(db, id, 'owner', { printer: cc });
+			await setPlateLayout(db, id, 'owner', { key: 'xpa' });
+			await db
+				.update(buildPlates)
+				.set({ parts: ['wing-left', 'push-pin'] })
+				.where(and(eq(buildPlates.buildId, id), eq(buildPlates.number, 6)));
+			await importSynthetic();
+			await updateBuildDesign(db, id, 'owner', { partRoles: { 'push-pin': 'primary' } });
+			const view = (await loadBuildView(db, id, 'owner'))!;
+			const last = Math.max(...view.plates.map((pl) => pl.number));
+			const { plan: p } = await prepareExport(db, id, 'owner', { flavor: 'orca' });
+			const got = slugsOf(p);
+			expect(got.find((g) => g.number === 6)!.slugs).toEqual(['wing-left']);
+			const pin = got.find((g) => g.slugs.includes('push-pin'))!;
+			expect(pin.number).toBeGreaterThan(last);
+			const note = p.warnings.find((w) => w.code === 'arrangement' && w.plate === 6);
+			expect(note?.message).toMatch(/no longer shares a filament/);
+			// single-part plates are untouched
+			for (const g of got.filter((x) => x.number !== 6 && x.number <= last)) {
+				const shown = view.plates.find((pl) => pl.number === g.number)!;
+				expect(g.slugs).toEqual(shown.parts.filter((s) => GEOM.includes(s)).sort());
+			}
 		});
 	});
 

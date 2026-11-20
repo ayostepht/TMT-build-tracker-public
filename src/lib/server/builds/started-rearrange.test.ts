@@ -56,6 +56,11 @@ describe('design changes on a started build keep the plates', () => {
 		expect((await view(id)).started.started).toBe(false);
 		const before = await plates(id);
 		await move(id);
+		// wing-left is alone on its plate in the kit's layout: a new color changes nothing about the plates
+		expect(await plates(id)).toBe(before);
+		expect((await buildArrangement(db, id, 'owner')).stale).toBe(false);
+		// seat-back-top shares its plate with the bottom half: a different color moves it to a plate of its own
+		await updateBuildDesign(db, id, 'owner', { partRoles: { 'seat-back-top': 'accent' } });
 		expect(await plates(id)).not.toBe(before);
 		expect((await buildArrangement(db, id, 'owner')).stale).toBe(false);
 	});
