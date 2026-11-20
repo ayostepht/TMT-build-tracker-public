@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SocialMeta from '#lib/components/site/SocialMeta.svelte';
 	import { resolve } from '$app/paths';
 	import LegalPage from '#lib/components/LegalPage.svelte';
 	import { ISSUES_URL } from '#lib/repo.ts';
@@ -9,7 +10,10 @@
 	const providerText = $derived(providerPhrase(data.signInProviders));
 </script>
 
-<svelte:head><title>Privacy · TMT Build Tracker</title></svelte:head>
+<SocialMeta
+	title="Privacy · TMT Build Tracker"
+	description="What TMT Build Tracker stores, which cookies it sets and what its analytics sees."
+/>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -->
 <LegalPage title="Privacy" updated="2026-11-19" signedIn={data.signedIn} other="terms">
