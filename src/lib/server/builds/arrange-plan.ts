@@ -6,6 +6,7 @@
  * Kept free of `mutateBuild` so it can be called from inside it (automatic
  * re-arrange after a color / variant / printer change).
  */
+import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import {
 	arrange,
@@ -291,6 +292,42 @@ export interface Plan {
 }
 
 /**
+ * Fresh plans of the last requests, so reading the same build twice (the arrangement banner, the export,
+ * the Files tab refresh) plans once. Holds the plan result only, nothing about the build or the user, and
+ * is keyed by a digest of EVERYTHING the plan depends on (`planKey`), never by build id: a change of
+ * colour, variant, quantity, printer, bed options, footprint or kit layout is a different key, so a plan
+ * can only be returned for the exact input it was made from. Bounded (least recently used goes first);
+ * entries are cloned in and out, so a caller that edits a plan cannot change what the next one gets.
+ */
+const PLAN_CACHE_MAX = 50;
+const planCache = new Map<string, Plan>();
+export const planCacheStats = { hits: 0, misses: 0 };
+export const clearPlanCache = () => {
+	planCache.clear();
+	planCacheStats.hits = 0;
+	planCacheStats.misses = 0;
+};
+
+/**
+ * Digest of everything `planArrangement` computes from: planner version and its rules, the kit source
+ * (plates, solo parts, layout) or 'legacy' / none, and the whole arranger input (parts with roles,
+ * quantities, grams, brims and hints, the footprints with their outlines, filament roles, printer, bed
+ * margin, spacing, keep-outs, options, unsized parts) plus the learned per-part data. Anything that
+ * could not be written out exactly (a function in `options`) is the caller's reason not to cache.
+ */
+function planKey(
+	input: ArrangeInput,
+	learned: Map<string, LearnedTime>,
+	kit: KitSource | 'legacy' | null,
+	version: number
+): string {
+	const k = !kit || kit === 'legacy' ? kit : { ...kit };
+	return createHash('sha256')
+		.update(JSON.stringify([version, rulesFor(version), k, input, [...learned]]))
+		.digest('hex');
+}
+
+/**
  * Plan a build's plates. With a `kit` source the layout comes first (`arrangeFromSource`); without
  * one the arranger runs on its own but keeps kit-solo parts alone. `'legacy'` is the plain arranger
  * as it was before (no source, no brims): only for comparing with arrangements stored back then.
@@ -305,6 +342,30 @@ export function planArrangement(
 ): Plan | null {
 	const input = arrangeInputFor(view, footprints, layoutHint, options);
 	if (!input) return null;
+	// explicit options (tests, may hold functions) are never cached
+	const key = options === undefined ? planKey(input, learnedOf(view), kit, version) : null;
+	const hit = key ? planCache.get(key) : undefined;
+	if (key && hit) {
+		planCache.delete(key); // most recently used goes last
+		planCache.set(key, hit);
+		planCacheStats.hits++;
+		return structuredClone(hit);
+	}
+	const plan = computePlan(view, input, kit, version);
+	if (key) {
+		planCacheStats.misses++;
+		planCache.set(key, structuredClone(plan));
+		if (planCache.size > PLAN_CACHE_MAX) planCache.delete(planCache.keys().next().value!);
+	}
+	return plan;
+}
+
+function computePlan(
+	view: BuildView,
+	input: ArrangeInput,
+	kit: KitSource | 'legacy' | null,
+	version: number
+): Plan {
 	const unsized = (input.unsized ?? []).map((u) => u.slug);
 	if (kit === 'legacy') {
 		const plain = {
@@ -422,23 +483,35 @@ export interface PlateManuals {
 
 /**
  * Manual plate times and typed plate grams keyed for carrying over when plates are replaced: a new
- * plate keeps the old plate's manual time (and typed grams, source 'user') only when it has the same
- * number and the same set of parts. Grams that came from a file or a printer job are not carried:
+ * plate keeps the old plate's manual time (and typed grams, source 'user') when it has the same
+ * number and the same set of parts. A plate that was renumbered (the kit numbers its plates its own way,
+ * an arrangement made before that numbered them 1, 2, 3...) still keeps them when it holds exactly the
+ * same parts, is printed as often and is of the same kind (`shape`: runs, per-part runs); that match is
+ * used once and only when it is unambiguous
+ * (an exact number + parts match elsewhere in `planned` always has priority). Grams that came from a file or a printer job are not carried:
  * the new plates have their own source.
  */
 export async function manualTimes(
 	tx: DbOrTx,
-	buildId: string
-): Promise<(number: number, parts: string[]) => PlateManuals> {
+	buildId: string,
+	/** The plates about to be written: each exact match is reserved before any renumbered match, so call order cannot matter. */
+	planned: { number: number; parts: string[] }[]
+): Promise<
+	(number: number, parts: string[], shape?: { runs: number; perPartRuns?: boolean }) => PlateManuals
+> {
 	const old = await tx.select().from(buildPlates).where(eq(buildPlates.buildId, buildId));
-	const key = (n: number, parts: string[]) => `${n}:${[...parts].sort().join(',')}`;
+	const setKey = (parts: string[]) => [...parts].sort().join(',');
+	const key = (n: number, parts: string[]) => `${n}:${setKey(parts)}`;
+	const shapeKey = (parts: string[], runs: number, perPart?: boolean) =>
+		`${setKey(parts)}|${runs}|${perPart ? 1 : 0}`;
 	const m = new Map<string, PlateManuals>();
+	const bySet = new Map<string, { k: string; h: PlateManuals }[]>();
 	for (const o of old) {
 		const typed =
 			gramsSourceOf(o, undefined, false) === 'user' &&
 			((o.slicerGrams ?? 0) > 0 || Object.values(o.slicerByPart).some((v) => v > 0));
 		if (!o.manualEstSeconds && !typed) continue;
-		m.set(key(o.number, o.parts), {
+		const h: PlateManuals = {
 			manualEstSeconds: o.manualEstSeconds ?? null,
 			manualEstSource: o.manualEstSeconds ? (o.manualEstSource ?? 'user') : null,
 			typedGrams: typed
@@ -448,10 +521,29 @@ export async function manualTimes(
 						slicerGramsSource: 'user'
 					}
 				: undefined
-		});
+		};
+		const k = key(o.number, o.parts);
+		m.set(k, h);
+		const sk = shapeKey(o.parts, o.runs, o.perPartRuns);
+		bySet.set(sk, [...(bySet.get(sk) ?? []), { k, h }]);
 	}
-	return (number, parts) =>
-		m.get(key(number, parts)) ?? { manualEstSeconds: null, manualEstSource: null };
+	// an exact match belongs to its plate whatever order the plates are asked in: a renumbered match never takes it
+	const reserved = new Set(planned.map((p) => key(p.number, p.parts)).filter((k) => m.has(k)));
+	const taken = new Set<string>(); // each stored value goes to one new plate only
+	return (number, parts, shape) => {
+		const k = key(number, parts);
+		const exact = m.get(k);
+		if (exact && !taken.has(k)) {
+			taken.add(k);
+			return exact;
+		}
+		const same = shape ? (bySet.get(shapeKey(parts, shape.runs, shape.perPartRuns)) ?? []) : [];
+		if (same.length === 1 && !reserved.has(same[0].k) && !taken.has(same[0].k)) {
+			taken.add(same[0].k);
+			return same[0].h;
+		}
+		return { manualEstSeconds: null, manualEstSource: null };
+	};
 }
 
 /** Column values to spread into an insert: the carried time, and typed grams when there are any. */
@@ -483,7 +575,11 @@ export async function writePlan(
 				}))
 			)
 		: null;
-	const manualFor = await manualTimes(tx, buildId);
+	const manualFor = await manualTimes(
+		tx,
+		buildId,
+		plan.result.plates.map((pl) => ({ number: pl.number, parts: pl.parts }))
+	);
 	await tx.delete(buildPlates).where(eq(buildPlates.buildId, buildId));
 	for (const pl of plan.result.plates)
 		await tx.insert(buildPlates).values({
@@ -494,7 +590,9 @@ export async function writePlan(
 			runs: pl.runs,
 			perPartRuns: !!pl.perPartRuns,
 			parts: pl.parts,
-			...carryManuals(manualFor(pl.number, pl.parts)),
+			...carryManuals(
+				manualFor(pl.number, pl.parts, { runs: pl.runs, perPartRuns: !!pl.perPartRuns })
+			),
 			source: ARRANGED_SOURCE,
 			arrangement: { ...pl, v: version }
 		});
