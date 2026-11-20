@@ -48,6 +48,8 @@ export interface DesignSummary {
 	authorName: string | null;
 	/** Listed in the shared gallery. */
 	shared: boolean;
+	/** When a site admin removed it from the gallery (blocks sharing); set for its author only, null for everyone else. */
+	hiddenFromGalleryAt: string | null;
 	/** The gallery design this was copied from, when it was. */
 	copiedFromId: string | null;
 	mine: boolean;
@@ -178,6 +180,10 @@ async function summarize(db: DbOrTx, rows: DesignRow[], userId: string): Promise
 						: null
 					: publicSharerName(d.authorUserId ? authors.get(d.authorUserId) : null),
 				shared: d.sharedAt !== null,
+				hiddenFromGalleryAt:
+					d.authorUserId === userId && d.hiddenFromGalleryAt
+						? d.hiddenFromGalleryAt.toISOString()
+						: null,
 				copiedFromId: d.copiedFromDesignId,
 				mine: d.authorUserId === userId,
 				createdAt: d.createdAt.toISOString(),

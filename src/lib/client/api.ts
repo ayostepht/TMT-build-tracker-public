@@ -266,6 +266,10 @@ export const shareDesign = (id: string) =>
 export const unshareDesign = (id: string) =>
 	call('DELETE', `/api/designs/${encodeURIComponent(id)}/share`);
 
+/** Site admin: let the author share a design again after it was hidden from the gallery. */
+export const allowGallerySharing = (id: string) =>
+	call('DELETE', `/api/designs/${encodeURIComponent(id)}/gallery-hide`);
+
 /** "Use this design": save a private copy of a gallery design as your own. */
 export const copyGalleryDesign = (id: string) =>
 	call<{ id: string; slug: string }>('POST', `/api/designs/${encodeURIComponent(id)}/copy`);

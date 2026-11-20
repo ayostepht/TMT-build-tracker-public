@@ -5,6 +5,7 @@
 	import { resolve } from '$app/paths';
 	import {
 		applyDesign,
+		allowGallerySharing,
 		createBuild,
 		deleteDesign,
 		previewApplyDesign,
@@ -105,7 +106,7 @@
 		});
 
 	/** Which confirmation dialog is open (replaces the browser confirm()). */
-	let asking = $state<'copy' | 'started' | 'delete' | 'gallery' | null>(null);
+	let asking = $state<'copy' | 'started' | 'delete' | 'gallery' | 'allow' | null>(null);
 	const targetBuild = $derived(data.targets.builds.find((x) => x.id === target));
 
 	const askCopy = () => {
@@ -163,6 +164,14 @@
 			note = 'No longer in the gallery.';
 		});
 
+	const allowSharing = () =>
+		run(async () => {
+			await allowGallerySharing(d.id);
+			asking = null;
+			await invalidateAll();
+			note = 'Sharing is allowed again.';
+		});
+
 	const remove = () =>
 		run(async () => {
 			asking = null;
@@ -170,6 +179,25 @@
 			await goto(resolve('/(app)/designs'));
 		});
 </script>
+
+{#snippet adminHidden()}
+	{#if data.hiddenInfo}
+		<section class="ds-card" data-testid="gallery-hidden-admin">
+			<h2>Hidden from the gallery</h2>
+			<p class="muted small">
+				Hidden{data.hiddenInfo.byName ? ` by ${data.hiddenInfo.byName}` : ''} on {new Date(
+					data.hiddenInfo.at
+				).toLocaleDateString(undefined, { dateStyle: 'medium' })}. The author can't share it until
+				you allow it.
+			</p>
+			<div class="acts">
+				<button class="btn" disabled={busy} onclick={() => (asking = 'allow')}
+					>Allow sharing again</button
+				>
+			</div>
+		</section>
+	{/if}
+{/snippet}
 
 <svelte:head><title>{d.name} · Designs · TMT Build Tracker</title></svelte:head>
 
@@ -285,6 +313,10 @@
 				{/if}
 			</section>
 
+			{#if !d.mine && data.siteAdmin && data.hiddenInfo}
+				{@render adminHidden()}
+			{/if}
+
 			{#if d.mine}
 				<section class="ds-card" data-testid="gallery-card">
 					<h2>Gallery</h2>
@@ -299,6 +331,11 @@
 							>
 							<button class="btn" disabled={busy} onclick={stopSharing}>Stop sharing</button>
 						</div>
+					{:else if d.hiddenFromGalleryAt}
+						<p class="muted small" data-testid="gallery-hidden-notice">
+							A site admin removed this design from the gallery. You can't share it again unless an
+							admin allows it.
+						</p>
 					{:else}
 						<p class="muted small">
 							Share this design so every signed-in user can see it in the gallery and use it. You
@@ -311,6 +348,9 @@
 						</div>
 					{/if}
 				</section>
+				{#if data.siteAdmin && data.hiddenInfo}
+					{@render adminHidden()}
+				{/if}
 				<section class="ds-card">
 					<h2>Link</h2>
 					<p class="muted small">
@@ -347,6 +387,25 @@
 		onconfirm={shareToGallery}
 		oncancel={() => (asking = null)}
 	/>
+{:else if asking === 'allow'}
+	<Dialog
+		title="Allow sharing again?"
+		onclose={() => (asking = null)}
+		testid="allow-sharing-dialog"
+	>
+		<div class="confirm">
+			<p>
+				Let the author of "{d.name}" share it to the gallery again? It stays private until they
+				share it.
+			</p>
+			<div class="acts">
+				<button class="btn" type="button" onclick={() => (asking = null)}>Cancel</button>
+				<button class="btn primary" type="button" disabled={busy} onclick={allowSharing}>
+					Allow sharing again
+				</button>
+			</div>
+		</div>
+	</Dialog>
 {:else if asking === 'copy' && targetBuild}
 	<Dialog title="Replace colors?" onclose={() => (asking = null)} testid="copy-design-dialog">
 		<div class="confirm">

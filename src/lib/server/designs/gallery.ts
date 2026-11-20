@@ -352,6 +352,76 @@ export async function liftGalleryHide(
 	console.warn(`[gallery] gallery hide on design ${d.id} lifted by site admin ${actor.id}`);
 }
 
+/** Who hid a design and when. Site admins only (404 otherwise), so no caller can leak it. */
+export async function hiddenInfo(
+	db: DbOrTx,
+	actor: SiteAdminCandidate,
+	d: Pick<DesignRow, 'hiddenFromGalleryAt' | 'hiddenBy'>
+): Promise<{ at: string; byName: string | null } | null> {
+	await requireSiteAdmin(db, actor);
+	if (!d.hiddenFromGalleryAt) return null;
+	const by = d.hiddenBy
+		? await first(db.select({ name: user.name }).from(user).where(eq(user.id, d.hiddenBy)))
+		: null;
+	return { at: d.hiddenFromGalleryAt.toISOString(), byName: by ? publicSharerName(by.name) : null };
+}
+
+export const HIDDEN_LIST_LIMIT = 200;
+
+export interface HiddenDesign {
+	id: string;
+	name: string;
+	templateName: string;
+	/** Public name of the author (never an email). */
+	authorName: string;
+	hiddenAt: string;
+	/** Public name of the site admin who hid it, when known. */
+	hiddenByName: string | null;
+}
+
+/** Designs a site admin hid from the gallery and nobody lifted yet, newest first. Site admins only (404 otherwise). */
+export async function listHiddenDesigns(
+	db: DbOrTx,
+	actor: SiteAdminCandidate
+): Promise<{ designs: HiddenDesign[]; truncated: boolean }> {
+	await requireSiteAdmin(db, actor);
+	// One extra row tells whether the list was cut off.
+	const fetched = await db
+		.select()
+		.from(colorDesigns)
+		.where(isNotNull(colorDesigns.hiddenFromGalleryAt))
+		.orderBy(desc(colorDesigns.hiddenFromGalleryAt), asc(colorDesigns.id))
+		.limit(HIDDEN_LIST_LIMIT + 1);
+	const truncated = fetched.length > HIDDEN_LIST_LIMIT;
+	const rows = fetched.slice(0, HIDDEN_LIST_LIMIT);
+	if (!rows.length) return { designs: [], truncated: false };
+	const ids = [
+		...new Set(rows.flatMap((r) => [r.authorUserId, r.hiddenBy]).filter((x): x is string => !!x))
+	];
+	const names = new Map(
+		(await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, ids))).map(
+			(u) => [u.id, publicSharerName(u.name)]
+		)
+	);
+	const tpls = new Map(
+		(
+			await db
+				.select({ id: templates.id, name: templates.name })
+				.from(templates)
+				.where(inArray(templates.id, [...new Set(rows.map((r) => r.templateId))]))
+		).map((t) => [t.id, t.name])
+	);
+	const designs = rows.map((r) => ({
+		id: r.id,
+		name: r.name,
+		templateName: tpls.get(r.templateId) ?? '',
+		authorName: (r.authorUserId && names.get(r.authorUserId)) || 'A maker',
+		hiddenAt: r.hiddenFromGalleryAt!.toISOString(),
+		hiddenByName: (r.hiddenBy && names.get(r.hiddenBy)) || null
+	}));
+	return { designs, truncated };
+}
+
 /**
  * "Use this design": save a private copy of a shared design as the viewer's own. Counts against
  * the same saved-designs quota as saving from a build.

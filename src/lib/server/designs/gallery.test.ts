@@ -22,6 +22,9 @@ import {
 	findSharedDesign,
 	getGalleryItem,
 	liftGalleryHide,
+	listHiddenDesigns,
+	hiddenInfo,
+	HIDDEN_LIST_LIMIT,
 	listGallery,
 	publicSharerName,
 	shareDesign,
@@ -234,6 +237,60 @@ describe('share and unshare', () => {
 		warn.mockRestore();
 		await shareDesign(db, d.id, 'alice');
 		expect((await listGallery(db, 'bob')).total).toBe(1);
+	});
+
+	it('shows the hidden state to the author only, and lists hidden designs to site admins only', async () => {
+		const d = await addDesign('alice', 'Sunrise');
+		await shareDesign(db, d.id, 'alice');
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		expect((await getDesignDetail(db, d.id, 'alice')).hiddenFromGalleryAt).toBeNull();
+		await unshareDesign(db, d.id, cand('admin'));
+		expect((await getDesignDetail(db, d.id, 'alice')).hiddenFromGalleryAt).not.toBeNull();
+		// A teammate who can open the design does not learn it was hidden.
+		await db.insert(member).values({
+			id: 'm9',
+			organizationId: 'o1',
+			userId: 'carol',
+			role: 'viewer',
+			createdAt: new Date()
+		});
+		expect((await getDesignDetail(db, d.id, 'carol')).hiddenFromGalleryAt).toBeNull();
+
+		expect(await status(() => listHiddenDesigns(db, cand('bob')))).toBe(404);
+		expect(await status(() => listHiddenDesigns(db, cand('alice')))).toBe(404);
+		const { designs: list, truncated } = await listHiddenDesigns(db, cand('admin'));
+		expect(truncated).toBe(false);
+		expect(list).toHaveLength(1);
+		expect(list[0]).toMatchObject({ id: d.id, name: 'Sunrise', authorName: 'Alice Maker' });
+		expect(JSON.stringify(list)).not.toContain('@');
+		const row = (await first(db.select().from(colorDesigns).where(eq(colorDesigns.id, d.id))))!;
+		expect(await status(() => hiddenInfo(db, cand('alice'), row))).toBe(404);
+		expect(await status(() => hiddenInfo(db, cand('bob'), row))).toBe(404);
+		expect(await hiddenInfo(db, cand('admin'), row)).toMatchObject({ byName: 'User admin' });
+		await liftGalleryHide(db, d.id, cand('admin'));
+		warn.mockRestore();
+		expect(await listHiddenDesigns(db, cand('admin'))).toEqual({ designs: [], truncated: false });
+		expect((await getDesignDetail(db, d.id, 'alice')).hiddenFromGalleryAt).toBeNull();
+	});
+
+	it('says when the hidden list is cut off at the limit', async () => {
+		const now = new Date();
+		await db.insert(colorDesigns).values(
+			Array.from({ length: HIDDEN_LIST_LIMIT + 1 }, (_, i) => ({
+				templateId,
+				slug: `h-${i}`,
+				name: `H ${i}`,
+				authorUserId: 'alice',
+				roles: [],
+				partRoles: {},
+				isPublic: false,
+				hiddenFromGalleryAt: now,
+				hiddenBy: 'admin'
+			}))
+		);
+		const r = await listHiddenDesigns(db, cand('admin'));
+		expect(r.designs).toHaveLength(HIDDEN_LIST_LIMIT);
+		expect(r.truncated).toBe(true);
 	});
 
 	it('share and unshare loops still hit the daily limit and do not bump the design', async () => {
