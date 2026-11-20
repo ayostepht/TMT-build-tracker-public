@@ -1,6 +1,6 @@
 # Environment reference
 
-Every setting is an environment variable on the container (Fly secrets and `[env]`, Railway variables, or `deploy/.env` with Docker Compose). Empty optional variables behave as if unset. The image already sets `NODE_ENV=production`, `PORT=3000`, `HOST=0.0.0.0`, `DATA_DIR=/data`, `KITPACK_DIR=/app/kitpacks`, `MAX_3MF_MB=95` and `BODY_SIZE_LIMIT=100M`. The step-by-step setup is in [Hosting the public site](hosting.md); [`.env.example`](../../.env.example) lists the same variables with comments.
+Every setting is an environment variable on the container (Fly secrets and `[env]`, Railway variables, or `deploy/.env` with Docker Compose). Empty optional variables behave as if unset. The image already sets `NODE_ENV=production`, `PORT=3000`, `HOST=0.0.0.0`, `DATA_DIR=/data`, `KITPACK_DIR=/app/kitpacks`, `MAX_3MF_MB=95`, `BODY_SIZE_LIMIT=100M`, `KEEP_ALIVE_TIMEOUT=120` and `HEADERS_TIMEOUT=125`. The step-by-step setup is in [Hosting the public site](hosting.md); [`.env.example`](../../.env.example) lists the same variables with comments.
 
 The server checks its configuration at start and refuses to start, listing every problem in the log, when something required is missing or malformed. Messages never contain a secret.
 
@@ -44,6 +44,15 @@ The server checks its configuration at start and refuses to start, listing every
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `MAX_3MF_MB`      | Largest 3MF in MB the Files tab and the kit drop zone accept. Default `95` (Cloudflare's free plan refuses request bodies over 100 MB). It is streamed to disk, parsed (only the small `Metadata/` entries are read) and deleted. |
 | `BODY_SIZE_LIMIT` | Largest request body adapter-node accepts. The image sets `100M`. Must stay at least `MAX_3MF_MB` plus 1 MB; the server logs a warning at start if not. Raise both together if your proxy allows larger bodies.                   |
+
+## Connection timeouts
+
+| Variable             | Description                                                                                                                                                                                                                                                                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KEEP_ALIVE_TIMEOUT` | Seconds the server keeps an idle keep-alive connection open. The image sets `120` (Node's default is 5). It must exceed the idle timeout of the proxy in front (`cloudflared` 90 s by default, Nginx upstream `keepalive_timeout` 60 s), otherwise the proxy now and then reuses a connection as the server closes it and the visitor sees a 502. |
+| `HEADERS_TIMEOUT`    | Seconds the server waits for a request's headers. The image sets `125`. Keep it larger than `KEEP_ALIVE_TIMEOUT`. Whole non-negative numbers only; anything else stops the server at start.                                                                                                                                                       |
+
+Idle connections are closed at once when the container is stopped, so the long timeout does not slow a restart.
 
 On top of `BODY_SIZE_LIMIT` the app caps each route on its own: 1 MB for JSON and form posts, 9 MB for photos, 3 MB for guide pages, 2 MB for design snapshots, 200 MB for STEP zips and `MAX_3MF_MB` plus 1 MB for 3MF files, answered with 413 even for chunked bodies. Uploads are sent as the raw file body, so the server streams them to disk.
 

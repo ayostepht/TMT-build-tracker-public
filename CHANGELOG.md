@@ -10,6 +10,8 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 
 ### Added
 
+- The server keeps idle connections open for 120 seconds (`KEEP_ALIVE_TIMEOUT`, `HEADERS_TIMEOUT`; Node's default is 5), longer than the Cloudflare Tunnel's 90 seconds, so a proxy no longer hits an occasional 502 from reusing a connection as the app closes it.
+
 - Public home page: what the tracker is and who it is for, with the real MakeGood chair model you can turn, MakeGood credit, sign-in and a link to the demo.
 - Demo: try the app without an account. Each visitor gets a private, throwaway workspace with a sample build, deleted after 24 hours (or at once when you sign out). Uploads, printers, teams, invitations, sharing and export are off in a demo.
 - Shared design gallery: share a color design with every signed-in maker, browse what others shared, and copy a design into your own team with "Use this design". The gallery shows the design on the chair and the sharer's name, never an email or a team. Site admins can hide a design.
