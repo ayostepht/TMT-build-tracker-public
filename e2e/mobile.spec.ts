@@ -158,3 +158,56 @@ for (const width of [360, 390]) {
 		}
 	});
 }
+
+test('Touch targets: pills, page tabs and footer links are at least 44px high on a phone', async ({
+	page
+}) => {
+	const { buildId, chapterUrl } = await ownerWithBuild(page, 'touchtargets');
+	const tooSmall = (sel: string) =>
+		page.evaluate((s) => {
+			const out: string[] = [];
+			for (const el of document.querySelectorAll<HTMLElement>(s)) {
+				const r = el.getBoundingClientRect();
+				if (r.width === 0 || r.height === 0) continue;
+				if (r.height < 43.5) out.push(`${(el.textContent ?? '').trim().slice(0, 30)} ${r.height}`);
+			}
+			return out;
+		}, sel);
+	for (const path of [
+		`/builds/${buildId}/finish`,
+		`/builds/${buildId}/files`,
+		`/builds/${buildId}`
+	]) {
+		await page.goto(path);
+		await expect(page.getByTestId('app-footer')).toBeVisible();
+		expect(await tooSmall('.pill-link'), `${path}: pills`).toEqual([]);
+		expect(await tooSmall('[data-testid="app-footer"] a'), `${path}: footer links`).toEqual([]);
+		expect(await tooSmall('.tabs a'), `${path}: tab links`).toEqual([]);
+	}
+	await page.goto(chapterUrl);
+	expect(await tooSmall('.tabs a'), 'team page tabs').toEqual([]);
+	expect(await tooSmall('.pill-link'), 'team page pills').toEqual([]);
+});
+
+for (const width of [360, 390]) {
+	test(`Site header: brand, demo link and sign in share one line at ${width}px`, async ({
+		page
+	}) => {
+		await page.setViewportSize({ width, height: 800 });
+		await page.goto('/');
+		const tops = await page.evaluate(() =>
+			[
+				...document.querySelectorAll<HTMLElement>(
+					'.site-head__brand, .site-head__link, .site-head__btn'
+				)
+			].map((el) => ({ top: el.getBoundingClientRect().top, h: el.getBoundingClientRect().height }))
+		);
+		expect(tops.length).toBe(3);
+		const link = page.locator('.site-head__link');
+		const lh = await link.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight) || 20);
+		expect((await link.boundingBox())!.height).toBeLessThan(lh * 2 + 8);
+		expect(Math.max(...tops.map((t) => t.top)) - Math.min(...tops.map((t) => t.top))).toBeLessThan(
+			30
+		);
+	});
+}

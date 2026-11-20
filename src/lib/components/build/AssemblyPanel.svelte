@@ -348,6 +348,11 @@
 		gap: 8px;
 		min-height: 36px;
 	}
+	@media (pointer: coarse), (max-width: 760px) {
+		.guide {
+			min-height: 44px;
+		}
+	}
 	.guide.withimg img {
 		width: 44px;
 		height: 56px;
