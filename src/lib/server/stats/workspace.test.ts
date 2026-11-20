@@ -68,10 +68,11 @@ async function addRuns(
 	);
 }
 
+// Cloning and dropping a database can wait on other test runs sharing the server: allow it.
 afterEach(() => {
 	vi.unstubAllEnvs();
 	return dropTestDb(db);
-});
+}, 120_000);
 
 beforeEach(async () => {
 	db = await createTestDb();
@@ -86,7 +87,7 @@ beforeEach(async () => {
 	await addMember('org1', 'editor', 'editor');
 	await addMember('org1', 'viewer', 'viewer');
 	await addMember('org2', 'outsider', 'owner');
-});
+}, 120_000);
 
 describe('loadWorkspaceStats', () => {
 	it('every member role sees the workspace builds; an outsider gets a 404', async () => {
@@ -169,23 +170,38 @@ describe('loadWorkspaceStats', () => {
 				loadBuildView(db, b.id, 'viewer')
 			)
 		).then((vs) => vs.map((v) => v!));
-		const t0 = performance.now();
-		const w = workspaceStats(views.map(buildStatsSummary), { now: NOW });
-		const reduceMs = performance.now() - t0;
+		// Timings are the minimum of several repetitions: scheduler noise from a loaded machine only
+		// ever adds time, so the minimum is the steady cost and still grows with an algorithmic
+		// regression (a quadratic reduction is slower on every repetition).
+		const minMs = async <T>(reps: number, fn: () => T | Promise<T>) => {
+			let best = Infinity;
+			let result!: T;
+			for (let i = 0; i < reps; i++) {
+				const t = performance.now();
+				result = await fn();
+				best = Math.min(best, performance.now() - t);
+			}
+			return { best, result };
+		};
+		const summaries = views.map(buildStatsSummary);
+		const { best: reduceMs, result: w } = await minMs(7, () =>
+			workspaceStats(summaries, { now: NOW })
+		);
 
 		// The whole call, including loadBuildView for every build (about 4 ms each before any runs).
-		const t1 = performance.now();
-		const full = await loadWorkspaceStats(db, 'org1', 'viewer', { now: NOW });
-		const fullMs = performance.now() - t1;
+		const { best: fullMs, result: full } = await minMs(2, () =>
+			loadWorkspaceStats(db, 'org1', 'viewer', { now: NOW })
+		);
 
 		expect(w.builds).toHaveLength(50);
 		expect(full.kpis.hours.total).toBe(50 * 500 * 4);
 		console.log(
 			`workspace stats, 50 builds x 500 runs: reduce ${Math.round(reduceMs)} ms, full ${Math.round(fullMs)} ms`
 		);
-		expect(reduceMs).toBeLessThan(300);
-		// Measured about 550 ms on the dev machine, nearly all of it loadBuildView: the 300 ms target
-		// holds for the reduction only. This budget catches a regression, not the target.
-		expect(fullMs).toBeLessThan(2000);
-	});
+		expect(reduceMs).toBeLessThan(100);
+		// Measured about 600 ms idle on the dev machine, nearly all of it loadBuildView: the reduction target
+		// (about 11 ms measured, budget 100) is for the reduction only. This budget catches a regression.
+		expect(fullMs).toBeLessThan(4000);
+		// Seeding 25,000 runs takes tens of seconds on a loaded machine: well over the 30 s default.
+	}, 180_000);
 });
