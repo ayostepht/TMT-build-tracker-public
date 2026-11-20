@@ -142,7 +142,10 @@ export function createAuth(db: Db) {
 			useSecureCookies: url ? url.startsWith('https://') : false,
 			// Better Auth skips its origin (CSRF) check when NODE_ENV=test. Never skip it: the e2e
 			// server runs with NODE_ENV=test and must behave like production here.
-			disableOriginCheck: false
+			disableOriginCheck: false,
+			// The session lookup that runs on every request reads session and user in one joined query
+			// instead of two round trips.
+			database: { joins: true }
 		},
 		secret: authSecret(),
 		database: drizzleAdapter(db, { provider: 'pg', schema }),

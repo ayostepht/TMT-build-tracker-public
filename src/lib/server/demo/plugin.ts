@@ -62,10 +62,16 @@ export function demoPlugin(db: Db) {
 						.returning();
 				});
 				try {
-					await ensurePersonalWorkspace(db, { id: created.id, name: created.name });
+					const workspace = await ensurePersonalWorkspace(db, {
+						id: created.id,
+						name: created.name
+					});
 					const buildId = await seedDemoBuild(db, created.id);
+					// The active workspace is passed in: the session hook would otherwise look the (just
+					// made) personal workspace up again, which is several more round trips to the database.
 					const session = await adapter.createSession(created.id, true, {
-						expiresAt: new Date(Date.now() + cfg.ttlMs)
+						expiresAt: new Date(Date.now() + cfg.ttlMs),
+						activeOrganizationId: workspace.id
 					});
 					// dontRememberMe: a browser-session cookie, and the session is never extended.
 					await setSessionCookie(ctx, { session, user: created }, true);
