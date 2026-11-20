@@ -3,6 +3,7 @@ import { getDb } from '#lib/server/db/index.ts';
 import { templateParts } from '#lib/server/db/schema.ts';
 import { loadTemplateModelInfo } from '#lib/server/models/info.ts';
 import { defaultTemplate } from '#lib/server/templates/fork.ts';
+import { inactiveSlugs } from '#lib/domain/variants.ts';
 import type { TemplateModelInfo } from '#lib/domain/types.ts';
 import type { PageServerLoad } from './$types';
 
@@ -14,6 +15,7 @@ import type { PageServerLoad } from './$types';
 async function heroModel(): Promise<{
 	model: TemplateModelInfo;
 	partRoles: Record<string, string>;
+	hidden: string[];
 } | null> {
 	try {
 		const db = getDb();
@@ -28,7 +30,10 @@ async function heroModel(): Promise<{
 		return {
 			// no hardware GLB for the hero: it is only readable by signed-in users
 			model: { ...info, hardwareUrl: null },
-			partRoles: Object.fromEntries(rows.map((r) => [r.slug, r.role]))
+			partRoles: Object.fromEntries(rows.map((r) => [r.slug, r.role])),
+			// Parts of the variants the template does not choose by default, hidden exactly as the
+			// design pages do; drawn together they z-fight in the wheel face.
+			hidden: [...inactiveSlugs(t.variantGroups ?? [], null)]
 		};
 	} catch {
 		return null;
