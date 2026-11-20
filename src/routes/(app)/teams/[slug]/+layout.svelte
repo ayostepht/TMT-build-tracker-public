@@ -6,6 +6,12 @@
 	let { data, children }: LayoutProps = $props();
 
 	const slug = $derived(data.team.slug);
+	/** After leaving or deleting a team, /workspace lands here with a fixed notice code. */
+	const NOTICES: Record<string, string> = {
+		left: 'You left the team.',
+		deleted: 'The team was deleted.'
+	};
+	const notice = $derived(NOTICES[page.url.searchParams.get('notice') ?? ''] ?? null);
 	const tabs = $derived([
 		{ label: 'Builds', href: resolve('/(app)/teams/[slug]', { slug }) },
 		...(data.team.personal
@@ -20,6 +26,7 @@
 <svelte:head><title>{data.team.name} · TMT Build Tracker</title></svelte:head>
 
 <section class="stack">
+	{#if notice}<div class="card" role="status" data-testid="team-notice">{notice}</div>{/if}
 	<div class="kicker">{data.team.personal ? 'Just you' : `Team (${data.role})`}</div>
 	<h1>{data.team.name}</h1>
 	<nav class="tabs" aria-label="Team sections">

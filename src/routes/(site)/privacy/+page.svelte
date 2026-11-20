@@ -178,6 +178,13 @@
 		of a team that has other members, or if you are the last site admin.
 	</p>
 	<p>
+		You can also leave a team from its Members page. Your drafts in it are deleted, the builds you
+		made stay with the team, and your name stays in its past activity. An owner can delete a whole
+		team by typing its name: its builds, photos, uploaded files, printers and their saved connection
+		details, invitations, members and custom kits and filaments are deleted for good. The people in
+		it lose access; their accounts and other teams are not touched.
+	</p>
+	<p>
 		Backups are made and kept by the operator, not by the app, so a deleted account can still be in
 		an older backup.
 	</p>

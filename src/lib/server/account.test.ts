@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, eq } from 'drizzle-orm';
-import { createAuth, type Auth } from './auth';
+import { createAuth, ORGANIZATION_DISABLED_PATHS, type Auth } from './auth';
 import { ApiError } from './access';
 import { decideNewUser } from './auth-policy';
 import { enableTestSignIn, signInTestUser } from './auth-test-helpers';
@@ -146,11 +146,7 @@ describe('organization quotas through the plugin endpoints', () => {
 		await signUp('Admin', 'admin@example.test');
 		const u = await signUp('Pat', 'pat@example.test');
 		const personal = (await findPersonalWorkspace(db, u.id))!;
-		for (const path of [
-			'/organization/update',
-			'/organization/leave',
-			'/organization/check-slug'
-		]) {
+		for (const path of ORGANIZATION_DISABLED_PATHS) {
 			const r = await post(path, u.cookie, {
 				organizationId: personal.id,
 				data: { metadata: {} },
