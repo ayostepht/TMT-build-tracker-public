@@ -68,7 +68,8 @@ function authFail(e: unknown) {
 
 export const actions: Actions = {
 	invite: async ({ request, params, locals }) => {
-		const { org, role } = await teamFor(params.slug, locals.user!.id);
+		if (!locals.user) return fail(401, { error: 'Sign in to continue' });
+		const { org, role } = await teamFor(params.slug, locals.user.id);
 		if (role !== 'owner') return fail(403, { error: 'Only owners can invite' });
 		if (isPersonalMetadata(org.metadata))
 			return fail(400, { error: 'Create a team to invite people' });
@@ -91,7 +92,8 @@ export const actions: Actions = {
 	},
 
 	revoke: async ({ request, params, locals }) => {
-		const { role } = await teamFor(params.slug, locals.user!.id);
+		if (!locals.user) return fail(401, { error: 'Sign in to continue' });
+		const { role } = await teamFor(params.slug, locals.user.id);
 		if (role !== 'owner') return fail(403, { error: 'Only owners can do this' });
 		const invitationId = String((await request.formData()).get('id') ?? '');
 		try {
@@ -102,7 +104,8 @@ export const actions: Actions = {
 	},
 
 	setRole: async ({ request, params, locals }) => {
-		const { org, role } = await teamFor(params.slug, locals.user!.id);
+		if (!locals.user) return fail(401, { error: 'Sign in to continue' });
+		const { org, role } = await teamFor(params.slug, locals.user.id);
 		if (role !== 'owner') return fail(403, { error: 'Only owners can do this' });
 		const f = await request.formData();
 		const r = String(f.get('role') ?? '');
@@ -122,7 +125,8 @@ export const actions: Actions = {
 	},
 
 	remove: async ({ request, params, locals }) => {
-		const { org, role } = await teamFor(params.slug, locals.user!.id);
+		if (!locals.user) return fail(401, { error: 'Sign in to continue' });
+		const { org, role } = await teamFor(params.slug, locals.user.id);
 		if (role !== 'owner') return fail(403, { error: 'Only owners can do this' });
 		const memberId = String((await request.formData()).get('memberId') ?? '');
 		try {

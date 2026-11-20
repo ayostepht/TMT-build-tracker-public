@@ -6,6 +6,7 @@ import { listDesigns } from '#lib/server/designs/designs.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ parent, locals }) => {
+	if (!locals.user) redirect(303, '/login');
 	const { view } = await parent();
 	// The wizard changes things; view-only members just see the build.
 	if (view.build.kind === 'draft') redirect(303, `/builds/${view.build.id}/design`);
@@ -20,7 +21,7 @@ export const load: PageServerLoad = async ({ parent, locals }) => {
 	const baseTemplateId = cur?.base ?? cur?.id ?? view.build.templateId;
 	// Saved and shared designs that fit this build's kit (a workspace's own copy starts with none).
 	const designs = (
-		await listDesigns(db, locals.user!.id, { templateId: view.build.templateId })
+		await listDesigns(db, locals.user.id, { templateId: view.build.templateId })
 	).map((d) => ({
 		id: d.id,
 		name: d.name,

@@ -49,6 +49,7 @@ function nextDraftName(taken: string[]): string {
 
 export const actions: Actions = {
 	create: async ({ request, locals }) => {
+		if (!locals.user) return fail(401, { error: 'Sign in to continue' });
 		const f = await request.formData();
 		const s = (k: string) => String(f.get(k) ?? '').trim();
 		const db = getDb();
@@ -65,7 +66,7 @@ export const actions: Actions = {
 					name: s('name') || nextDraftName(taken),
 					kind: 'draft'
 				},
-				locals.user!.id
+				locals.user.id
 			);
 		} catch (e) {
 			if (e instanceof ApiError) return fail(e.status, { error: e.message });
