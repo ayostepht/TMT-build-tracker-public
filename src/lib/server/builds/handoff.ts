@@ -3,6 +3,13 @@ import { ApiError } from '../access';
 import { first, type Db, type DbOrTx } from '../db';
 import { buildHandoff, builds } from '../db/schema';
 import { mutateBuild } from './actions';
+import {
+	HANDOFF_CONTACT_MAX,
+	HANDOFF_LOCATION_MAX,
+	HANDOFF_NOTES_MAX,
+	HANDOFF_ORGANIZATION_MAX,
+	HANDOFF_RECIPIENT_MAX
+} from './limits';
 
 type Obj = Record<string, unknown>;
 
@@ -18,15 +25,15 @@ function parse(body: unknown) {
 		throw new ApiError(400, 'Invalid body');
 	const b = body as Obj;
 	const set: Partial<typeof buildHandoff.$inferInsert> = {};
-	const recipientName = text(b.recipientName, 'recipientName', 200);
+	const recipientName = text(b.recipientName, 'recipientName', HANDOFF_RECIPIENT_MAX);
 	if (recipientName !== undefined) set.recipientName = recipientName;
-	const organization = text(b.organization, 'organization', 200);
+	const organization = text(b.organization, 'organization', HANDOFF_ORGANIZATION_MAX);
 	if (organization !== undefined) set.organization = organization;
-	const contact = text(b.contact, 'contact', 300);
+	const contact = text(b.contact, 'contact', HANDOFF_CONTACT_MAX);
 	if (contact !== undefined) set.contact = contact;
-	const location = text(b.location, 'location', 300);
+	const location = text(b.location, 'location', HANDOFF_LOCATION_MAX);
 	if (location !== undefined) set.location = location;
-	const notes = text(b.notes, 'notes', 4000);
+	const notes = text(b.notes, 'notes', HANDOFF_NOTES_MAX);
 	if (notes !== undefined) set.notes = notes ?? '';
 	if (b.handedOffOn !== undefined) {
 		if (

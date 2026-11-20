@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { BUILD_NAME_MAX } from '#lib/domain/limits.ts';
 	import { inlineConfirm } from '#lib/client/focus.ts';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -28,7 +29,14 @@
 
 <form class="card" onsubmit={save} data-testid="draft-settings">
 	<h2>Draft name</h2>
-	<label class="field">Name <input bind:value={name} disabled={!ctx.canEdit} required /></label>
+	<label class="field"
+		>Name <input
+			bind:value={name}
+			disabled={!ctx.canEdit}
+			required
+			maxlength={BUILD_NAME_MAX}
+		/></label
+	>
 	{#if ctx.canEdit}
 		<div>
 			<button class="btn primary" type="submit">Save name</button>
