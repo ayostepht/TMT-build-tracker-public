@@ -285,6 +285,8 @@ describe('plan', () => {
 		expect(p.plates).toHaveLength(1);
 		expect(p.plates[0].items).toHaveLength(1);
 		expect(p.plates[0].runs).toBe(2);
+		// the name counts every print: 2 per part x 2 parts
+		expect(p.plates[0].name).toBe('Wings (print x4)');
 		// the same plate without the flag and with two roles is an error on a one-slot printer
 		const plain = buildExportPlan({
 			view,
