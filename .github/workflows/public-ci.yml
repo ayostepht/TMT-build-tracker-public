@@ -30,6 +30,8 @@ jobs:
           POSTGRES_USER: tmt
           POSTGRES_PASSWORD: tmt
           POSTGRES_DB: tmt_test
+          # Safety margin for parallel test workers (default 100); initdb writes it to postgresql.conf.
+          POSTGRES_INITDB_ARGS: '-c max_connections=300'
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U tmt"
@@ -64,6 +66,7 @@ jobs:
           POSTGRES_USER: tmt
           POSTGRES_PASSWORD: tmt
           POSTGRES_DB: postgres
+          POSTGRES_INITDB_ARGS: '-c max_connections=300'
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U tmt"
