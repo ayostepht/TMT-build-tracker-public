@@ -60,6 +60,7 @@ import {
 	loadFootprints,
 	PLANNER_VERSION,
 	planArrangement,
+	type Plan,
 	planForBuild,
 	signature,
 	carryManuals,
@@ -651,7 +652,11 @@ export async function applyUpload(
 		requireConversion(view, convertRuns);
 
 		const convertedRuns = await convertPlateRuns(tx, buildId, view);
-		const manualFor = await manualTimes(tx, buildId);
+		const manualFor = await manualTimes(
+			tx,
+			buildId,
+			rows.map(({ pl, slugs }) => ({ number: pl.index, parts: slugs }))
+		);
 		await tx.delete(buildPlates).where(eq(buildPlates.buildId, buildId));
 		clearBuildThumbs(buildId);
 		const twinPlates: ApplyResult['twinPlates'] = [];
@@ -841,6 +846,20 @@ export async function buildArrangement(
 	buildId: string,
 	userId: string
 ): Promise<ArrangementInfo> {
+	return (await arrangementWithPlan(db, buildId, userId)).info;
+}
+
+/**
+ * `buildArrangement` and the fresh plan it compared with, planned at most once per request (`plan()` is
+ * lazy and remembered). The export reads the info without the "fresh" summary (`summary: false`) and takes
+ * `plan()` only when it needs a fresh arrangement, so it never plans twice.
+ */
+export async function arrangementWithPlan(
+	db: DbOrTx,
+	buildId: string,
+	userId: string,
+	opts: { summary?: boolean } = {}
+): Promise<{ info: ArrangementInfo; plan: () => Promise<Plan | null> }> {
 	const view = await loadBuildView(db, buildId, userId);
 	if (!view) throw new ApiError(404, 'Not found');
 	const row = await first(db.select().from(builds).where(eq(builds.id, buildId)));
@@ -878,7 +897,8 @@ export async function buildArrangement(
 	await ensureSilhouettes(db, view.build.templateId, onPlates);
 	const footprints = await loadFootprints(db, view.build.templateId);
 	const hint = await layoutHintFor(db, view.build.templateId);
-	const plan = await planForBuild(db, view, footprints, hint);
+	let current: Promise<Plan | null> | undefined;
+	const plan = () => (current ??= planForBuild(db, view, footprints, hint));
 	// Plates stored before the kit layout came first were planned by the plain arranger: they are
 	// "stale" only when that planner would now plan something else (a color or variant change), never
 	// just because the planner changed. Their numbers and plates stay as they are.
@@ -887,10 +907,11 @@ export async function buildArrangement(
 		stored.length && stored.every((pl) => pl.v === stored[0].v) ? stored[0].v : undefined;
 	const compare =
 		stored.length === 0 || storedV === PLANNER_VERSION
-			? plan
+			? await plan()
 			: storedV === 2
 				? await planForBuild(db, view, footprints, hint, 2)
 				: planArrangement(view, footprints, hint, undefined, 'legacy');
+	const fresh = opts.summary === false ? null : await plan();
 	const used: Record<string, PrintFootprint> = {};
 	for (const pl of stored)
 		for (const s of pl.parts) {
@@ -914,16 +935,16 @@ export async function buildArrangement(
 			return { ...it, sil: key };
 		})
 	}));
-	return {
+	const info: ArrangementInfo = {
 		printer: view.printer,
 		layout: row?.plateLayout ?? null,
 		plates,
 		silhouettes,
-		fresh: plan
+		fresh: fresh
 			? {
-					plates: plan.result.plates.length,
-					warnings: plan.result.warnings,
-					unsized: plan.unsized
+					plates: fresh.result.plates.length,
+					warnings: fresh.result.warnings,
+					unsized: fresh.unsized
 				}
 			: null,
 		stale:
@@ -935,11 +956,12 @@ export async function buildArrangement(
 			(row?.plateLayout === ARRANGED_LAYOUT &&
 				!!compare &&
 				signature(compare.result.plates) !== signature(stored)) ||
-			(row?.plateLayout !== ARRANGED_LAYOUT && !!plan && templateColorsChanged(view)),
+			(row?.plateLayout !== ARRANGED_LAYOUT && !!view.printer && templateColorsChanged(view)),
 		template: view.printTemplate
 			? { fileName: view.printTemplate.fileName, printer: view.printTemplate.printer }
 			: null,
 		hasPlateRuns: hasPlateRuns(view),
 		footprints: used
 	};
+	return { info, plan };
 }

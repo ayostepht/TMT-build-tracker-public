@@ -39,8 +39,9 @@ the biggest the printer still holds):
   for its one print and is not a multi-part plate). The cap is a little above the typical multi-part plate and
   below the fullest one; 60 % is also where `arrange()` stops calling a plate underfilled (`mergeBelow`).
 - **A plate printed in runs of its own is one plate** (planner 3, `isRunPlate`): a source plate that lists 2+
-  parts of the SAME geometry (same pieces, sizes, copies, outline, units per plate) and either says so
-  (`perPartRuns`) or is printed more than once (`runs` > 1). The wheel rims are one object, `3DTMT O WHEEL RIM
+  parts of the SAME geometry (same pieces, sizes, copies, outline, units per plate) and says so
+  (`perPartRuns`: the kit's plates and the twin plates of an uploaded file carry it; `runs` alone never makes
+  a run plate, two identical parts that print together twice are not "print 4 times"). The wheel rims are one object, `3DTMT O WHEEL RIM
 REV B`, printed twice in Accent (`rims-1-4`) and twice in Primary (`rims-2-3`): one plate, one rim on the
   bed per print. It is laid out for ONE print (the first part's items for one run: `unitsPerPlate`), stays
   whole in the kit's number and name, is never split because its parts "do not fit together" (they are never on
@@ -48,7 +49,8 @@ REV B`, printed twice in Accent (`rims-1-4`) and twice in Primary (`rims-2-3`): 
   `ArrangedPlate.perPartRuns` (the build's plate is stored `perPartRuns`, like the kit's own). `items` show one
   print, `parts` all parts, `roles` the filament of that print, `runs` the runs of each part. A plate that
   stays whole is printed as often as the source says (the tires: 8 segments per print, `runs` 2). Plates with
-  different geometry, or printed once and not flagged, are not run plates.
+  different geometry, or not flagged, are not run plates. A piece with an outline and one with only a box are
+  not the same geometry (two box-only seed footprints compare by their boxes).
 - **A plate with one part in the source is sacred** (`soloParts`, `options.solo`): it never gets another
   part, and may use the relaxed edge margin (`SOLO_MARGIN`, 1 mm) when the printer's margin leaves no room.
 - **Brims count** for parts the arranger places (`ArrangePart.brims`, from `pieceBrimMm`): the footprint
@@ -61,6 +63,20 @@ REV B`, printed twice in Accent (`rims-1-4`) and twice in Primary (`rims-2-3`): 
   (`RULES_V3`); version 2 = the kit layout first, movers always on new plates (`RULES_V2`,
   `planArrangement(..., kit, 2)`); no version = the plain arranger (`planArrangement(..., 'legacy')`). Only
   an explicit "Arrange"/"Re-arrange" or an automatic re-arrange after a design change writes version 3.
+  The "fresh" plan a version 3 (or 2) arrangement is compared with reads the kit pack's layouts, so a kit
+  pack update that changes a layout marks existing version 3 and 2 plans as out of date (stale) until they are
+  re-arranged; version-less ones (the plain arranger) do not read layouts and are not affected.
+- A plan is cached in process (`planArrangement` in `arrange-plan.ts`: the last 50, least recently used goes
+  first, cloned in and out). The key is a sha256 of the planner version and rules, the kit source (or `legacy`),
+  the whole arranger input (parts, roles, filaments, variants, quantities, footprints with outlines, printer,
+  margins, keep-outs, options) and the learned per-part data; never the build or the user. Any change of those
+  misses, so a plan is only returned for the exact input it was made from. Calls with explicit `options` skip
+  the cache; tests use `clearPlanCache` and `planCacheStats`. A read and an export of the same build plan
+  once (`arrangementWithPlan` in `plates.ts`: the export plans only when it needs a fresh arrangement).
+- Typed plate values: `manualTimes` carries the typed time and grams to a new plate with the same number and
+  parts, and to a renumbered plate that has exactly the same parts, `runs` and `perPartRuns`, when that match is
+  unambiguous and unused (the exact number and parts match wins). That is how an automatic re-arrange, which now
+  numbers plates the kit's way, keeps them.
 
 Plain `arrange()` without `solo`, `brims` and `thorough` is unchanged (`arrange-tmt-snapshot.test.ts`).
 
@@ -85,8 +101,9 @@ stale, call `arrangeForPrinter(db, buildId, userId, { convertRuns })` (or
 normal plates: `BuildView.plates` (`source === 'arranged'`) and `builds.plate_layout =
 'arranged'`; the positions live in `build_plates.arrangement` (json `ArrangedPlate`).
 
-To compute a plan without writing it: `planArrangement(view, loadFootprints(db, templateId))`
-in `src/lib/server/builds/arrange-plan.ts` (returns `{ result: ArrangeResult, unsized }`).
+To compute a plan without writing it, the way the app does: `await planForBuild(db, view, await loadFootprints(db, templateId))`
+in `src/lib/server/builds/arrange-plan.ts` (it looks up the kit's layout; returns `{ result: ArrangeResult, unsized, source }`).
+`planArrangement(view, footprints, hint, options, kit)` is the same with the kit source given.
 
 ## What a plate contains
 
