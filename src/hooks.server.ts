@@ -4,7 +4,8 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { getAuth } from '#lib/server/auth-instance.ts';
 import { startup } from '#lib/server/startup.ts';
 import { getSupervisor } from '#lib/server/printers/supervisor.ts';
-import { closeDb, warmPool } from '#lib/server/db/index.ts';
+import { closeDb, getDb, warmPool } from '#lib/server/db/index.ts';
+import { startSparePool, stopSparePool } from '#lib/server/demo/spares.ts';
 import { closeLiveStreams } from '#lib/server/live-stream.ts';
 import { compressResponse } from '#lib/server/compress.ts';
 import {
@@ -47,14 +48,20 @@ export const init: ServerInit = async () => {
 	await startup();
 	// Open a few database connections before the first visitor needs them (not awaited).
 	warmPool();
+	// Keep a few ready-made demos in reserve (background; off with DEMO_SPARES=0).
+	startSparePool(getDb());
 	// adapter-node emits this once its HTTP server has closed (in-flight requests have finished):
 	// release what would keep the process alive, the printer connections and the database pool.
 	// Open event streams never end by themselves and would hold the HTTP server open until the
 	// adapter's shutdown timeout; end them as soon as the stop signal arrives (the adapter still
 	// closes the server and lets ordinary requests finish).
-	for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, closeLiveStreams);
+	for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+		process.once(signal, closeLiveStreams);
+		process.once(signal, () => void stopSparePool());
+	}
 	process.once('sveltekit:shutdown', () => {
 		getSupervisor()?.stop();
+		void stopSparePool();
 		closeDb().catch((e) => console.error('[tmt] closing the database failed', e));
 	});
 };

@@ -8,6 +8,7 @@ export { DemoBusyError } from './plugin';
 export { cleanupExpiredDemos, deleteDemoUser, liveDemoCount, startDemoCleanup } from './cleanup';
 export { resetDemoLimits } from './limits';
 export { seedDemoBuild } from './seed';
+export { fillSpares, startSparePool, stopSparePool } from './spares';
 
 /** The per-IP or global start limit was reached; `retryAfter` is in seconds. */
 export class DemoRateError extends Error {

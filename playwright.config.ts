@@ -60,6 +60,8 @@ export default defineConfig({
 					WRITE_RATE_PER_MIN: 'off',
 					MIN_FREE_DISK_MB: 'off',
 					DEMO_PER_IP_PER_HOUR: '1000',
+					// One ready-made spare demo, so the demo spec covers the claim path.
+					DEMO_SPARES: '1',
 					// A fixed site admin so specs do not depend on who signs up first.
 					ADMIN_EMAILS: 'e2e-admin@example.test',
 					// The suite runs without the bundled MakeGood kit (specs cover the "missing" state).
