@@ -30,15 +30,18 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   must keep their data: additive, backward-compatible migrations only, a backup and a
   rehearsal before any migration reaches `main` (rules in `docs/dev/HANDOFF.md`).
 - **Live:** the maintainer's server runs the fifth or sixth deploy (they update by hand; the
-  last image they were told about is `sha-d28d128`). **Ready, not yet deployed:**
-  `sha-48b585e` (`main` 48b585e, green): #14 signed-out guards, #15 hero wheel fix and link
-  previews, #16 first-time journey fixes, #17 printer counts in one query, #18 faster
-  navigation with a warm pool and clean shutdown, #19 build loader in two waves, #20 tracking
-  loop on a phone, #21 console warnings, #22 photo viewer focus. No migrations.
+  last image they were told about is `sha-d28d128`). **Ready, not yet deployed:** `main` after
+  #26 (the image tag is the short sha of the last green `main` push): #14 signed-out guards,
+  #15 hero wheel fix and link previews, #16 first-time journey fixes, #17 printer counts in
+  one query, #18 faster navigation with a warm pool and clean shutdown, #19 build loader in
+  two waves, #20 tracking loop on a phone, #21 console warnings, #22 photo viewer focus, #23
+  phone touch targets, #24 demo start from a ready-made spare, #25 and #26 test reliability.
+  No migrations.
 - **Speed (2026-11-20):** pages were slow because of sequential database round trips (the app
   and the database are a network hop apart). Measured through a latency proxy at 40 ms per
   round trip, before → after #18/#19: build page 2.3 s → 0.6 s, builds list 3.0 → 1.1 s, team
   page with 12 builds 17 → 2.9 s, create a build 7.5 → 1.2 s, mark a plate printed 3.3 → 2.5 s.
+  Demo start: about 57 s → 0.8 s with a spare ready (#24).
   `DATABASE_PREPARE=on` (opt-in, untested against Supabase) removes a second round trip per
   parameterised query (about 2× on warm requests). Moving the container next to the database
   would cut the remaining wait by about 95%.
@@ -73,10 +76,17 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   a fade would help [design-studio-ui].
 - Every link to `/demo` needs `data-sveltekit-reload` (the Turnstile CSP is sent only with the
   `/demo` document); `e2e/way-home.spec.ts` asserts it.
-- In progress (2026-11-20): demo start from a ready-made spare (`perf/demo-spares`: about
-  57 s → 0.8 s at 40 ms; security review done, two low fixes pending); phone touch targets
-  (#23, waiting on the unit-test connection fix); unit tests exhausting Postgres connections
-  in CI (`fix/test-db-connections`); the stats wall-clock test (`fix/stats-budget-test`).
+- Demo spares (#24): `DEMO_SPARES` ready-made demos are kept by a background pool
+  (`server/demo/spares.ts`), marked by `spare-building-` / `spare-ready-` / `spare-expired-`
+  `@demo.invalid` addresses on `isDemo` users (no schema change), claimed under the
+  `demo-start` lock, recycled after 4 h. For a minute or two after a deploy the slower
+  synchronous path still runs. The e2e server runs with one spare.
+- Tests: pools in tests are 3 connections with a 2 s idle timeout and leaked pools are closed
+  (#25); a full unit run peaks at about 25 connections (was 96 of CI's 100). CI Postgres
+  allows 300. Several full suites at once on one machine still time out creating databases.
+- Production connections: one pool, `DATABASE_POOL_MAX` default 10 (3 kept warm). Confirm the
+  Supabase pooler's pool size in the dashboard; if it is under 10, set `DATABASE_POOL_MAX=6`.
+  Document the guidance in `docs/guides/environment.md` and `hosting.md` [release-pwa].
 - `member` has no unique index on (organization, user); Better Auth prevents duplicates in
   the app. An additive unique index would need a check for existing duplicates first and the
   maintainer's sign-off (schema).
@@ -86,8 +96,6 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - "Next up" shows the lowest-numbered unprinted plate per build; a reprint plate with a
   higher number waits behind it. Whether reprints should jump ahead is the maintainer's call.
 - The closed phone team switcher (a native select) still truncates long team names.
-- `stats/workspace.test.ts` "50 builds with 500 runs each" asserts a 300 ms wall-clock budget
-  and overran once (362 ms) under a loaded full run; make it robust [build-state].
 
 - Supabase performance advisor (informational, fine at launch scale): about 20 foreign keys to `user` without a covering index (add when user
   deletion or those joins get slow).

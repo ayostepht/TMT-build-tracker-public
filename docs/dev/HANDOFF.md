@@ -24,31 +24,28 @@ _Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## State
 
-- `main` 48b585e is green and published as `sha-48b585e` / `:latest`: #14 to #22 (see STATUS
-  "Where we are"). The maintainer updates the server by hand; nothing new is live until they
-  pull.
-- Open pull request: #23 phone touch targets (`ux/touch-targets`). Its unit job failed on
-  "too many clients" in Postgres, not on its own change; re-run or re-push after the
-  connection fix lands.
-- Branches with work in progress, each in its own worktree in the cloud session:
-  `fix/test-db-connections` (test pools close promptly, CI Postgres limit raised; lands
-  first), `perf/demo-spares` (committed; full verification running; then two low fixes from
-  the security review: re-check a spare before recycling it, and clean up spares when the
-  pool is off or shrinks), `fix/stats-budget-test`.
-- The journey audit and its screenshots were session-local; the findings are folded into the
-  merged pull requests and STATUS open items.
+- `main` holds #14 to #26 (see STATUS "Where we are"); each was green on `public-ci` before
+  its merge. The image to deploy is the one from the last green `main` push. The maintainer
+  updates the server by hand; nothing from this batch is live until they pull.
+- No pull requests open, no agents running. The session's worktrees and the journey audit
+  screenshots were session-local.
 - Sibling repository: resource-limit back-port open there (`fix/resource-limits`); carry-overs
   in STATUS.
 - Google Safe Browsing review of the domain requested; don't share widely until it clears.
 
 ## Next step
 
-1. Land `fix/test-db-connections`, then #23, then `perf/demo-spares`.
-2. Tell the maintainer what to pull and what to check: home page wheel, a link preview, the
-   speed of the team page and a build, a demo start, toasts and the assembly checklist on a
-   phone; and offer `DATABASE_PREPARE=on` as a try-and-see.
+1. After the maintainer updates: log the deploy in `docs/dev/CHANGELOG.md` (image sha, #14 to
+   #26, no migration) and ask what they saw: home page wheel, a link preview, speed of the
+   team page and a build, a demo start (near-instant after the first minute or two), toasts
+   and the assembly checklist on a phone.
+2. Offer `DATABASE_PREPARE=on` as a try-and-see (about 2× on warm requests; remove it to
+   undo), and the Supabase pool size check.
 3. With the maintainer: Fly.io or not (where is the server relative to US East?), reprint
    priority in "Next up", the `member` unique index, off-site backups, repository settings.
+4. Then: mutation speed (the view load inside the transaction), `docs/architecture.md`
+   sections for tonight's changes (demo spares, pool lifecycle and shutdown, build view
+   waves, toasts, `team-wording.ts`, `SocialMeta`), README screenshots.
 
 ## Questions waiting for the maintainer
 

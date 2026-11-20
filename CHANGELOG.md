@@ -35,7 +35,7 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 - Tracking on a phone: one notification at a time with a larger Undo that stays 12 seconds; the whole assembly checklist row is tappable, and marking a step done while its parts are not printed asks first; the activity list shows a print's grams and note; "Now printing" and "Next up" come before the builds list on a team page.
 - Larger tap targets on phones for pills, tabs, footer links and the setup wizard's options.
 - "Finish setup" really finishes: the "Continue setup" banner no longer lingers.
-- The demo's Start button is on the first screen on a phone.
+- The demo's Start button is on the first screen on a phone, and starting a demo takes about a second: the server keeps a couple of ready-made demos waiting (`DEMO_SPARES`, default 2; 0 turns it off).
 - Errors about teams say "team", not "organization".
 - Text fields stop at the length the server accepts, so a long note is never refused on save.
 - The color picker's controls take less room on desktop, so more colors show without scrolling.
