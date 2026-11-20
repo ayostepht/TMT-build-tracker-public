@@ -32,8 +32,14 @@ FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc
 # ADMIN_EMAILS, OAuth keys) are never baked in: set them in the host's secret store.
 # BODY_SIZE_LIMIT / MAX_3MF_MB: Cloudflare's free plan refuses request bodies over 100 MB, so a
 # 3MF is capped at 95 MB and the body limit sits just above it (the server warns if it is lower).
+# KEEP_ALIVE_TIMEOUT / HEADERS_TIMEOUT (seconds): the origin must keep an idle connection open
+# longer than the proxy in front of it does, or the proxy reuses a connection at the moment the
+# server closes it and the visitor gets a 502. cloudflared's default is 90 s, nginx's upstream
+# keepalive_timeout 60 s; Node's own default of 5 s is far too short. headersTimeout must exceed it.
 ENV NODE_ENV=production \
     BODY_SIZE_LIMIT=100M \
+    KEEP_ALIVE_TIMEOUT=120 \
+    HEADERS_TIMEOUT=125 \
     MAX_3MF_MB=95 \
     PORT=3000 \
     HOST=0.0.0.0 \

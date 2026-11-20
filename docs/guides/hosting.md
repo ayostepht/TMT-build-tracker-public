@@ -89,7 +89,7 @@ The settings you need, all described in [`.env.example`](../../.env.example):
 | `TRUST_CLOUDFLARE` or `ADDRESS_HEADER` | See step 6 and the [Security checklist](#security-checklist)                |
 | `ANALYTICS_PROVIDER` and its settings  | Optional, see step 7                                                        |
 
-The image already sets `NODE_ENV=production`, `DATA_DIR=/data`, `MAX_3MF_MB=95` and `BODY_SIZE_LIMIT=100M` (Cloudflare's free plan refuses request bodies over 100 MB, hence 95 MB for a 3MF file).
+The image already sets `NODE_ENV=production`, `DATA_DIR=/data`, `MAX_3MF_MB=95`, `BODY_SIZE_LIMIT=100M`, `KEEP_ALIVE_TIMEOUT=120` and `HEADERS_TIMEOUT=125` (Cloudflare's free plan refuses request bodies over 100 MB, hence 95 MB for a 3MF file).
 
 **What the server checks at start.** In production the container refuses to start, and lists every problem in its log, unless all of these hold:
 
@@ -239,7 +239,7 @@ Without Compose: create two containers by hand on the same Docker network, the a
 5. Running the self-hosted edition on the same server too? The `-public` names keep the two apart: never share the `/data` folder, and keep the self-hosted container off the `tmt` network.
 6. Update: Docker tab > **Check for Updates**, then apply the update to `tmt-build-tracker-public`.
 
-**Your own reverse proxy instead of the tunnel.** Publish the app's port only to the proxy (for example `127.0.0.1:3000:3000` in the compose file), terminate https at the proxy, and set `ADDRESS_HEADER=X-Forwarded-For` (with `XFF_DEPTH` set to the number of proxies in front). The proxy must overwrite `X-Forwarded-For`, pass `Host` and `X-Forwarded-Proto`, accept request bodies up to `BODY_SIZE_LIMIT` (Nginx: `client_max_body_size 100m;`), and not buffer the live-update stream (Nginx: `proxy_buffering off;` and `proxy_read_timeout 1h;`, at least for `/api/builds/*/events`; the app sends a keepalive every 25 seconds). Without that, changes from other people appear only after a reload.
+**Your own reverse proxy instead of the tunnel.** Publish the app's port only to the proxy (for example `127.0.0.1:3000:3000` in the compose file), terminate https at the proxy, and set `ADDRESS_HEADER=X-Forwarded-For` (with `XFF_DEPTH` set to the number of proxies in front). The proxy must overwrite `X-Forwarded-For`, pass `Host` and `X-Forwarded-Proto`, accept request bodies up to `BODY_SIZE_LIMIT` (Nginx: `client_max_body_size 100m;`), and not buffer the live-update stream (Nginx: `proxy_buffering off;` and `proxy_read_timeout 1h;`, at least for `/api/builds/*/events`; the app sends a keepalive every 25 seconds). Without that, changes from other people appear only after a reload. Keep the proxy's upstream idle timeout below the app's `KEEP_ALIVE_TIMEOUT` (120 s; Nginx's `keepalive_timeout` for upstream connections defaults to 60 s, `cloudflared`'s to 90 s), see Troubleshooting.
 
 Want to keep the database local instead of Supabase? Uncomment the `db` block in the compose file and use the `DATABASE_URL` described there.
 
@@ -296,3 +296,4 @@ All three are cookieless. Only the chosen provider's script is loaded and only i
 - **Sign-in returns to an error page:** the callback URL registered at the provider must match `PUBLIC_URL` character for character.
 - **Every sign-in attempt returns 400:** `TRUST_CLOUDFLARE=1` is set but requests arrive without `CF-Connecting-IP` (not through Cloudflare), or `ADDRESS_HEADER` names a header your proxy does not send.
 - **A big 3MF upload fails with 413 or a Cloudflare error:** the file is over the 95 MB limit.
+- **Occasional 502 from the proxy (or a Cloudflare error) that goes away on reload:** the proxy reused an idle connection the app had just closed. Keep the app's `KEEP_ALIVE_TIMEOUT` (the image sets 120 seconds) above the proxy's upstream idle timeout, and keep `HEADERS_TIMEOUT` above it. The default is safe for the tunnel and for Nginx's defaults; lower the proxy's setting if you raised it.
