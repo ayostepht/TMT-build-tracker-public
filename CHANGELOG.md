@@ -20,6 +20,9 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 - Site admins can let a hidden design be shared again, from a list of hidden designs on the gallery page or from the design itself. The author sees a short notice while a design is hidden.
 - Optional Cloudflare Turnstile check before a demo starts (`TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`), against bots filling the demo slots. Off unless both keys are set. The server checks the answer's action and hostname (`PUBLIC_URL`'s host, plus `TURNSTILE_HOSTNAMES`), and the demo page says so with a Reload button when the check can't load.
 - A way back to the home page: the home page opens for signed-in visitors too, the app has a "Home page" link in the footer and account menu, the demo banner has "Leave the demo", and signing out lands on the home page. The installed app still opens on your builds.
+- Link previews: sharing the site's address in Facebook, Messages, Discord or Slack shows a card with the chair, the name and a one-line description.
+- Invitations: a "Share" button on phones, a way out when an invite is opened with the wrong account (sign out and use another; the invited address is shown masked), and a link to the team from an invite that was already used.
+- "Send feedback" in the footers opens a new issue on GitHub.
 - Hosting guide and deploy files for Fly.io, Railway and your own server behind a Cloudflare Tunnel, with a Supabase database.
 
 ### Changed
@@ -28,12 +31,23 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 - Printers connect only through OctoEverywhere shared links (Elegoo, Klipper with Moonraker, OctoPrint), or are added as "not connected" to log prints by hand. The server never connects to your home network.
 - Chapters are called teams everywhere.
 - A new look: warm paper and ink colors with one brick accent, in light and dark.
+- Faster pages: the app runs far fewer database queries one after another (opening a build, the builds list, the team page and creating a build), keeps a few database connections warm, and shuts down within a second when asked. New optional settings `DATABASE_IDLE_TIMEOUT_S`, `DATABASE_WARM_CONNECTIONS` and `DATABASE_PREPARE` (see the environment guide).
+- Tracking on a phone: one notification at a time with a larger Undo that stays 12 seconds; the whole assembly checklist row is tappable, and marking a step done while its parts are not printed asks first; the activity list shows a print's grams and note; "Now printing" and "Next up" come before the builds list on a team page.
+- Larger tap targets on phones for pills, tabs, footer links and the setup wizard's options.
+- "Finish setup" really finishes: the "Continue setup" banner no longer lingers.
+- The demo's Start button is on the first screen on a phone.
+- Errors about teams say "team", not "organization".
 - Text fields stop at the length the server accepts, so a long note is never refused on save.
 - The color picker's controls take less room on desktop, so more colors show without scrolling.
 - Sign-in wording names only the providers the site has switched on.
 - The signed-in start page moved to `/workspace`; `/` is the public home page.
 - Kit admin and print-geometry import are for site admins only.
 - The client address used for rate limits comes from Cloudflare (`TRUST_CLOUDFLARE=1`) or from a header your own proxy sets; the server refuses to start in production without one.
+
+### Fixed
+
+- The chair on the home page drew every alternative part at once, which showed as jagged patches of two colors on the wheels.
+- Deleting the photo on screen in the photo viewer could leave keyboard focus nowhere after closing it.
 
 ### Removed
 

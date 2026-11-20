@@ -1,12 +1,13 @@
 import { createAuthEndpoint } from 'better-auth/api';
 import { setSessionCookie } from 'better-auth/cookies';
 import { demoConfig } from '../config';
-import { eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { advisoryLock, type Db } from '../db';
 import { user as userTable } from '../db/schema';
 import { ensurePersonalWorkspace } from '../teams';
 import { deleteDemoUser } from './cleanup';
 import { seedDemoBuild } from './seed';
+import { claimSpare, isClaimedDemo, requestSpareTopUp, spareWorkspaceAndBuild } from './spares';
 
 /** Too many live demos: the page shows "the demo is busy". */
 export class DemoBusyError extends Error {
@@ -22,6 +23,9 @@ export class DemoBusyError extends Error {
  * can only be reached through `auth.api.startDemo(...)` from our own `/demo` form action. The
  * anonymous plugin was not used because its sign-in endpoint is public, so the per-IP and live caps
  * could not be enforced in front of it, and it has its own account-linking behaviour we do not want.
+ *
+ * With `DEMO_SPARES` above 0 it first claims a ready-made spare demo (see `spares.ts`: a few queries
+ * instead of the whole seed) and falls back to building one on the spot when none is ready.
  *
  * Returns `{ buildId }`. The user has `isDemo` set (only server code can), an unverifiable
  * `@demo.invalid` address, no sign-in account, a personal workspace and one seeded sample build, and a session
@@ -41,14 +45,19 @@ export function demoPlugin(db: Db) {
 				// (the server-made demo user skips the account hooks anyway); the workspace, sample build
 				// and session are made after the lock is released.
 				const now = new Date();
-				const [created] = await db.transaction(async (tx) => {
+				const { created, spare } = await db.transaction(async (tx) => {
 					await advisoryLock(tx, 'demo-start');
+					// Unclaimed spares do not count toward the cap.
 					const [{ n }] = await tx
 						.select({ n: sql<number>`count(*)::int` })
 						.from(userTable)
-						.where(eq(userTable.isDemo, true));
+						.where(isClaimedDemo);
 					if (n >= cfg.maxLive) throw new DemoBusyError();
-					return tx
+					if (cfg.spares > 0) {
+						const claimed = await claimSpare(tx, now);
+						if (claimed) return { created: claimed, spare: true };
+					}
+					const [row] = await tx
 						.insert(userTable)
 						.values({
 							id: crypto.randomUUID().replaceAll('-', ''),
@@ -60,13 +69,22 @@ export function demoPlugin(db: Db) {
 							updatedAt: now
 						})
 						.returning();
+					return { created: row, spare: false };
 				});
 				try {
-					const workspace = await ensurePersonalWorkspace(db, {
-						id: created.id,
-						name: created.name
-					});
-					const buildId = await seedDemoBuild(db, created.id);
+					let workspace: { id: string };
+					let buildId: string;
+					if (spare) {
+						const found = await spareWorkspaceAndBuild(db, created.id);
+						workspace = { id: found.workspaceId };
+						buildId = found.buildId;
+					} else {
+						workspace = await ensurePersonalWorkspace(db, {
+							id: created.id,
+							name: created.name
+						});
+						buildId = await seedDemoBuild(db, created.id);
+					}
 					// The active workspace is passed in: the session hook would otherwise look the (just
 					// made) personal workspace up again, which is several more round trips to the database.
 					const session = await adapter.createSession(created.id, true, {
@@ -75,6 +93,8 @@ export function demoPlugin(db: Db) {
 					});
 					// dontRememberMe: a browser-session cookie, and the session is never extended.
 					await setSessionCookie(ctx, { session, user: created }, true);
+					// A spare was used up: make the next one in the background, off this request.
+					if (spare) requestSpareTopUp();
 					return ctx.json({ buildId });
 				} catch (e) {
 					await deleteDemoUser(db, created.id).catch(() => {});

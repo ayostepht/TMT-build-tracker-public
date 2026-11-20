@@ -1,8 +1,9 @@
-import { and, eq, lt, sql } from 'drizzle-orm';
+import { and, lt, sql } from 'drizzle-orm';
 import { deleteAccount } from '../account';
 import { demoConfig } from '../config';
 import type { Db } from '../db';
 import { user } from '../db/schema';
+import { isClaimedDemo, takeStaleSpares } from './spares';
 
 /** Delete one demo sandbox user with everything of theirs (builds, files, sessions). Refuses real users. */
 export async function deleteDemoUser(db: Db, userId: string): Promise<void> {
@@ -18,7 +19,7 @@ const CLEANUP_LOCK = 7_346_201_077;
 let cleaning = false;
 
 /**
- * Delete demo users older than the demo lifetime (`DEMO_TTL_HOURS`, default 24). Idempotent and
+ * Delete claimed demo users older than the demo lifetime (unclaimed spares are left to the spare pool) (`DEMO_TTL_HOURS`, default 24). Idempotent and
  * safe with several app instances: one run at a time per process, and a
  * try-lock on the listing across instances. Each user is deleted on its own, so one failure does not stop the rest.
  */
@@ -43,11 +44,20 @@ export async function cleanupExpiredDemos(
 			return tx
 				.select({ id: user.id })
 				.from(user)
-				.where(and(eq(user.isDemo, true), lt(user.createdAt, cutoff)))
+				.where(and(isClaimedDemo, lt(user.createdAt, cutoff)))
 				.orderBy(user.createdAt)
 				.limit(BATCH);
 		});
 		let n = 0;
+		// Spares past their age go too, whatever `DEMO_SPARES` is now (0 or lowered leaves old ones behind).
+		for (const id of await takeStaleSpares(db, now)) {
+			try {
+				await deleteDemoUser(db, id);
+			} catch (e) {
+				if ((e as { status?: number }).status !== 404)
+					console.error('[tmt] demo cleanup failed', e);
+			}
+		}
 		for (const r of rows) {
 			try {
 				await deleteDemoUser(db, r.id);
@@ -64,12 +74,12 @@ export async function cleanupExpiredDemos(
 	}
 }
 
-/** Live demo users. */
+/** Live demo users a visitor holds (unclaimed spares are not counted). */
 export async function liveDemoCount(db: Db): Promise<number> {
 	const [row] = await db
 		.select({ n: sql<number>`count(*)::int` })
 		.from(user)
-		.where(eq(user.isDemo, true));
+		.where(isClaimedDemo);
 	return row?.n ?? 0;
 }
 

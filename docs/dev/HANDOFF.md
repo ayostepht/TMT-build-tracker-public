@@ -24,23 +24,31 @@ _Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## State
 
-- Live: fifth deploy (`sha-2568f4e`), with Discord sign-in off and Cloudflare Web Analytics and
-  Turnstile on (real widget verified).
-- `main` ahead of live: #12 (strict Turnstile checks) and #13 (way back to the home page).
-  No migrations. The maintainer pulls `:latest` once its `public-ci` run publishes.
-- #14 (signed-out guards) merged after that image; it goes out with the next update.
-- No pull requests open, no agents running.
+- `main` 48b585e is green and published as `sha-48b585e` / `:latest`: #14 to #22 (see STATUS
+  "Where we are"). The maintainer updates the server by hand; nothing new is live until they
+  pull.
+- Open pull request: #23 phone touch targets (`ux/touch-targets`). Its unit job failed on
+  "too many clients" in Postgres, not on its own change; re-run or re-push after the
+  connection fix lands.
+- Branches with work in progress, each in its own worktree in the cloud session:
+  `fix/test-db-connections` (test pools close promptly, CI Postgres limit raised; lands
+  first), `perf/demo-spares` (committed; full verification running; then two low fixes from
+  the security review: re-check a spare before recycling it, and clean up spares when the
+  pool is off or shrinks), `fix/stats-budget-test`.
+- The journey audit and its screenshots were session-local; the findings are folded into the
+  merged pull requests and STATUS open items.
 - Sibling repository: resource-limit back-port open there (`fix/resource-limits`); carry-overs
   in STATUS.
 - Google Safe Browsing review of the domain requested; don't share widely until it clears.
 
 ## Next step
 
-1. The maintainer was told `sha-d28d128` is ready (Force update, then: home page signed in,
-   Home page link, demo start with strict Turnstile, Leave the demo). After they confirm, log
-   the sixth deploy.
-2. With the maintainer: off-site copy of the backups and one restore test; repository
-   settings.
+1. Land `fix/test-db-connections`, then #23, then `perf/demo-spares`.
+2. Tell the maintainer what to pull and what to check: home page wheel, a link preview, the
+   speed of the team page and a build, a demo start, toasts and the assembly checklist on a
+   phone; and offer `DATABASE_PREPARE=on` as a try-and-see.
+3. With the maintainer: Fly.io or not (where is the server relative to US East?), reprint
+   priority in "Next up", the `member` unique index, off-site backups, repository settings.
 
 ## Questions waiting for the maintainer
 
