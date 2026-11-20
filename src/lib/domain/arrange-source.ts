@@ -349,11 +349,23 @@ export function arrangeFromSource(
 		const name = whole ? pl.name : kept.name;
 		// a plate that stays whole is printed as often as the source says (tires: 8 segments per print, twice)
 		const runs = rules.perRun && whole && (pl.runs ?? 0) >= 1 ? Math.round(pl.runs!) : kept.runs;
+		// `estGrams` is per run: when the source says the plate is printed more often than the part's own
+		// count implies (tires: the part is one unit of 901 g, printed twice), one run is that share
+		const estGrams =
+			runs > 1 && runs !== kept.runs
+				? Object.fromEntries(
+						Object.entries(kept.estGrams).map(([r, g]) => [
+							r,
+							Math.round(((g * Math.max(1, kept.runs)) / runs) * 10) / 10
+						])
+					)
+				: kept.estGrams;
 		keptPlates.push({
 			number: pl.number,
 			plate: {
 				...kept,
 				runs,
+				estGrams,
 				items,
 				name,
 				...(runPlate && r.plates.length === 1
