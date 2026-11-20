@@ -18,7 +18,7 @@
  */
 import { rm, unlink } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
-import { and, asc, eq, inArray, isNull, like, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, like, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { ApiError, isSiteAdmin, normalizeRole } from './access';
 import { uploadsDir } from './config';
 import { advisoryLock, first, type Db, type DbOrTx } from './db';
@@ -56,9 +56,17 @@ export interface FilePlan {
 	templateIds: string[];
 	/** Queued STEP zips of those kit copies' conversion jobs. */
 	jobInputs: string[];
+	/** Designs of those kit copies (their rows cascade away): their preview images. */
+	designIds: string[];
 }
 
-export const emptyPlan = (): FilePlan => ({ dirs: [], files: [], templateIds: [], jobInputs: [] });
+export const emptyPlan = (): FilePlan => ({
+	dirs: [],
+	files: [],
+	templateIds: [],
+	jobInputs: [],
+	designIds: []
+});
 
 function insideUploads(p: string): boolean {
 	const root = resolve(uploadsDir());
@@ -121,6 +129,13 @@ export async function planFiles(
 					.from(templateModelJobs)
 					.where(inArray(templateModelJobs.templateId, plan.templateIds))
 			).map((j) => j.p);
+		if (plan.templateIds.length)
+			plan.designIds = (
+				await db
+					.select({ id: colorDesigns.id })
+					.from(colorDesigns)
+					.where(inArray(colorDesigns.templateId, plan.templateIds))
+			).map((d) => d.id);
 	}
 	return plan;
 }
@@ -179,6 +194,71 @@ export async function removePlannedFiles(plan: FilePlan): Promise<void> {
 	for (const d of plan.dirs) await rm(d, { recursive: true, force: true }).catch(() => {});
 	for (const j of plan.jobInputs) if (insideUploads(j)) await unlink(j).catch(() => {});
 	for (const t of plan.templateIds) await removeTemplateFiles(t).catch(() => {});
+	for (const d of plan.designIds) await removeSnapshot(d).catch(() => {});
+}
+
+// ---- shared by account deletion, leaving a team and deleting a team
+
+/** Who inherits what a leaving member created: another owner, else the longest-standing member. */
+export async function pickHeir(
+	tx: DbOrTx,
+	orgId: string,
+	leavingUserId: string
+): Promise<string | undefined> {
+	const rows = (
+		await tx
+			.select({ userId: member.userId, role: member.role })
+			.from(member)
+			.where(eq(member.organizationId, orgId))
+			.orderBy(asc(member.createdAt), asc(member.id))
+	).filter((r) => r.userId !== leavingUserId);
+	return (rows.find((r) => normalizeRole(r.role) === 'owner') ?? rows[0])?.userId;
+}
+
+/**
+ * Builds a user created that stay behind (`builds.created_by` has no ON DELETE rule) move to an
+ * heir: `heirOf` names one per workspace, anything else falls back to `pickHeir`. `scope` narrows
+ * which workspaces. Returns the builds nobody can inherit (the caller deletes them). Call inside
+ * the caller's transaction.
+ */
+export async function reassignCreatedBuilds(
+	tx: DbOrTx,
+	userId: string,
+	scope: SQL | undefined,
+	heirOf: Map<string, string> = new Map()
+): Promise<string[]> {
+	const orphanIds: string[] = [];
+	const stay = await tx
+		.select({ id: builds.id, orgId: builds.organizationId })
+		.from(builds)
+		.where(and(eq(builds.createdBy, userId), eq(builds.kind, 'build'), scope));
+	for (const b of stay) {
+		const heir = heirOf.get(b.orgId) ?? (await pickHeir(tx, b.orgId, userId));
+		if (heir) await tx.update(builds).set({ createdBy: heir }).where(eq(builds.id, b.id));
+		else orphanIds.push(b.id);
+	}
+	return orphanIds;
+}
+
+/**
+ * Delete whole workspaces: the rows (builds with plates, runs, activity and photo rows; printers
+ * and their encrypted secrets; invitations; memberships; custom filaments; settings; kit copies
+ * with their designs) and, with `extraBuildIds`, single builds that go with them. Returns the
+ * plan of files to remove AFTER the caller's transaction commits (`removePlannedFiles`).
+ * Call inside the caller's transaction.
+ */
+export async function deleteWorkspaceRows(
+	tx: DbOrTx,
+	orgIds: string[],
+	extraBuildIds: string[] = []
+): Promise<FilePlan> {
+	// Files must be listed while the rows still exist.
+	const plan = await planFiles(tx, { orgIds, buildIds: extraBuildIds });
+	await repointBuildsOffTemplates(tx, plan.templateIds);
+	await deleteOwnedTemplates(tx, plan.templateIds, orgIds);
+	if (extraBuildIds.length) await tx.delete(builds).where(inArray(builds.id, extraBuildIds));
+	if (orgIds.length) await tx.delete(organization).where(inArray(organization.id, orgIds));
+	return plan;
 }
 
 // ---- deletion
@@ -231,6 +311,37 @@ export async function planAccountDeletion(db: DbOrTx, userId: string): Promise<W
 		out.push({ orgId: m.orgId, name: m.name, fate: 'leave', heirId: (heir ?? others[0]).userId });
 	}
 	return out;
+}
+
+async function countOwners(tx: DbOrTx, orgId: string): Promise<number> {
+	return (
+		await tx.select({ role: member.role }).from(member).where(eq(member.organizationId, orgId))
+	).filter((m) => normalizeRole(m.role) === 'owner').length;
+}
+
+/**
+ * Take the per-team advisory lock (`team:<id>`, ids sorted) of every team (not the personal
+ * workspace) the user belongs to, then lock those teams' member rows. Returns the ids.
+ */
+async function lockTeamsOf(tx: DbOrTx, userId: string): Promise<string[]> {
+	const mine = await tx
+		.select({ id: organization.id, metadata: organization.metadata })
+		.from(member)
+		.innerJoin(organization, eq(organization.id, member.organizationId))
+		.where(eq(member.userId, userId));
+	const ids = mine
+		.filter((o) => parseMetadata(o.metadata).personal !== true)
+		.map((o) => o.id)
+		.sort();
+	for (const id of ids) await advisoryLock(tx, 'team:' + id);
+	if (ids.length)
+		await tx
+			.select({ id: member.id })
+			.from(member)
+			.where(inArray(member.organizationId, ids))
+			.orderBy(asc(member.id))
+			.for('update');
+	return ids;
 }
 
 /** Refusal that carries a machine-readable code (`last_admin`, `only_account`). */
@@ -309,6 +420,12 @@ export async function deleteAccount(
 			const site = await siteBlock(tx, userId);
 			if (site) throw site;
 		}
+		// Lock every team the user is in (sorted ids, after `site-admins`: the one lock order), and
+		// its member rows, so the heirs and the "sole owner" decision below are made on settled data
+		// (leaving, removing and role changes take the same per-team lock in team-exit.ts).
+		const teamIds = await lockTeamsOf(tx, userId);
+		const ownersBefore = new Map<string, number>();
+		for (const id of teamIds) ownersBefore.set(id, await countOwners(tx, id));
 		const fates = await planAccountDeletion(tx, userId);
 		const blocked = fates.filter((f) => f.fate === 'blocked').map((f) => f.name);
 		if (blocked.length) throw new ApiError(409, blockedMessage(blocked));
@@ -326,67 +443,29 @@ export async function deleteAccount(
 				.where(and(eq(builds.createdBy, userId), eq(builds.kind, 'draft')))
 		).map((b) => b.id);
 		// Builds that stay need a new creator; one with nobody to inherit it is removed.
-		const orphanIds: string[] = [];
-		const stay = await tx
-			.select({ id: builds.id, orgId: builds.organizationId })
-			.from(builds)
-			.where(
-				and(
-					eq(builds.createdBy, userId),
-					eq(builds.kind, 'build'),
-					doomed.length
-						? notInArray(
-								builds.organizationId,
-								doomed.map((f) => f.orgId)
-							)
-						: undefined
-				)
-			);
-		const heirOf = new Map(leaving.map((f) => [f.orgId, f.heirId!]));
-		for (const b of stay) {
-			let heir = heirOf.get(b.orgId);
-			if (!heir) {
-				// A workspace the user no longer belongs to but still has builds in: any owner, else any member.
-				const rows = (
-					await tx
-						.select({ userId: member.userId, role: member.role })
-						.from(member)
-						.where(eq(member.organizationId, b.orgId))
-						.orderBy(asc(member.createdAt), asc(member.id))
-				).filter((r) => r.userId !== userId);
-				heir = (rows.find((r) => normalizeRole(r.role) === 'owner') ?? rows[0])?.userId;
-			}
-			if (heir) await tx.update(builds).set({ createdBy: heir }).where(eq(builds.id, b.id));
-			else orphanIds.push(b.id);
-		}
+		const orphanIds = await reassignCreatedBuilds(
+			tx,
+			userId,
+			doomed.length
+				? notInArray(
+						builds.organizationId,
+						doomed.map((f) => f.orgId)
+					)
+				: undefined,
+			new Map(leaving.map((f) => [f.orgId, f.heirId!]))
+		);
 
-		// Files must be listed while the rows still exist.
-		plan = await planFiles(tx, {
-			orgIds: doomed.map((f) => f.orgId),
-			buildIds: [...myDrafts, ...orphanIds]
-		});
 		designIds = (
 			await tx
 				.select({ id: colorDesigns.id })
 				.from(colorDesigns)
 				.where(eq(colorDesigns.authorUserId, userId))
 		).map((d) => d.id);
-
-		await repointBuildsOffTemplates(tx, plan.templateIds);
-		await deleteOwnedTemplates(
+		plan = await deleteWorkspaceRows(
 			tx,
-			plan.templateIds,
-			doomed.map((f) => f.orgId)
+			doomed.map((f) => f.orgId),
+			[...myDrafts, ...orphanIds]
 		);
-		const doomedBuilds = [...myDrafts, ...orphanIds];
-		if (doomedBuilds.length) await tx.delete(builds).where(inArray(builds.id, doomedBuilds));
-		if (doomed.length)
-			await tx.delete(organization).where(
-				inArray(
-					organization.id,
-					doomed.map((f) => f.orgId)
-				)
-			);
 		if (designIds.length)
 			await tx.delete(colorDesigns).where(eq(colorDesigns.authorUserId, userId));
 
@@ -405,6 +484,10 @@ export async function deleteAccount(
 			);
 		// Sessions, OAuth links and remaining memberships follow by ON DELETE CASCADE.
 		await tx.delete(user).where(eq(user.id, userId));
+		// A team that stays and had an owner still has one (else the transaction rolls back).
+		for (const f of leaving)
+			if ((ownersBefore.get(f.orgId) ?? 0) > 0 && (await countOwners(tx, f.orgId)) === 0)
+				throw new Error('team would be left without an owner');
 	});
 
 	await removePlannedFiles(plan);

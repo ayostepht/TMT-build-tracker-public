@@ -86,13 +86,18 @@ export const PASSWORD_PATHS = [
 /**
  * Organization endpoints nothing in the app calls. `/organization/update` could rewrite a
  * workspace's metadata (the `personal` flag) and slug; `/leave` and `/check-slug` have no UI.
+ * `/remove-member` and `/update-member-role` are off over HTTP too: the Members page uses the locked
+ * helpers in team-exit.ts (one transaction, "at least one owner remains", handover of what the
+ * removed member made), which a direct call to the plugin would bypass and could race.
  * (Team and dynamic-role endpoints are not registered at all because those plugin options are
  * off.) Everything else the app uses goes through the quota hooks below.
  */
 export const ORGANIZATION_DISABLED_PATHS = [
 	'/organization/update',
 	'/organization/leave',
-	'/organization/check-slug'
+	'/organization/check-slug',
+	'/organization/remove-member',
+	'/organization/update-member-role'
 ];
 
 /** Quota refusals reach Better Auth callers as 409 `QUOTA` with the sentence as the message. */

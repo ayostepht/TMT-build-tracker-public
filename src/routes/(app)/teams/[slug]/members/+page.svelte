@@ -24,6 +24,16 @@
 	/** Member being removed: asked about in a dialog, not a browser confirm(). */
 	let removing = $state<{ id: string; name: string } | null>(null);
 
+	/** Leaving and deleting the team: confirmed in dialogs; the sole owner picks who takes over. */
+	let leaving = $state(false);
+	let heir = $state('');
+	const heirName = $derived(data.leave.heirs.find((h) => h.userId === heir)?.name ?? '');
+	let deleting = $state(false);
+	let typedName = $state('');
+	let busy = $state(false);
+	const nameMatches = $derived(typedName.trim() === data.team.name.trim());
+	const plural = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+
 	/** Which invite link was just copied ("Copied" confirmation); a failed copy leaves the field selected. */
 	let copied = $state<string | null>(null);
 	let pendingLinks = $state<Record<string, HTMLInputElement | null>>({});
@@ -79,12 +89,16 @@
 						<option value="viewer">viewer</option>
 					</select>
 				</form>
-				<button
-					class="btn"
-					type="button"
-					data-testid="remove-member"
-					onclick={() => (removing = { id: m.id, name: m.name })}>Remove</button
-				>
+				{#if m.userId === data.me.userId}
+					<span class="ds-badge ds-badge--sm mem-you" data-testid="member-you">you</span>
+				{:else}
+					<button
+						class="btn"
+						type="button"
+						data-testid="remove-member"
+						onclick={() => (removing = { id: m.id, name: m.name })}>Remove</button
+					>
+				{/if}
 			{:else}
 				<span class="ds-badge ds-badge--sm">{m.role}</span>
 			{/if}
@@ -180,6 +194,160 @@
 	{/if}
 {/if}
 
+<section class="card stack" data-testid="leave-section">
+	<h2>Leave this team</h2>
+	{#if data.leave.onlyMember}
+		<p class="muted" data-testid="leave-only-member">
+			You're the only one here. Delete the team instead.
+		</p>
+	{:else}
+		<p class="muted">
+			You lose access to this team's builds and printers. Builds you created stay with the team.
+		</p>
+		{#if data.leave.needsHeir}
+			<label class="field mem-heir"
+				>Choose who takes over as owner
+				<select bind:value={heir} data-testid="leave-heir">
+					<option value="">Choose a member…</option>
+					{#each data.leave.heirs as h (h.userId)}
+						<option value={h.userId}>{h.name} ({h.role})</option>
+					{/each}
+				</select>
+			</label>
+			<p class="muted mem-why">
+				You are the only owner. They become an owner, then you leave, in one step.
+			</p>
+		{/if}
+		{#if form?.exitError && form.what === 'leave' && !leaving}
+			<div class="error" role="alert" data-testid="leave-error">{form.exitError}</div>
+		{/if}
+		<div>
+			<button
+				class="btn danger"
+				type="button"
+				data-testid="leave-open"
+				disabled={data.leave.needsHeir && !heir}
+				onclick={() => (leaving = true)}>Leave team…</button
+			>
+		</div>
+	{/if}
+</section>
+
+{#if isOwner && data.deletion}
+	<section class="card danger-zone stack" data-testid="delete-team-section">
+		<h2>Delete this team</h2>
+		<p class="muted">
+			Deletes the team and everything in it for good. It cannot be undone. Your own builds in My
+			builds are not touched.
+		</p>
+		{#if form?.exitError && form.what === 'delete' && !deleting}
+			<div class="error" role="alert">{form.exitError}</div>
+		{/if}
+		<div>
+			<button
+				class="btn danger"
+				type="button"
+				data-testid="delete-team-open"
+				onclick={() => (deleting = true)}>Delete this team…</button
+			>
+		</div>
+	</section>
+{/if}
+
+{#if leaving}
+	<Dialog
+		title="Leave {data.team.name}?"
+		onclose={() => (leaving = false)}
+		testid="leave-dialog"
+		danger
+	>
+		<p>
+			You lose access to this team's builds and printers. Builds you created stay with the team.
+			{#if data.leave.needsHeir && heirName}{heirName} becomes an owner.{/if}
+		</p>
+		{#if form?.exitError && form.what === 'leave'}
+			<div class="error" role="alert" data-testid="leave-dialog-error">{form.exitError}</div>
+		{/if}
+		<form
+			class="mem-actions"
+			method="post"
+			action="?/leave"
+			use:enhance={() => {
+				busy = true;
+				return async ({ update }) => {
+					await update({ reset: false });
+					busy = false;
+				};
+			}}
+		>
+			<input type="hidden" name="heir" value={heir} />
+			<button class="btn" type="button" data-cancel onclick={() => (leaving = false)}>Cancel</button
+			>
+			<button class="btn danger solid" disabled={busy} data-testid="leave-confirm"
+				>Leave team</button
+			>
+		</form>
+	</Dialog>
+{/if}
+
+{#if deleting && data.deletion}
+	{@const d = data.deletion}
+	<Dialog
+		title="Delete {data.team.name}?"
+		onclose={() => (deleting = false)}
+		testid="delete-team-dialog"
+		danger
+	>
+		<form
+			class="stack"
+			method="post"
+			action="?/deleteTeam"
+			use:enhance={() => {
+				busy = true;
+				return async ({ update }) => {
+					await update({ reset: false });
+					busy = false;
+				};
+			}}
+		>
+			<p>This permanently deletes:</p>
+			<ul class="mem-list" data-testid="delete-team-summary">
+				<li>{plural(d.builds, 'build')}, with their plates, runs, activity and photos</li>
+				<li>
+					{#if d.otherMembers}{plural(d.otherMembers, 'other person', 'other people')}
+						{d.otherMembers === 1 ? 'loses' : 'lose'} access{:else}No other members{/if}
+				</li>
+				<li>{plural(d.printers, 'printer')}, with their saved connection details</li>
+				{#if d.pendingInvitations}<li>{plural(d.pendingInvitations, 'open invitation')}</li>{/if}
+				<li>The team's custom kits, filaments and uploaded files</li>
+			</ul>
+			{#if form?.exitError && form.what === 'delete'}
+				<div class="error" role="alert" data-testid="delete-team-error">{form.exitError}</div>
+			{/if}
+			<label class="field"
+				>Type the team name ({data.team.name}) to confirm
+				<input
+					name="name"
+					bind:value={typedName}
+					autocomplete="off"
+					required
+					data-testid="delete-team-name"
+				/></label
+			>
+			<div class="mem-actions">
+				<button class="btn" type="button" data-cancel onclick={() => (deleting = false)}
+					>Cancel</button
+				>
+				<button
+					class="btn danger solid"
+					disabled={!nameMatches || busy}
+					data-testid="delete-team-confirm">Delete team forever</button
+				>
+			</div>
+		</form>
+	</Dialog>
+{/if}
+
 {#if removing}
 	{@const who = removing}
 	<Dialog
@@ -236,6 +404,21 @@
 	.mem-link input {
 		flex: 1 1 220px;
 		min-width: 0;
+	}
+	.mem-you {
+		justify-self: start;
+		align-self: start;
+		width: fit-content;
+	}
+	.mem-heir select {
+		max-width: 100%;
+		min-width: 0;
+	}
+	.mem-list {
+		margin: 0;
+		padding-left: 18px;
+		display: grid;
+		gap: 6px;
 	}
 	.mem-actions {
 		display: flex;
