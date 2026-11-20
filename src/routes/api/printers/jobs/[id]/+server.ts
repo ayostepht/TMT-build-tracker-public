@@ -27,7 +27,16 @@ export const POST: RequestHandler = (event) =>
 			case 'link': {
 				if (typeof body.buildId !== 'string' || typeof body.plateNumber !== 'number')
 					throw new ApiError(400, 'buildId and plateNumber are required');
-				await linkJob(db, id, row.org, userId, body.buildId, body.plateNumber, body.partSlugs);
+				await linkJob(
+					db,
+					id,
+					row.org,
+					userId,
+					body.buildId,
+					body.plateNumber,
+					body.partSlugs,
+					body.comps
+				);
 				return {};
 			}
 			case 'unlink':

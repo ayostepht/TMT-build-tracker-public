@@ -7,6 +7,17 @@ e2e specs). The database and server side are **not** on the branch: they differ 
 (Postgres, async, `DbOrTx`) and are listed below as the to-do. Until they are done the branch must
 not be merged, see "State of the branch".
 
+## Status
+
+Done on 2026-11-20: sections 1 to 6 below are implemented on the branch (migration
+`0002_piece_prints`, `builds/{view,actions}.ts`, `printers/jobs.ts`, `org-settings.ts`, the two
+printer routes, `builds/pieces.test.ts`, `printers/jobs.pieces.test.ts`). The rest of this file is
+kept as the record of what was ported and why. Differences from the sibling that were added here:
+a link whose chosen pieces no longer fit under the build lock is refused with 409 (never
+downgraded to a whole-part print), `attach` recomputes the list on the locked view, the pending
+expectation is cleared only after a successful link, and hand ticks and undo snapshots keep only
+keys that are indexes of the part's own pieces.
+
 ## What the feature does
 
 A part made of several pieces (for example Harness and Straps: nine pieces, alone on plate 18 of the

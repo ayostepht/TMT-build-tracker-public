@@ -511,7 +511,7 @@ describe('activity sentences', () => {
 	it('run rows name the pieces and keep the plate link', () => {
 		const p = { plateNumber: 18, partSlug: H, comps: [0, 1, 2], result: 'Success', grams: 88 };
 		expect(describeActivity(act('run.add', p), view)).toBe(
-			'Sam logged a successful print of 3 pieces of Harness and Straps (plate 18) (88 g)'
+			'Sam logged a successful print of 3 pieces of Harness and Straps (plate 18) · 88 g'
 		);
 		expect(describeActivity(act('run.undo', p), view)).toBe(
 			'Sam undid a successful print of 3 pieces of Harness and Straps (plate 18)'
