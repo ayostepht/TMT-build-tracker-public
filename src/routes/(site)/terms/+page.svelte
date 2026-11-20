@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SocialMeta from '#lib/components/site/SocialMeta.svelte';
 	import { providerPhrase } from '#lib/sign-in-providers.ts';
 	import { resolve } from '$app/paths';
 	import LegalPage from '#lib/components/LegalPage.svelte';
@@ -10,7 +11,10 @@
 	const providerText = $derived(providerPhrase(data.signInProviders));
 </script>
 
-<svelte:head><title>Terms · TMT Build Tracker</title></svelte:head>
+<SocialMeta
+	title="Terms · TMT Build Tracker"
+	description="The terms for using TMT Build Tracker, a free and open source build tracker for MakeGood 3D TMT chairs."
+/>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -->
 <LegalPage title="Terms" updated="2026-11-19" signedIn={data.signedIn} other="privacy">

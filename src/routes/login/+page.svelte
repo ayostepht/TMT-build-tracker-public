@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SocialMeta from '#lib/components/site/SocialMeta.svelte';
 	import { resolve } from '$app/paths';
 	import { authClient } from '#lib/auth-client.ts';
 	import ProviderMark from '#lib/components/demo/ProviderMark.svelte';
@@ -34,7 +35,10 @@
 	}
 </script>
 
-<svelte:head><title>Sign in · TMT Build Tracker</title></svelte:head>
+<SocialMeta
+	title="Sign in · TMT Build Tracker"
+	description="Sign in to plan, print and hand off MakeGood 3D TMT chair builds with your team."
+/>
 
 <div class="login-page">
 	<SiteHeader signedIn={false} />

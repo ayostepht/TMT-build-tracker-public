@@ -1,4 +1,4 @@
-import { and, count, eq, ne } from 'drizzle-orm';
+import { and, count, eq, inArray, ne } from 'drizzle-orm';
 import {
 	MANUAL_HOST_PLACEHOLDER,
 	PRINTER_KIND_INFO,
@@ -386,6 +386,14 @@ export async function configFromInput(
 /** Number of printers per workspace, for the given workspaces (the top nav's Printers link). */
 export async function printerCounts(db: DbOrTx, orgIds: string[]): Promise<Record<string, number>> {
 	const out: Record<string, number> = {};
-	for (const id of orgIds) out[id] = (await listPrinters(db, id)).length;
+	for (const id of orgIds) out[id] = 0;
+	if (!orgIds.length) return out;
+	// One grouped count, no row (and so no encrypted secret) leaves the database.
+	const rows = await db
+		.select({ orgId: printers.organizationId, n: count() })
+		.from(printers)
+		.where(inArray(printers.organizationId, orgIds))
+		.groupBy(printers.organizationId);
+	for (const r of rows) out[r.orgId] = Number(r.n);
 	return out;
 }
