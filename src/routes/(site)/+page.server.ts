@@ -1,8 +1,9 @@
 import { eq } from 'drizzle-orm';
-import { getDb } from '#lib/server/db/index.ts';
+import { getDb, type Db } from '#lib/server/db/index.ts';
 import { templateParts } from '#lib/server/db/schema.ts';
 import { loadTemplateModelInfo } from '#lib/server/models/info.ts';
 import { defaultTemplate } from '#lib/server/templates/fork.ts';
+import { inactiveSlugs } from '#lib/domain/variants.ts';
 import type { TemplateModelInfo } from '#lib/domain/types.ts';
 import type { PageServerLoad } from './$types';
 
@@ -14,6 +15,7 @@ import type { PageServerLoad } from './$types';
 type Hero = {
 	model: TemplateModelInfo;
 	partRoles: Record<string, string>;
+	hidden: string[];
 };
 
 /**
@@ -22,18 +24,25 @@ type Hero = {
  * trips on every visit. Only a found model is kept: a missing kit (still installing) is looked up again.
  */
 const HERO_TTL_MS = 30_000;
-let heroCache: { at: number; value: Hero } | null = null;
+// Keyed by the database handle, so a test (or a restart onto another pool) never sees another database's hero.
+let heroCache: { at: number; db: Db; value: Hero } | null = null;
 
 async function heroModel(): Promise<Hero | null> {
-	if (heroCache && Date.now() - heroCache.at < HERO_TTL_MS) return heroCache.value;
-	const value = await loadHeroModel();
-	if (value) heroCache = { at: Date.now(), value };
+	let db: Db;
+	try {
+		db = getDb();
+	} catch {
+		return null;
+	}
+	if (heroCache && heroCache.db === db && Date.now() - heroCache.at < HERO_TTL_MS)
+		return heroCache.value;
+	const value = await loadHeroModel(db);
+	if (value) heroCache = { at: Date.now(), db, value };
 	return value;
 }
 
-async function loadHeroModel(): Promise<Hero | null> {
+async function loadHeroModel(db: Db): Promise<Hero | null> {
 	try {
-		const db = getDb();
 		const t = await defaultTemplate(db);
 		if (!t) return null;
 		// Independent of each other: one round trip's wait, not two.
@@ -48,7 +57,10 @@ async function loadHeroModel(): Promise<Hero | null> {
 		return {
 			// no hardware GLB for the hero: it is only readable by signed-in users
 			model: { ...info, hardwareUrl: null },
-			partRoles: Object.fromEntries(rows.map((r) => [r.slug, r.role]))
+			partRoles: Object.fromEntries(rows.map((r) => [r.slug, r.role])),
+			// Parts of the variants the template does not choose by default, hidden exactly as the
+			// design pages do; drawn together they z-fight in the wheel face.
+			hidden: [...inactiveSlugs(t.variantGroups ?? [], null)]
 		};
 	} catch {
 		return null;
