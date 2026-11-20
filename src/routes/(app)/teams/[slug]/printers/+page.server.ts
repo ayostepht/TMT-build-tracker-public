@@ -1,4 +1,4 @@
-import { error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import { and, eq } from 'drizzle-orm';
 import { normalizeRole } from '#lib/server/access.ts';
 import { first, getDb } from '#lib/server/db/index.ts';
@@ -7,6 +7,8 @@ import { isPersonalMetadata } from '#lib/server/teams.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
+	// Signed out (e.g. the reload right after sign-out): same as the (app) layout.
+	if (!locals.user) redirect(303, '/login');
 	const db = getDb();
 	const org = await first(db.select().from(organization).where(eq(organization.slug, params.slug)));
 	if (!org) error(404, 'Not found');
@@ -14,7 +16,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		db
 			.select({ role: member.role })
 			.from(member)
-			.where(and(eq(member.organizationId, org.id), eq(member.userId, locals.user!.id)))
+			.where(and(eq(member.organizationId, org.id), eq(member.userId, locals.user.id)))
 	);
 	if (!m) error(404, 'Not found');
 	const role = normalizeRole(m.role);

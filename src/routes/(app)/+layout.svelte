@@ -19,8 +19,9 @@
 		await authClient.signOut();
 		await clearPrivateCaches().catch(() => {});
 		await invalidateAll();
+		// Home page: the notice is shown there (fixed text, only for a signed-out visitor).
 		// eslint-disable-next-line svelte/no-navigation-without-resolve
-		await goto(wasDemo ? '/login?notice=demo-ended' : resolve('/login'));
+		await goto(wasDemo ? '/?notice=demo-ended' : resolve('/(site)'));
 	}
 
 	const showSwitcher = $derived(data.teams.length > 1 || data.invitationCount > 0);
@@ -177,7 +178,7 @@
 
 <div class="navprogress" class:on={progress} aria-hidden="true"></div>
 
-{#if data.isDemo && data.demoEndsAt}<DemoBanner endsAt={data.demoEndsAt} />{/if}
+{#if data.isDemo && data.demoEndsAt}<DemoBanner endsAt={data.demoEndsAt} onleave={signOut} />{/if}
 
 <div class="wrap shell" class:has-tabs={!!current && !onSetup}>
 	<header class="topbar" bind:this={topbar} onfocusout={onTopbarFocusOut}>
@@ -371,6 +372,7 @@
 						{#if !data.isDemo}<a href={resolve('/(app)/account')} data-testid="account-link"
 								>Account</a
 							>{/if}
+						<a href={resolve('/(site)')} data-testid="menu-home">Home page</a>
 						<button type="button" onclick={signOut}>Sign out</button>
 					</div>
 				{/if}
@@ -389,6 +391,7 @@
 		<nav aria-label="Site">
 			<a href={resolve('/(app)/help')} data-testid="footer-help">Help</a>
 			<a href={resolve('/(app)/about')} data-testid="footer-about">About</a>
+			<a href={resolve('/(site)')} data-testid="footer-home">Home page</a>
 			<a href={resolve('/(site)/privacy')} data-testid="footer-privacy">Privacy</a>
 			<a href={resolve('/(site)/terms')} data-testid="footer-terms">Terms</a>
 		</nav>

@@ -12,7 +12,7 @@ test('manifest is valid and every icon is served as an image', async ({ request 
 	expect(m).toMatchObject({
 		name: 'TMT Build Tracker',
 		display: 'standalone',
-		start_url: '/',
+		start_url: '/workspace',
 		scope: '/',
 		id: '/'
 	});
@@ -142,7 +142,7 @@ test('sign-out clears the model runtime cache and keeps the app shell precache',
 
 	await page.getByTestId('account-menu').click();
 	await page.getByRole('button', { name: 'Sign out' }).click();
-	await expect(page).toHaveURL(/\/login/);
+	await expect(page).toHaveURL(/\/$/);
 
 	await expect.poll(names).not.toContain('tmt-runtime-v1');
 	expect((await names()).filter((k) => k.startsWith('tmt-shell-'))).toEqual(shellBefore);

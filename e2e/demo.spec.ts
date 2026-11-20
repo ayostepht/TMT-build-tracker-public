@@ -154,8 +154,8 @@ test('signing out of the demo deletes it at once', async ({ page }) => {
 	await openNav(page);
 	await page.getByTestId('account-menu').click();
 	await page.getByRole('button', { name: 'Sign out' }).click();
-	await expect(page).toHaveURL(/\/login\?notice=demo-ended/);
-	await expect(page.getByText('The demo was deleted.')).toBeVisible();
+	await expect(page).toHaveURL(/\/\?notice=demo-ended/);
+	await expect(page.getByTestId('home-notice')).toHaveText('The demo was deleted.');
 	expect(await count()).toBe(0);
 	// the old session is gone
 	await page.goto('/workspace');
