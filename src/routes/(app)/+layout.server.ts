@@ -22,17 +22,40 @@ export const load: LayoutServerLoad = async ({ locals, url, request }) => {
 		redirect(303, `/login?redirect=${encodeURIComponent(back)}`);
 	}
 	const db = getDb();
-	const isDemo = (locals.user as { isDemo?: boolean }).isDemo === true;
+	const user = locals.user;
+	const isDemo = (user as { isDemo?: boolean }).isDemo === true;
+	// Each query is a network round trip to the database, so what does not depend on another
+	// result runs together: the layout is one wave of two queries, then one wave of the rest.
+	const [personal, listed] = await Promise.all([
+		findPersonalWorkspace(db, user.id),
+		listTeams(db, user.id)
+	]);
 	// Users from before personal workspaces existed get theirs on first visit.
-	if (!(await findPersonalWorkspace(db, locals.user.id)))
-		await ensurePersonalWorkspace(db, { id: locals.user.id, name: locals.user.name });
-	const raw = await listTeams(db, locals.user.id);
+	let raw = listed;
+	if (!personal) {
+		await ensurePersonalWorkspace(db, { id: user.id, name: user.name });
+		raw = await listTeams(db, user.id);
+	}
 	const activeId = (locals.session as { activeOrganizationId?: string | null } | null)
 		?.activeOrganizationId;
 	// Without a valid active workspace, prefer a real chapter (legacy users) over "My builds".
 	const fallback = raw.find((t) => !t.personal) ?? raw[0];
 	const activeTeamId = raw.find((t) => t.id === activeId)?.id ?? fallback?.id ?? null;
-	if (activeTeamId && activeTeamId !== activeId) {
+	// A personal workspace is shown as "My builds"; its stored name is only a fallback.
+	const teams = raw.map((t) => (t.personal ? { ...t, name: 'My builds' } : t));
+	const teamIds = teams.map((t) => t.id);
+	// A page reached from a build (`?from=<buildId>`) offers a way back to it.
+	const fromId = url.searchParams.get('from');
+	const loadBackBuild = async (): Promise<{ id: string; name: string } | null> => {
+		if (!fromId || !(await buildAccess(db, fromId, user.id))) return null;
+		return (
+			(await first(
+				db.select({ id: builds.id, name: builds.name }).from(builds).where(eq(builds.id, fromId))
+			)) ?? null
+		);
+	};
+	const rememberActiveTeam = async () => {
+		if (!activeTeamId || activeTeamId === activeId) return;
 		try {
 			await getAuth().api.setActiveOrganization({
 				body: { organizationId: activeTeamId },
@@ -41,45 +64,33 @@ export const load: LayoutServerLoad = async ({ locals, url, request }) => {
 		} catch {
 			/* non-fatal */
 		}
-	}
-	// A personal workspace is shown as "My builds"; its stored name is only a fallback.
-	const teams = raw.map((t) => (t.personal ? { ...t, name: 'My builds' } : t));
-	// A page reached from a build (`?from=<buildId>`) offers a way back to it.
-	const fromId = url.searchParams.get('from');
-	let backBuild: { id: string; name: string } | null = null;
-	if (fromId && (await buildAccess(db, fromId, locals.user.id))) {
-		const row = await first(
-			db.select({ id: builds.id, name: builds.name }).from(builds).where(eq(builds.id, fromId))
-		);
-		if (row) backBuild = row;
-	}
+	};
+	const [counts, admin, invitations, recent, backBuild] = await Promise.all([
+		// One query per workspace; side by side instead of one after the other.
+		Promise.all(teamIds.map((id) => printerCounts(db, [id]))),
+		isSiteAdmin(db, user),
+		mayUseInvitations(user) ? pendingInvitationCount(db, user.email) : 0,
+		recentBuilds(db, teamIds),
+		loadBackBuild(),
+		rememberActiveTeam()
+	]);
 	const nameOf = new Map(teams.map((t) => [t.id, t.name]));
 	return {
-		user: { id: locals.user.id, name: locals.user.name, email: locals.user.email },
+		user: { id: user.id, name: user.name, email: user.email },
 		teams,
 		/** Printers per workspace: the nav's Printers link goes where the printers are. */
-		printerCounts: await printerCounts(
-			db,
-			teams.map((t) => t.id)
-		),
+		printerCounts: Object.assign({}, ...counts) as Record<string, number>,
 		activeTeamId,
-		/** Install-wide admin (first user or ADMIN_EMAILS): shows the "Kit admin" link. */
-		siteAdmin: await isSiteAdmin(db, locals.user),
+		/** Install-wide admin (`ADMIN_EMAILS` or granted in the app): shows the "Kit admin" link. */
+		siteAdmin: admin,
 		/** Demo sandbox: the layout shows the banner (ends at `demoEndsAt`) and signing out deletes it. */
 		isDemo,
 		demoEndsAt: isDemo
-			? new Date(new Date(locals.user.createdAt).getTime() + demoConfig().ttlMs).toISOString()
+			? new Date(new Date(user.createdAt).getTime() + demoConfig().ttlMs).toISOString()
 			: null,
-		invitationCount: mayUseInvitations(locals.user)
-			? await pendingInvitationCount(db, locals.user.email)
-			: 0,
+		invitationCount: invitations,
 		/** Builds touched most recently across all workspaces, for the Builds menu. */
-		recentBuilds: (
-			await recentBuilds(
-				db,
-				teams.map((t) => t.id)
-			)
-		).map((b) => ({
+		recentBuilds: recent.map((b) => ({
 			id: b.id,
 			name: b.name,
 			progress: b.progress,
