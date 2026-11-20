@@ -27,12 +27,19 @@ _Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 - `main` 828df84 is live (sixth deploy, `sha-828df84`, #12 to #26); the maintainer confirmed
   the site is much faster.
 - Merged after the sixth deploy and waiting for the maintainer to pull: #27 (leave and
-  delete teams) and #28 (kit layout first in the arranger).
-- Sibling repository: the maintainer said the arranger change may be shared there; the plan is
-  a pull request into its `edge` with the port (async to sync DB calls). Part-level printing
-  is built there by its developer and ported here afterwards.
-- No pull requests open here. The session's worktrees and the journey audit
-  screenshots were session-local.
+  delete teams), #28 and #30 (kit layout first in the arranger; rims on one plate; moved
+  parts may join a plate up to 60% full) and #29 (print some parts of a plate). The
+  maintainer is holding the update: the sibling's developer found a problem in part-level
+  printing and is preparing a fix there; port it here when its pull request is up, then
+  tell the maintainer which image to pull and what to check (24 plates equal to the kit,
+  rims on one plate, "Print some parts…", Members page leave and delete, the existing build
+  unchanged).
+- Sibling repository: the arranger (#28 and #30 together) is ported on its branch
+  `claude/elegant-fermi-ea7mci` (based on its `edge`), not yet committed or pushed; the
+  verifier run was in progress. Next: commit, push, open a pull request into its `edge`. The
+  port also brings the export path that follows a chosen kit layout, which that repository
+  lacked: say so in the pull request.
+- No pull requests open here. Worktrees and screenshots are session-local.
 - Sibling repository: resource-limit back-port open there (`fix/resource-limits`); carry-overs
   in STATUS.
 - Google Safe Browsing review of the domain requested; don't share widely until it clears.

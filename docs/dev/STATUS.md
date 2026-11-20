@@ -32,8 +32,10 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - **Live (sixth deploy, 2026-11-20):** `sha-828df84`, everything through #26. No
   migrations since `0001`. The maintainer confirmed the speed-up on the live site.
 - **Merged, not yet deployed:** #27 leave and delete teams (member removal, role changes and
-  account deletion share the `team:<id>` lock), #28 the kit layout comes first in the
-  arranger. No migrations.
+  account deletion share the `team:<id>` lock), #28 and #30 the kit layout comes first in the
+  arranger (planner 3), #29 print some parts of a plate. No migrations. The maintainer is
+  holding the update until a fix to part-level printing, being written in the sibling
+  repository, is ported here.
 - **Speed (2026-11-20):** pages were slow because of sequential database round trips (the app
   and the database are a network hop apart). Measured through a latency proxy at 40 ms per
   round trip, before → after #18/#19: build page 2.3 s → 0.6 s, builds list 3.0 → 1.1 s, team
@@ -84,18 +86,30 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - Production connections: one pool, `DATABASE_POOL_MAX` default 10 (3 kept warm). Confirm the
   Supabase pooler's pool size in the dashboard; if it is under 10, set `DATABASE_POOL_MAX=6`.
   Document the guidance in `docs/guides/environment.md` and `hosting.md` [release-pwa].
-- Arranger (#28): the source layout (uploaded plates, else the kit layout for the bed) is
-  kept; `domain/arrange-source.ts`. Standard palette on a 256 mm bed gives 25 plates (kit 24
-  plus a split of the rims), where the old default path gave 21. Stored arrangements carry
-  `v: 2`; older ones are still checked against the previous planner and are never rewritten.
-  Questions with the maintainer: may moved parts join an existing multi-part plate; store
-  the author's positions in the kit pack; names of moved plates; a "reset to the kit layout"
-  preview for existing arranged builds. `print-template.spec.ts:53` saw a connection reset
-  once in 16 local repeats on the branch (none on main, CI green): watch it.
-- Part-level printing (start and log a chosen subset of a plate) is being built in the
-  sibling repository; port it here when it lands. What exists today: a single part can be set
-  to Printing from its own row, and "Printed" on the plate then logs only the parts that are
-  Printing (grams proposed are the whole plate's).
+- Arranger (#28, #30): the source layout (uploaded plates, else the kit layout for the bed) is
+  kept; `domain/arrange-source.ts`. Standard palette on a 256 mm bed gives 24 plates, equal
+  to the kit. A kit plate that repeats one shape over several runs (the rims) is one plate
+  laid out as one print (`isRunPlate`). A part whose filament no longer matches may join a
+  multi-part plate of its role up to 60% utilisation (`JOIN_MAX_UTILISATION`), else it gets a
+  new plate; a single-part plate never receives a part. Stored arrangements carry `v: 3`;
+  `v: 2` and older ones are checked against the planner that wrote them and are never
+  rewritten. Open: the rims plate mixes "per run" and "per print" in its grams, time and
+  printed counter (fix the wording in both repositories) [plates-3mf]; the H2D tires
+  footprint in the kit data (16 segments in one print, the data says 8); does "same filament"
+  for a join mean the same role or the same color and material; store the author's positions
+  in the kit pack; names of moved plates; a "reset to the kit layout" preview for existing
+  arranged builds.
+- Part-level printing (#29, port of the sibling's #90): "Print some parts…" on a multi-part
+  plate; no server or schema change. Two of the sibling's four live-printer e2e cases need
+  LAN printer simulators and are not ported. A fix is being written in the sibling
+  repository: port it when its pull request is up. Low-priority follow-up from the security
+  review: a logged run stores `partSlugs` validated against the build, not the plate (state
+  changes are filtered by plate; only activity text and stats see the extras); filter on
+  insert [build-state], applies to the sibling too.
+- E2E: never compare the key order of `state` from `GET /api/builds/<id>/view` (unordered
+  read; sort by slug). A `read ECONNRESET` on that GET appeared once each in three local
+  full-suite runs on 2026-11-20 (different specs, two suites running at once, each passed
+  alone; never in CI). If it shows up in CI, have `e2e-playwright` look at connection reuse.
 - Teams follow-ups: Better Auth's `/organization/delete` is still enabled and takes no team
   lock (disable it and route deletion through `deleteTeam`); a team joined while the account
   is being deleted isn't locked.
