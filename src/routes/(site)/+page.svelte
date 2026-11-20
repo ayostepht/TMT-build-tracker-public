@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SocialMeta from '#lib/components/site/SocialMeta.svelte';
 	import { resolve } from '$app/paths';
 	import HeroChair from '#lib/components/site/HeroChair.svelte';
 	import StatusBadge from '#lib/components/StatusBadge.svelte';
@@ -35,13 +36,10 @@
 	];
 </script>
 
-<svelte:head>
-	<title>TMT Build Tracker: plan, print and hand off MakeGood 3D TMT chairs</title>
-	<meta
-		name="description"
-		content="A free, open source tracker for makers and teams 3D-printing the MakeGood 3D TMT toddler mobility trainer: every part and plate from printed to assembled, who did what, and the hand-off."
-	/>
-</svelte:head>
+<SocialMeta
+	title="TMT Build Tracker: plan, print and hand off MakeGood 3D TMT chairs"
+	description="Organize a whole MakeGood 3D TMT chair build across your team, from the first plate to the hand-off. Free and open source, for makers who 3D-print these chairs."
+/>
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -->
 <div class="home">
@@ -87,6 +85,7 @@
 				<HeroChair
 					model={data.hero?.model ?? null}
 					partRoles={data.hero?.partRoles ?? {}}
+					hidden={data.hero?.hidden ?? []}
 					palette={teal}
 					poster="/home/chair-teal.webp"
 					alt="The MakeGood 3D TMT chair in deep teal and ochre, seen from the front and a little to the side."
