@@ -2,7 +2,12 @@ import { error } from '@sveltejs/kit';
 import { ApiError } from '#lib/server/access.ts';
 import { first, getDb } from '#lib/server/db/index.ts';
 import { editableTargets, getDesignDetail } from '#lib/server/designs/designs.ts';
-import { copiedFromCredit, copyCounts, publicSharerName } from '#lib/server/designs/gallery.ts';
+import {
+	copiedFromCredit,
+	copyCounts,
+	hiddenInfo,
+	publicSharerName
+} from '#lib/server/designs/gallery.ts';
 import { loadTemplateModel } from '#lib/server/designs/model.ts';
 import { isSiteAdmin } from '#lib/server/access.ts';
 import { inactiveSlugs } from '#lib/domain/variants.ts';
@@ -28,8 +33,11 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 				)
 			)?.g ?? [];
 		const row = await first(db.select().from(colorDesigns).where(eq(colorDesigns.id, design.id)));
+		const siteAdmin = await isSiteAdmin(db, locals.user);
 		return {
 			design,
+			// Who hid it and when: site admins only.
+			hiddenInfo: siteAdmin && row ? await hiddenInfo(db, locals.user, row) : null,
 			// "Copied from X by Y" while the original is still in the gallery.
 			credit: row ? await copiedFromCredit(db, row) : null,
 			copies: row && row.sharedAt ? ((await copyCounts(db, [row])).get(row.id) ?? 0) : 0,
@@ -37,7 +45,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 			model: await loadTemplateModel(db, design.templateId),
 			hidden: [...inactiveSlugs(groups, null)],
 			targets: await editableTargets(db, locals.user.id, design.templateId),
-			siteAdmin: await isSiteAdmin(db, locals.user)
+			siteAdmin
 		};
 	} catch (e) {
 		if (e instanceof ApiError) error(e.status as 404, e.message);

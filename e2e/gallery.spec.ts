@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures';
-import { ownerWithBuild, signUp, uniqueEmail } from './helpers';
+import { ownerWithBuild, signInAsAdmin, signUp, uniqueEmail } from './helpers';
 import { newClientContext } from './fixtures';
 
 const SHOTS = 'data/shots-gallery';
@@ -102,4 +102,75 @@ test('the gallery is empty-state friendly and signed-out visitors are sent to si
 	await signUp(page, 'Eve Empty', uniqueEmail('galleryempty'));
 	await page.goto('/gallery?family=brown&q=zzzzzz');
 	await expect(page.getByTestId('gallery-empty')).toBeVisible();
+});
+
+test('a site admin hides a design, the author sees why, and the admin allows sharing again', async ({
+	page,
+	browser
+}) => {
+	const name = `Hidden Dawn ${Date.now().toString(36)}`;
+	const { buildId } = await ownerWithBuild(page, 'galleryhide');
+	await page.goto(`/builds/${buildId}/design`);
+	await expect(page.getByTestId('autosave-status')).toContainText('Saved automatically');
+	await page.getByTestId('open-share').click();
+	await page.getByTestId('share-dialog').getByLabel('Design name').fill(name);
+	await page.getByTestId('share-dialog').getByRole('button', { name: 'Save design' }).click();
+	await expect(page.getByTestId('design-saved')).toContainText(`Saved "${name}"`);
+	await page.goto('/designs');
+	await page.locator('[data-design]', { hasText: name }).getByRole('link', { name }).click();
+	await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
+	const designUrl = page.url();
+	const slug = new URL(designUrl).pathname.split('/').pop()!;
+	await page.getByRole('button', { name: 'Share to the gallery…' }).click();
+	await page
+		.getByTestId('share-gallery-dialog')
+		.getByRole('button', { name: 'Share to the gallery' })
+		.click();
+	await expect(page.getByTestId('gallery-card')).toContainText('In the shared gallery');
+
+	// A site admin hides it.
+	const adminCtx = await newClientContext(browser);
+	const admin = await adminCtx.newPage();
+	await signInAsAdmin(admin);
+	await admin.goto(`/gallery/${slug}`);
+	await expect(admin.getByRole('heading', { level: 1, name })).toBeVisible();
+	await admin.getByTestId('hide-from-gallery').click();
+	await admin.getByTestId('unshare-dialog').getByRole('button', { name: 'Hide it' }).click();
+
+	// The author sees the notice and no Share button.
+	await page.goto(designUrl);
+	await expect(page.getByTestId('gallery-hidden-notice')).toContainText(
+		"You can't share it again unless an admin allows it"
+	);
+	await expect(page.getByRole('button', { name: 'Share to the gallery…' })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Allow sharing again' })).toHaveCount(0);
+
+	// Only the admin sees the hidden list and can lift the hide.
+	await page.goto('/gallery');
+	await expect(page.getByTestId('hidden-designs')).toHaveCount(0);
+	await admin.goto('/gallery');
+	await admin.getByTestId('hidden-designs').locator('summary').click();
+	const entry = admin.locator('[data-hidden-design]', { hasText: name });
+	await expect(entry).toContainText('by Olive Owner');
+	await expect(entry).not.toContainText('@');
+	await admin.setViewportSize({ width: 390, height: 844 });
+	await admin.screenshot({ path: `${SHOTS}/gallery-hidden-admin-390.png`, fullPage: true });
+	await entry.getByRole('button', { name: 'Allow sharing again' }).click();
+	await admin
+		.getByTestId('allow-sharing-dialog')
+		.getByRole('button', { name: 'Allow sharing again' })
+		.click();
+	await expect(admin.locator('[data-hidden-design]', { hasText: name })).toHaveCount(0);
+
+	// The author can share again.
+	await page.goto(designUrl);
+	await expect(page.getByTestId('gallery-hidden-notice')).toHaveCount(0);
+	await page.screenshot({ path: `${SHOTS}/design-hidden-1440.png`, fullPage: true });
+	await page.getByRole('button', { name: 'Share to the gallery…' }).click();
+	await page
+		.getByTestId('share-gallery-dialog')
+		.getByRole('button', { name: 'Share to the gallery' })
+		.click();
+	await expect(page.getByTestId('gallery-card')).toContainText('In the shared gallery');
+	await adminCtx.close();
 });

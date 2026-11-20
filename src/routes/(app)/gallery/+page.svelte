@@ -1,8 +1,10 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import GalleryCard from '#lib/components/gallery/GalleryCard.svelte';
+	import { allowGallerySharing } from '#lib/client/api.ts';
+	import Dialog from '#lib/components/design/share/Dialog.svelte';
 	import { COLOR_FAMILIES } from '#lib/domain/swatch-picker.ts';
 	import type { PageProps } from './$types';
 
@@ -25,6 +27,27 @@
 	// eslint-disable-next-line svelte/no-navigation-without-resolve
 	const go = (u: string) => goto(u);
 	const filtered = $derived(!!data.q || !!data.family);
+
+	// Site admins only: designs they hid, with a way to allow sharing again.
+	let allowing = $state<{ id: string; name: string } | null>(null);
+	let busy = $state(false);
+	let err = $state<string | null>(null);
+	const when = (iso: string) =>
+		new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' });
+	async function allow() {
+		if (!allowing) return;
+		busy = true;
+		err = null;
+		try {
+			await allowGallerySharing(allowing.id);
+			allowing = null;
+			await invalidateAll();
+		} catch (e) {
+			err = e instanceof Error ? e.message : 'That did not work.';
+		} finally {
+			busy = false;
+		}
+	}
 </script>
 
 <svelte:head><title>Gallery · TMT Build Tracker</title></svelte:head>
@@ -113,9 +136,102 @@
 			{/if}
 		</div>
 	{/if}
+
+	{#if data.hiddenDesigns.length}
+		<details class="gal-hidden ds-card" data-testid="hidden-designs">
+			<summary
+				>Hidden from the gallery ({data.hiddenTruncated
+					? `${data.hiddenDesigns.length}+`
+					: data.hiddenDesigns.length})</summary
+			>
+			<p class="muted small">
+				Only site admins see this list. The author can't share these again until you allow it.
+				{#if data.hiddenTruncated}
+					Showing the {data.hiddenDesigns.length} most recently hidden; older ones aren't listed.
+				{/if}
+			</p>
+			{#if err}<div class="error" role="alert">{err}</div>{/if}
+			<ul>
+				{#each data.hiddenDesigns as h (h.id)}
+					<li data-hidden-design={h.id}>
+						<span class="gal-hid-txt">
+							<b>{h.name}</b>
+							<span class="muted small"
+								>{h.templateName} · by {h.authorName} · hidden {when(h.hiddenAt)}{h.hiddenByName
+									? ` by ${h.hiddenByName}`
+									: ''}</span
+							>
+						</span>
+						<button
+							class="btn sm"
+							type="button"
+							onclick={() => (allowing = { id: h.id, name: h.name })}>Allow sharing again</button
+						>
+					</li>
+				{/each}
+			</ul>
+		</details>
+	{/if}
 </section>
 
+{#if allowing}
+	<Dialog
+		title="Allow sharing again?"
+		onclose={() => (allowing = null)}
+		testid="allow-sharing-dialog"
+	>
+		<div class="gal-confirm">
+			<p>
+				Let the author of "{allowing.name}" share it to the gallery again? It stays private until
+				they share it.
+			</p>
+			<div class="gal-acts">
+				<button class="btn" type="button" onclick={() => (allowing = null)}>Cancel</button>
+				<button class="btn primary" type="button" disabled={busy} onclick={allow}>
+					Allow sharing again
+				</button>
+			</div>
+		</div>
+	</Dialog>
+{/if}
+
 <style>
+	.gal-hidden summary {
+		cursor: pointer;
+		font-weight: 600;
+		min-height: 24px;
+	}
+	.gal-hidden ul {
+		list-style: none;
+		margin: var(--sp-5) 0 0;
+		padding: 0;
+		display: grid;
+		gap: var(--sp-5);
+	}
+	.gal-hidden li {
+		display: flex;
+		gap: var(--sp-5);
+		align-items: center;
+		justify-content: space-between;
+		flex-wrap: wrap;
+	}
+	.gal-hid-txt {
+		display: grid;
+		min-width: 0;
+		gap: 1px;
+	}
+	.small {
+		font-size: var(--fs-sm);
+	}
+	.gal-confirm {
+		display: grid;
+		gap: var(--sp-6);
+	}
+	.gal-acts {
+		display: flex;
+		gap: var(--sp-4);
+		flex-wrap: wrap;
+	}
 	.gal-page {
 		display: grid;
 		gap: var(--sp-8);

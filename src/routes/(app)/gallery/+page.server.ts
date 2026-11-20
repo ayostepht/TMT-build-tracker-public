@@ -2,7 +2,8 @@ import { redirect } from '@sveltejs/kit';
 import { and, inArray, isNull } from 'drizzle-orm';
 import { templates } from '#lib/server/db/schema.ts';
 import { getDb } from '#lib/server/db/index.ts';
-import { listGallery } from '#lib/server/designs/gallery.ts';
+import { isSiteAdmin } from '#lib/server/access.ts';
+import { listGallery, listHiddenDesigns } from '#lib/server/designs/gallery.ts';
 import { loadTemplateModelInfo } from '#lib/server/models/info.ts';
 import type { TemplateModelInfo } from '#lib/domain/types.ts';
 import type { PageServerLoad } from './$types';
@@ -34,5 +35,16 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		).map((t) => t.id)
 	);
 	for (const id of builtIn) models[id] = await loadTemplateModelInfo(getDb(), id);
-	return { gallery, q, family, models };
+	// Site admins also see what they hid, so they can allow sharing again (checked here and in the API).
+	const hidden = (await isSiteAdmin(getDb(), locals.user))
+		? await listHiddenDesigns(getDb(), locals.user)
+		: { designs: [], truncated: false };
+	return {
+		gallery,
+		q,
+		family,
+		models,
+		hiddenDesigns: hidden.designs,
+		hiddenTruncated: hidden.truncated
+	};
 };
