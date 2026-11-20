@@ -1,9 +1,11 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { getAuth } from '#lib/server/auth-instance.ts';
-import { demoConfig } from '#lib/server/config.ts';
+import { demoConfig, turnstileConfig } from '#lib/server/config.ts';
 import { DemoBusyError, DemoRateError, startDemo } from '#lib/server/demo/index.ts';
 import { getDb } from '#lib/server/db/index.ts';
 import { liveDemoCount } from '#lib/server/demo/cleanup.ts';
+import { clientAddress } from '#lib/server/client-ip.ts';
+import { verifyTurnstile, turnstileMessage } from '#lib/server/turnstile.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, setHeaders }) => {
@@ -14,19 +16,31 @@ export const load: PageServerLoad = async ({ locals, setHeaders }) => {
 	return {
 		inDemo: !!locals.user,
 		hours: Math.round(cfg.ttlMs / 3_600_000),
+		turnstileSiteKey: turnstileConfig()?.siteKey ?? null,
 		busy: (await liveDemoCount(getDb())) >= cfg.maxLive
 	};
 };
 
 export const actions: Actions = {
 	/** Starts a demo: a throwaway user, a sample build and a session that ends within 24 hours. */
-	start: async ({ locals, cookies, getClientAddress }) => {
+	start: async ({ request, locals, cookies, getClientAddress }) => {
 		if (locals.user) redirect(303, '/workspace');
 		let ip: string;
 		try {
 			ip = getClientAddress();
 		} catch {
 			return fail(400, { error: 'The demo could not tell where you are connecting from.' });
+		}
+		// Before the per-address and global limits: a failed challenge must not use up a slot.
+		const turnstile = turnstileConfig();
+		if (turnstile) {
+			const form = await request.formData();
+			const result = await verifyTurnstile(
+				form.get('cf-turnstile-response'),
+				clientAddress(request.headers, getClientAddress),
+				{ secretKey: turnstile.secretKey }
+			);
+			if (result !== 'ok') return fail(403, { error: turnstileMessage(result), challenge: true });
 		}
 		let buildId: string;
 		try {

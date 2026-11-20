@@ -42,9 +42,9 @@
 	<h2>Cookies and analytics</h2>
 	<ul>
 		<li>
-			The only cookie is the sign-in session cookie, which keeps you signed in. In the demo it is a
-			demo session cookie that works the same way and ends within 24 hours. There are no advertising
-			or tracking cookies.
+			The only cookie this site sets is the sign-in session cookie, which keeps you signed in. In
+			the demo it is a demo session cookie that works the same way and ends within 24 hours. There
+			are no advertising or tracking cookies.
 		</li>
 		<li>
 			Visits may be counted with a cookieless analytics service chosen by the operator. It sets no
@@ -59,6 +59,14 @@
 		made-up name and address, and a session cookie. It is <b>deleted after 24 hours</b>, or when you
 		sign out of it, with everything in it. Nothing is carried over to an account.
 	</p>
+	{#if data.turnstile}
+		<p data-testid="privacy-turnstile">
+			To keep bots out, starting a demo uses Cloudflare Turnstile. It runs a check in your browser
+			and sends Cloudflare your address and some browser signals; Cloudflare may set its own cookie
+			or use device signals for this, under its own privacy policy. It is only loaded on the demo
+			page.
+		</p>
+	{/if}
 
 	<h2>What you put in builds</h2>
 	<ul>
@@ -118,6 +126,12 @@
 			count, and only if the operator turned it on. Pages load their code, fonts and images from the
 			app's own address.
 		</li>
+		{#if data.turnstile}
+			<li>
+				With the demo check on, the demo page loads Cloudflare's challenge script and frame from
+				challenges.cloudflare.com. No other page does.
+			</li>
+		{/if}
 		<li>No email is sent.</li>
 		<li>
 			The provider you sign in with{providerText ? ` (currently ${providerText})` : ''} learns that you

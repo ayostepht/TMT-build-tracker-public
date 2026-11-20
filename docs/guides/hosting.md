@@ -132,6 +132,14 @@ The image already sets `NODE_ENV=production`, `DATA_DIR=/data`, `MAX_3MF_MB=95` 
 | `DEMO_TTL_HOURS`       | 24      | Hours until a demo and everything in it is deleted (1-72) |
 | `DEMO_BUILDS`          | 2       | Builds one demo may hold (1-10)                           |
 
+**Optional bot check for the demo (Cloudflare Turnstile).** Someone rotating many addresses can fill the demo's slots (`DEMO_MAX_LIVE`) and make it show "busy" to everyone. To stop that, add a free Turnstile check to the start button:
+
+1. In Cloudflare, open **Turnstile > Add widget**. Give it a name, add your site's domain (for example `tmt.example.com`) as the hostname, choose the **Managed** widget mode and create it.
+2. Copy the **site key** and the **secret key** into `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` (the secret key goes only in the secret store).
+3. Restart the container. `/demo` now shows the widget, the server checks the answer with Cloudflare before it counts the start against any limit, and refuses the start if the check is missing, wrong or cannot be made. Only `/demo` loads Cloudflare's script (its web address, `https://challenges.cloudflare.com`, is added to that page's content security policy) and the privacy page gets a sentence about it.
+
+Both variables must be set; with only one the server logs a warning at start and the demo runs without the check. Leave both empty to keep it off.
+
 Put them only in your host's secret store (Fly secrets, Railway variables, a `.env` file with permissions `600` that is never committed). Never in the Dockerfile, a compose file you commit or a chat.
 
 ## 4. Your domain and Cloudflare

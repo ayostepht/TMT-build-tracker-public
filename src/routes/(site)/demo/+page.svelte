@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { providerPhrase } from '#lib/sign-in-providers.ts';
+	import { onMount } from 'svelte';
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import type { PageProps } from './$types';
@@ -7,6 +8,46 @@
 	let { data, form }: PageProps = $props();
 	const providerText = $derived(providerPhrase(data.signInProviders));
 	let busy = $state(false);
+	const siteKey = $derived(data.turnstileSiteKey);
+
+	type TurnstileApi = {
+		render: (el: HTMLElement, opts: Record<string, unknown>) => string;
+		reset: (id?: string) => void;
+	};
+	let widgetEl = $state<HTMLElement>();
+	let widgetId: string | undefined;
+	let hasToken = $state(false);
+
+	const theme = () => {
+		const set = document.documentElement.dataset.theme;
+		if (set === 'light' || set === 'dark') return set;
+		return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+	};
+
+	// Explicit render, managed mode: Cloudflare decides whether the visitor sees anything.
+	onMount(() => {
+		if (!siteKey) return;
+		const w = window as unknown as { turnstile?: TurnstileApi; __tmtTurnstileReady?: () => void };
+		const render = () => {
+			if (!w.turnstile || !widgetEl || widgetId) return;
+			widgetId = w.turnstile.render(widgetEl, {
+				sitekey: siteKey,
+				theme: theme(),
+				callback: () => (hasToken = true),
+				'expired-callback': () => (hasToken = false),
+				'error-callback': () => (hasToken = false)
+			});
+		};
+		if (w.turnstile) render();
+		else {
+			const script = document.createElement('script');
+			script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+			script.async = true;
+			script.onload = render;
+			document.head.appendChild(script);
+		}
+	});
+
 	const isBusy = $derived(data.busy || form?.busy === true);
 </script>
 
@@ -80,10 +121,22 @@
 					return async ({ update }) => {
 						await update();
 						busy = false;
+						// A token works once: ask for a new one after every attempt.
+						if (siteKey && widgetId) {
+							hasToken = false;
+							(window as unknown as { turnstile?: TurnstileApi }).turnstile?.reset(widgetId);
+						}
 					};
 				}}
 			>
-				<button class="btn primary go" data-testid="demo-start" disabled={busy}>
+				{#if siteKey}
+					<div class="demo-challenge" bind:this={widgetEl} data-testid="demo-turnstile"></div>
+				{/if}
+				<button
+					class="btn primary go"
+					data-testid="demo-start"
+					disabled={busy || (!!siteKey && !hasToken)}
+				>
 					{busy ? 'Setting up your demo…' : 'Start the demo'}
 				</button>
 			</form>
@@ -157,6 +210,16 @@
 	.demo-start .btn {
 		min-height: 48px;
 		font-weight: 600;
+	}
+	.demo-challenge {
+		min-height: 65px;
+		max-width: 100%;
+	}
+	.demo-start form {
+		display: grid;
+		gap: var(--sp-5);
+		justify-items: start;
+		max-width: 100%;
 	}
 	.demo-fine {
 		font-size: var(--fs-md);
