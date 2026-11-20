@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { describeActivity, describeActivitySegments, startedOnPrinter } from './activity.ts';
 import { filamentLabel } from './labels.ts';
 import { makeView } from './fixtures.ts';
-import type { ActivityItem } from './types.ts';
+import type { ActivityItem, PrintRun } from './types.ts';
 
 const view = makeView();
 view.members = [{ userId: 'u2', name: 'Sam', role: 'editor' }];
@@ -80,7 +80,32 @@ describe('describeActivity', () => {
 		);
 		expect(
 			say('run.add', { plateNumber: 3, result: 'Success', printer: 'Garage printer', grams: 10 })
-		).toBe('Steph logged a successful print of plate 3 on Garage printer (10 g)');
+		).toBe('Steph logged a successful print of plate 3 on Garage printer · 10 g');
+	});
+	it('shows the grams and the note of a logged run', () => {
+		const v = makeView();
+		const run = (id: string, note: string) => ({ id, note }) as unknown as PrintRun;
+		v.runs = [run('r9', 'warped corner'), run('r8', 'x'.repeat(200))];
+		const row = (runId: string) => ({
+			...act('run.add', { runId, plateNumber: 2, result: 'Failed', grams: 34 })
+		});
+		expect(describeActivity(row('r9'), v)).toBe(
+			'Steph logged a failed print of plate 2 · 34 g · "warped corner"'
+		);
+		const long = describeActivitySegments(row('r8'), v);
+		const note = long.find((x) => x.full);
+		expect(note?.text.length).toBeLessThan(80);
+		expect(note?.text.endsWith('…"')).toBe(true);
+		expect(note?.full).toBe(`"${'x'.repeat(200)}"`);
+		// no note on the run: the sentence is as before
+		expect(describeActivity(row('missing'), v)).toBe(
+			'Steph logged a failed print of plate 2 · 34 g'
+		);
+		// control characters in a note never become link markers
+		v.runs = [run('r7', 'a\u0001plate:9\u0002b\u0003')];
+		expect(
+			describeActivitySegments(row('r7'), v).filter((x) => x.plate !== undefined)
+		).toHaveLength(1);
 	});
 	it('startedOnPrinter reads the newest start that covers the parts', () => {
 		const at = (kind: string, payload: Record<string, unknown>): ActivityItem => ({
@@ -134,7 +159,7 @@ describe('describeActivity', () => {
 	});
 	it('runs', () => {
 		expect(say('run.add', { plateNumber: 12, result: 'Success', grams: 431, partSlug: null })).toBe(
-			'Steph logged a successful print of plate 12 (431 g)'
+			'Steph logged a successful print of plate 12 · 431 g'
 		);
 		expect(say('run.add', { plateNumber: null, partSlug: part.slug, result: 'Failed' })).toBe(
 			`Steph logged a failed print of ${part.name}`

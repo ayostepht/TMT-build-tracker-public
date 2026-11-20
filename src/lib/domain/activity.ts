@@ -13,25 +13,47 @@ const MID = '\u0002';
 const CLOSE = '\u0003';
 // eslint-disable-next-line no-control-regex
 const clean = (v: string): string => v.replace(/[\u0001-\u0003]/g, '');
-const mark = (kind: 'plate' | 'part', ref: string | number, text: string): string =>
+const mark = (kind: 'plate' | 'part' | 'note', ref: string | number, text: string): string =>
 	`${OPEN}${kind}:${ref}${MID}${clean(text)}${CLOSE}`;
 const plateRef = (n: number): string => mark('plate', n, `plate ${n}`);
 
-/** A piece of an activity sentence; `plate` / `part` (slug) mark the pieces that can link to the Print tab. */
+/**
+ * A piece of an activity sentence; `plate` / `part` (slug) mark the pieces that can link to the
+ * Print tab. `full` is set on a quoted note that was shortened: `text` is what to show, `full` the
+ * whole note.
+ */
 export interface Segment {
 	text: string;
 	plate?: number;
 	part?: string;
+	full?: string;
 }
 
-const MARKED = new RegExp(`${OPEN}(plate|part):([^${MID}]*)${MID}([^${CLOSE}]*)${CLOSE}`, 'g');
+const MARKED = new RegExp(`${OPEN}(plate|part|note):([^${MID}]*)${MID}([^${CLOSE}]*)${CLOSE}`, 'g');
+
+/** Longest note shown in a sentence before it is cut with an ellipsis. */
+export const ACTIVITY_NOTE_SHOWN = 60;
+
+/** A quoted run note, cut to `ACTIVITY_NOTE_SHOWN` characters; the whole text rides along as `full`. */
+function noteText(note: string): string {
+	const one = note.replace(/\s+/g, ' ').trim();
+	if (one.length <= ACTIVITY_NOTE_SHOWN) return `"${clean(one)}"`;
+	const cut = one.slice(0, ACTIVITY_NOTE_SHOWN).trimEnd();
+	return mark('note', one, `"${cut}…"`);
+}
 
 function toSegments(s: string): Segment[] {
 	const out: Segment[] = [];
 	let at = 0;
 	for (const m of s.matchAll(MARKED)) {
 		if (m.index > at) out.push({ text: s.slice(at, m.index) });
-		out.push(m[1] === 'plate' ? { text: m[3], plate: Number(m[2]) } : { text: m[3], part: m[2] });
+		out.push(
+			m[1] === 'plate'
+				? { text: m[3], plate: Number(m[2]) }
+				: m[1] === 'note'
+					? { text: m[3], full: `"${m[2]}"` }
+					: { text: m[3], part: m[2] }
+		);
 		at = m.index + m[0].length;
 	}
 	if (at < s.length) out.push({ text: s.slice(at) });
@@ -203,7 +225,9 @@ function describeMarked(a: ActivityItem, view: Names): string {
 			let grams = num(p.grams);
 			if (grams === null) grams = view.runs.find((r) => r.id === p.runId)?.grams ?? null;
 			const on = str(p.printer);
-			return `${who} logged a ${adj} print of ${target}${on ? ` on ${on}` : ''}${grams !== null ? ` (${fmt(grams)} g)` : ''}`;
+			// The note lives on the run (the payload carries no text); a deleted run shows none.
+			const note = str(view.runs.find((r) => r.id === p.runId)?.note);
+			return `${who} logged a ${adj} print of ${target}${on ? ` on ${on}` : ''}${grams !== null ? ` · ${fmt(grams)} g` : ''}${note ? ` · ${noteText(note)}` : ''}`;
 		}
 		case 'plate.slicer': {
 			const n = num(p.number);

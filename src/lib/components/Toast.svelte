@@ -13,6 +13,23 @@
 		else if (!toasts.items.length && open) host.hidePopover();
 	});
 
+	// Keep the last content reachable: while a toast is up the page gets bottom padding the height of
+	// the toast, so it can be scrolled clear of the controls underneath. Phones only (the toast is a
+	// bottom bar there); restored when the toast goes.
+	$effect(() => {
+		if (!host || !toasts.items.length) return;
+		const wide = window.matchMedia('(min-width: 900px)').matches;
+		if (wide) return;
+		const el = host.querySelector<HTMLElement>('.toast');
+		if (!el) return;
+		const body = document.body;
+		const before = body.style.paddingBottom;
+		body.style.paddingBottom = `${Math.ceil(el.getBoundingClientRect().height) + 16}px`;
+		return () => {
+			body.style.paddingBottom = before;
+		};
+	});
+
 	async function act(id: number, run: () => Promise<void> | void) {
 		busy = id;
 		try {
@@ -84,15 +101,15 @@
 	@media (max-width: 899px) {
 		:global(:root:has([aria-modal='true'], dialog[open])) .toasts {
 			bottom: auto;
-			top: 12px;
-			inset-block-start: 12px;
+			top: calc(12px + env(safe-area-inset-top, 0px));
+			inset-block-start: calc(12px + env(safe-area-inset-top, 0px));
 		}
 	}
 	/* Desktop: bottom-left, away from the right-hand panel and its Apply / Cancel bar. */
 	@media (min-width: 900px) {
 		.toasts {
 			top: auto;
-			bottom: 16px;
+			bottom: calc(16px + env(safe-area-inset-bottom, 0px));
 			right: auto;
 			max-width: min(440px, calc(100vw - 32px));
 			justify-items: start;
@@ -121,6 +138,17 @@
 		cursor: pointer;
 		padding: 6px 14px;
 		min-height: 36px;
+	}
+	@media (pointer: coarse), (max-width: 760px) {
+		.toast-act {
+			box-sizing: border-box;
+			min-height: 44px;
+			padding-inline: 18px;
+		}
+		.toast-x {
+			min-width: 44px;
+			min-height: 44px;
+		}
 	}
 	.toast-act:hover:not(:disabled) {
 		background: color-mix(in srgb, currentColor 18%, transparent);
