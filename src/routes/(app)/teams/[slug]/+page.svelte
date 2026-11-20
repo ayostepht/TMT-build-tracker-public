@@ -26,6 +26,8 @@
 		{/if}
 	</div>
 {:else}
+	<!-- What is printing and what is next comes first: on a phone it is the reason to open the page. -->
+	<LandingBoard views={data.landing.views} more={data.landing.more} />
 	<div class="head-row">
 		<h2>Builds</h2>
 		{#if canEdit}
@@ -52,7 +54,6 @@
 			</li>
 		{/each}
 	</ul>
-	<LandingBoard views={data.landing.views} more={data.landing.more} />
 {/if}
 
 {#if data.team.personal}
@@ -78,7 +79,7 @@
 		justify-content: space-between;
 		gap: 12px;
 		flex-wrap: wrap;
-		margin-top: 16px;
+		margin-top: 24px;
 		margin-bottom: 8px;
 	}
 	.head-row h2 {

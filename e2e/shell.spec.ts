@@ -197,6 +197,7 @@ test('Finish folds steps that were done when the page opened', async ({ page }) 
 	const step = page.locator('.astep').first();
 	const key = await step.getAttribute('data-step');
 	await step.getByRole('button', { name: 'Mark step done' }).click();
+	await step.getByRole('button', { name: 'Mark done anyway' }).click();
 	// Still there right after the tap, so the tap visibly worked.
 	await expect(step).toHaveAttribute('data-done', 'true');
 	await page.reload();

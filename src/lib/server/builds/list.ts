@@ -35,35 +35,45 @@ export async function buildRows(
 	kind: BuildKind = 'build'
 ): Promise<BuildRow[]> {
 	if (!orgIds.length) return [];
-	const groupsByTemplate = new Map(
-		(await db.select({ id: templates.id, groups: templates.variantGroups }).from(templates)).map(
-			(t) => [t.id, t.groups]
-		)
-	);
-	const list = await db
-		.select({
-			id: builds.id,
-			organizationId: builds.organizationId,
-			name: builds.name,
-			phase: builds.phase,
-			deliveryDate: builds.deliveryDate,
-			setupStep: builds.setupStep,
-			templateId: builds.templateId,
-			createdAt: builds.createdAt,
-			choices: builds.variantChoices
-		})
-		.from(builds)
-		.where(and(inArray(builds.organizationId, orgIds), eq(builds.kind, kind)))
-		.orderBy(desc(builds.createdAt), desc(builds.id));
+	// Templates and the builds are independent; the parts of all the builds come in one query.
+	const [templateRows, list] = await Promise.all([
+		db.select({ id: templates.id, groups: templates.variantGroups }).from(templates),
+		db
+			.select({
+				id: builds.id,
+				organizationId: builds.organizationId,
+				name: builds.name,
+				phase: builds.phase,
+				deliveryDate: builds.deliveryDate,
+				setupStep: builds.setupStep,
+				templateId: builds.templateId,
+				createdAt: builds.createdAt,
+				choices: builds.variantChoices
+			})
+			.from(builds)
+			.where(and(inArray(builds.organizationId, orgIds), eq(builds.kind, kind)))
+			.orderBy(desc(builds.createdAt), desc(builds.id))
+	]);
+	if (!list.length) return [];
+	const groupsByTemplate = new Map(templateRows.map((t) => [t.id, t.groups]));
+	const partsByBuild = new Map<string, { slug: string; status: string }[]>();
+	for (const r of await db
+		.select({ id: buildParts.buildId, slug: buildParts.partSlug, status: buildParts.status })
+		.from(buildParts)
+		.where(
+			inArray(
+				buildParts.buildId,
+				list.map((b) => b.id)
+			)
+		)) {
+		const rows = partsByBuild.get(r.id);
+		if (rows) rows.push(r);
+		else partsByBuild.set(r.id, [r]);
+	}
 	const out: BuildRow[] = [];
 	for (const { templateId, choices, createdAt, ...b } of list) {
 		const off = inactiveSlugs(groupsByTemplate.get(templateId) ?? [], choices);
-		const rows = (
-			await db
-				.select({ slug: buildParts.partSlug, status: buildParts.status })
-				.from(buildParts)
-				.where(eq(buildParts.buildId, b.id))
-		).filter((r) => !off.has(r.slug));
+		const rows = (partsByBuild.get(b.id) ?? []).filter((r) => !off.has(r.slug));
 		const total = rows.length;
 		const printed = rows.filter((r) => r.status === 'Printed').length;
 		out.push({
@@ -77,9 +87,17 @@ export async function buildRows(
 	return out;
 }
 
-/** The builds touched most recently (last activity, else creation) across the given workspaces. */
-export async function recentBuilds(db: DbOrTx, orgIds: string[], limit = 6): Promise<BuildRow[]> {
-	const rows = await buildRows(db, orgIds);
+/**
+ * The builds touched most recently (last activity, else creation) across the given workspaces.
+ * A caller that already holds `buildRows(db, orgIds)` passes it as `known` to skip loading it again.
+ */
+export async function recentBuilds(
+	db: DbOrTx,
+	orgIds: string[],
+	limit = 6,
+	known?: BuildRow[]
+): Promise<BuildRow[]> {
+	const rows = known ?? (await buildRows(db, orgIds));
 	if (rows.length <= 1) return rows;
 	const last = new Map(
 		(
