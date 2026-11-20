@@ -60,6 +60,12 @@ export interface OpenDbOptions {
 	max?: number;
 	/** Server-side statement timeout in ms (default `DATABASE_STATEMENT_TIMEOUT_MS`, 30 s; 0 = none). */
 	statementTimeoutMs?: number;
+	/**
+	 * Seconds an unused connection stays open (default `databaseIdleTimeoutSeconds()`). Production
+	 * leaves it unset; the test harness passes a short one so abandoned test pools release their
+	 * server connections quickly.
+	 */
+	idleTimeoutSeconds?: number;
 }
 
 type Prepareable = {
@@ -106,7 +112,7 @@ export function openDb(url: string, opts: OpenDbOptions = {}): Db {
 		// Idle connections are kept for `DATABASE_IDLE_TIMEOUT_S` (10 min) so a request after a quiet
 		// moment does not pay for a new TLS connection; every connection is recycled within the hour
 		// and the keep-alive probes detect a dropped one, so a dead connection does not stay.
-		idle_timeout: databaseIdleTimeoutSeconds(),
+		idle_timeout: opts.idleTimeoutSeconds ?? databaseIdleTimeoutSeconds(),
 		max_lifetime: 60 * 60,
 		...(timeout > 0 ? { connection: { statement_timeout: timeout } } : {})
 	});
