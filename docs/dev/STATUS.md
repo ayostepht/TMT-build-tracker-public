@@ -112,7 +112,13 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   the sibling's #90 and #93. Piece lists are 0-based indexes into `PartDef.components` in
   `build_parts.printing_comps`, `print_runs.comps`, `printer_jobs.comps` and the pending
   expectation; validated on the view under the build lock (`pieceList`, `assertPiecePlate`,
-  `checkPieces`, `lockedComps`). Here, unlike the sibling: a link whose chosen pieces no
+  `checkPieces`, `lockedComps`). Pieces a Success piece run covers are ticked and locked
+  (port of the sibling's fix, 2026-11-21): `loadBuildView` overlays them at read time
+  (`tickLoggedPieces`; `loggedPieces`, `pieceTickError`, `keepLoggedTicks` in
+  `domain/actions.ts`), `updatePart` refuses an explicit untick with 400, and deleting or
+  undoing the run frees them. The two "Print some…" actions are entries in the status menu
+  (`StatusBadge` `extras`), not separate buttons; `PartPiecesAction` holds the sheets only.
+  Here, unlike the sibling: a link whose chosen pieces no
   longer fit at the lock is refused with 409, and the expectation is cleared only after a
   successful link. Low follow-ups from the security review (shared with the sibling): a
   job's stored list is not trimmed by a hand tick during the print; if a plate becomes
