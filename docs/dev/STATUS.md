@@ -31,11 +31,14 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   rehearsal before any migration reaches `main` (rules in `docs/dev/HANDOFF.md`).
 - **Live (sixth deploy, 2026-11-20):** `sha-828df84`, everything through #26. No
   migrations since `0001`. The maintainer confirmed the speed-up on the live site.
-- **Merged, not yet deployed:** #27 leave and delete teams (member removal, role changes and
-  account deletion share the `team:<id>` lock), #28 and #30 the kit layout comes first in the
-  arranger (planner 3), #29 print some parts of a plate. No migrations. The maintainer is
-  holding the update until a fix to part-level printing, being written in the sibling
-  repository, is ported here.
+- **Merged, not yet deployed (2026-11-21):** #27 leave and delete teams, #28 #30 #31 #34 the
+  kit layout comes first in the arranger (planner 3, plan cache), #29 print some parts of a
+  plate, #32 keep-alive above the proxy's, #33 print some pieces of a part, #35 tests clean
+  up their temp directories. **#33 carries migration `0002_piece_prints`** (three nullable
+  jsonb columns, additive; the previous image keeps working against the migrated database).
+  It runs when the container starts on the new image: the maintainer backs up the database
+  right before pulling. Rehearsed on a database built by the previous `main`: counts
+  unchanged, new columns NULL, second start a no-op, previous code still runs.
 - **Speed (2026-11-20):** pages were slow because of sequential database round trips (the app
   and the database are a network hop apart). Measured through a latency proxy at 40 ms per
   round trip, before → after #18/#19: build page 2.3 s → 0.6 s, builds list 3.0 → 1.1 s, team
@@ -86,30 +89,44 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - Production connections: one pool, `DATABASE_POOL_MAX` default 10 (3 kept warm). Confirm the
   Supabase pooler's pool size in the dashboard; if it is under 10, set `DATABASE_POOL_MAX=6`.
   Document the guidance in `docs/guides/environment.md` and `hosting.md` [release-pwa].
-- Arranger (#28, #30): the source layout (uploaded plates, else the kit layout for the bed) is
-  kept; `domain/arrange-source.ts`. Standard palette on a 256 mm bed gives 24 plates, equal
-  to the kit. A kit plate that repeats one shape over several runs (the rims) is one plate
-  laid out as one print (`isRunPlate`). A part whose filament no longer matches may join a
-  multi-part plate of its role up to 60% utilisation (`JOIN_MAX_UTILISATION`), else it gets a
-  new plate; a single-part plate never receives a part. Stored arrangements carry `v: 3`;
-  `v: 2` and older ones are checked against the planner that wrote them and are never
-  rewritten. Open: the rims plate mixes "per run" and "per print" in its grams, time and
-  printed counter (fix the wording in both repositories) [plates-3mf]; the H2D tires
-  footprint in the kit data (16 segments in one print, the data says 8); does "same filament"
-  for a join mean the same role or the same color and material; store the author's positions
-  in the kit pack; names of moved plates; a "reset to the kit layout" preview for existing
-  arranged builds.
-- Part-level printing (#29, port of the sibling's #90): "Print some parts…" on a multi-part
-  plate; no server or schema change. Two of the sibling's four live-printer e2e cases need
-  LAN printer simulators and are not ported. A fix is being written in the sibling
-  repository: port it when its pull request is up. Low-priority follow-up from the security
-  review: a logged run stores `partSlugs` validated against the build, not the plate (state
-  changes are filtered by plate; only activity text and stats see the extras); filter on
-  insert [build-state], applies to the sibling too.
-- E2E: never compare the key order of `state` from `GET /api/builds/<id>/view` (unordered
-  read; sort by slug). A `read ECONNRESET` on that GET appeared once each in three local
-  full-suite runs on 2026-11-20 (different specs, two suites running at once, each passed
-  alone; never in CI). If it shows up in CI, have `e2e-playwright` look at connection reuse.
+- Arranger (#28, #30, #31, #34): the source layout (uploaded plates, else the kit layout for
+  the bed) is kept; `domain/arrange-source.ts`. Standard palette on a 256 mm bed gives 24
+  plates, equal to the kit. A plate with the kit's `perPartRuns` flag (the rims) is one plate
+  laid out as one print, with per-print grams and time and a prints counter. A part whose
+  filament no longer matches may join a multi-part plate of its role up to 60% utilisation
+  (`JOIN_MAX_UTILISATION`), else it gets a new plate; a single-part plate never receives a
+  part. Stored arrangements carry `v: 3`; `v: 2` and version-less ones are checked against
+  the planner that wrote them and are never rewritten (tested end to end). An arranged build
+  that has not started printing is still re-arranged by itself on a colour, variant or
+  printer change, now to the kit's layout; typed time and grams follow a renumbered plate
+  with the same parts, runs and kind (`manualTimes`, exact match wins). `planArrangement`
+  caches plans in process (sha256 of all inputs, 50 entries): a repeat read is 16 to 33 ms,
+  a first read 0.3 to 0.8 s. Open: `printer-match.ts` uses the two-print grams for one rims
+  print [build-state]; the H2D tires footprint in the kit data (16 segments in one print,
+  the data says 8); does "same filament" for a join mean the same role or the same colour
+  and material (maintainer); store the author's positions in the kit pack; names of moved
+  plates; a "reset to the kit layout" preview; the export takes 12 to 14 s to a drained file
+  with the real kit, nearly all mesh and placement-guard work; a spatial prefilter before
+  `polygonDistance` in `plate-optimize.ts` would speed up planning.
+- Part-level printing: "Print some parts…" (#29) and "Print some pieces…" (#33), ports of
+  the sibling's #90 and #93. Piece lists are 0-based indexes into `PartDef.components` in
+  `build_parts.printing_comps`, `print_runs.comps`, `printer_jobs.comps` and the pending
+  expectation; validated on the view under the build lock (`pieceList`, `assertPiecePlate`,
+  `checkPieces`, `lockedComps`). Here, unlike the sibling: a link whose chosen pieces no
+  longer fit at the lock is refused with 409, and the expectation is cleared only after a
+  successful link. Low follow-ups from the security review (shared with the sibling): a
+  job's stored list is not trimmed by a hand tick during the print; if a plate becomes
+  multi-run while a piece print is on a printer the automatic log falls back to a
+  whole-part run; a logged run stores `partSlugs` validated against the build, not the
+  plate [build-state]. `migrate.test.ts` simulates "baseline only" by dropping the 0002
+  columns and later journal rows: a future migration needs the same treatment there.
+- Connections: the image sets `KEEP_ALIVE_TIMEOUT=120` and `HEADERS_TIMEOUT=125` so the
+  origin outlasts cloudflared's 90 s idle timeout (#32). E2E: GET and HEAD API requests
+  retry on ECONNRESET (`e2e/fixtures.ts`); never compare the key order of `state` from the
+  build view (sort by slug); two suites from one worktree need different `--output`
+  directories.
+- Tests: a run works inside one temp root removed at the end (#35; `TMT_TEST_KEEP_TMP=1`
+  keeps it). The real-kit tests still write about 450 MB per file while running.
 - Teams follow-ups: Better Auth's `/organization/delete` is still enabled and takes no team
   lock (disable it and route deletion through `deleteTeam`); a team joined while the account
   is being deleted isn't locked.

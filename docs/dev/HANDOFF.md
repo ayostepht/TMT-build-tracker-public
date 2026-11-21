@@ -1,6 +1,6 @@
 # Orchestrator handoff
 
-_Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable facts go to
+_Updated 2026-11-21. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable facts go to
 `docs/dev/STATUS.md`._
 
 ## Rules in force right now
@@ -19,29 +19,28 @@ _Updated 2026-11-20. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
   maintainer takes a `pg_dump` and the migration is rehearsed on a restored copy (deploy
   routine in `docs/dev/dev-environments.md`). Startup and seeding never overwrite
   user-owned rows. Stricter input checks never make existing stored values fail to load.
+- **Who merges where** (maintainer, 2026-11-21): each developer merges only in their own
+  repository and opens pull requests in the other. This session merges here; in the
+  self-hosted sibling it opens pull requests and that project's developer merges them. Pull
+  requests the sibling's developer opens here are finished and merged from here.
 - Pull request and issue text: no internal process notes. Run `npx prettier --write` on edited
   docs before committing.
 
 ## State
 
-- `main` 828df84 is live (sixth deploy, `sha-828df84`, #12 to #26); the maintainer confirmed
-  the site is much faster.
-- Merged after the sixth deploy and waiting for the maintainer to pull: #27 (leave and
-  delete teams), #28 and #30 (kit layout first in the arranger; rims on one plate; moved
-  parts may join a plate up to 60% full) and #29 (print some parts of a plate). The
-  maintainer is holding the update: the sibling's developer found a problem in part-level
-  printing and is preparing a fix there; port it here when its pull request is up, then
-  tell the maintainer which image to pull and what to check (24 plates equal to the kit,
-  rims on one plate, "Print some parts…", Members page leave and delete, the existing build
-  unchanged).
-- Sibling repository: the arranger (#28 and #30 together) is ported on its branch
-  `claude/elegant-fermi-ea7mci` (based on its `edge`), not yet committed or pushed; the
-  verifier run was in progress. Next: commit, push, open a pull request into its `edge`. The
-  port also brings the export path that follows a chosen kit layout, which that repository
-  lacked: say so in the pull request.
+- `sha-828df84` is live (sixth deploy, #12 to #26).
+- Merged since and waiting for the maintainer to pull: #27 to #35 (list in STATUS). **#33
+  adds migration `0002_piece_prints`**, the first since the site has users: additive, runs
+  at container start. The maintainer takes a database backup right before pulling. After
+  they confirm the update: log the seventh deploy in `docs/dev/CHANGELOG.md` and ask what
+  they saw (24 plates equal to the kit, rims on one plate reading "per print", "Print some
+  parts…", "Print some pieces…" on Harness and Straps, Members page leave and delete, their
+  existing build unchanged).
 - No pull requests open here. Worktrees and screenshots are session-local.
-- Sibling repository: resource-limit back-port open there (`fix/resource-limits`); carry-overs
-  in STATUS.
+- Sibling repository: the arranger is merged there (its #92 and #94) and it has the piece
+  prints (#93); its resource-limit back-port branch `fix/resource-limits` is still open.
+  Not yet offered there: the keep-alive default and e2e read retry (#32), the test temp
+  cleanup (#35), and the review notes in this repository's #33.
 - Google Safe Browsing review of the domain requested; don't share widely until it clears.
 
 ## Next step
