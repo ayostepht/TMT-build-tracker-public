@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
+import { tickLoggedPieces } from '#lib/domain/actions.ts';
 import { filterSteps } from '#lib/domain/assembly.ts';
 import { buildStarted, type LiveJobs } from '#lib/domain/started.ts';
 import { inactiveSlugs, resolveChoices, variantOfPart } from '#lib/domain/variants.ts';
@@ -550,7 +551,7 @@ export async function loadBuildView(
 		canEdit: access.canEdit,
 		filaments,
 		parts,
-		state,
+		state: tickLoggedPieces({ runs, parts }, state),
 		variantGroups,
 		variantChoices,
 		allParts,

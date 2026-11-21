@@ -8,6 +8,8 @@ import {
 	printingPieces,
 	recomputeParts,
 	runTargets,
+	pieceTickError,
+	keepLoggedTicks,
 	setPieceTicks,
 	setPrintStart,
 	setRunEstimate,
@@ -335,8 +337,12 @@ export async function updatePart(
 				// Only the part's own piece indexes are kept.
 				if (/^\d+$/.test(k) && Number(k) < nPieces) comps[k] = v;
 			}
-			patch.comps = comps;
-			ticked = setPieceTicks(view, slug, comps, now)[0] ?? null;
+			// A piece a Success print log covers stays ticked: unticking it is refused.
+			const locked = pieceTickError(view, slug, comps);
+			if (locked) bad(locked);
+			const kept = keepLoggedTicks(view, slug, comps);
+			patch.comps = kept;
+			ticked = setPieceTicks(view, slug, kept, now)[0] ?? null;
 		}
 		if (body.assigneeUserId !== undefined) {
 			const a = body.assigneeUserId;

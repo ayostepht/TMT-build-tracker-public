@@ -36,7 +36,11 @@ _Updated 2026-11-21. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
   they saw (24 plates equal to the kit, rims on one plate reading "per print", "Print some
   parts…", "Print some pieces…" on Harness and Straps, Members page leave and delete, their
   existing build unchanged).
-- No pull requests open here. Worktrees and screenshots are session-local.
+- Open: #36 "Logged pieces are ticked and locked; Print some… moves into the status menu"
+  (branch `fix/piece-ticks-status-menu`), opened from the sibling's session as the port of
+  its #95. Gate passed (check, lint, unit, build, the four `print-some-*` specs and
+  neighbours); no migration. It is finished and merged from here, after a look at the
+  status menu entry and the "logged" pieces. Worktrees and screenshots are session-local.
 - Sibling repository: the arranger is merged there (its #92 and #94) and it has the piece
   prints (#93); its resource-limit back-port branch `fix/resource-limits` is still open.
   Not yet offered there: the keep-alive default and e2e read retry (#32), the test temp
