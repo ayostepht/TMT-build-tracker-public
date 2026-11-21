@@ -15,6 +15,13 @@
       "when": 1795109489379,
       "tag": "0001_drop_duplicate_org_slug_index",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795213653423,
+      "tag": "0002_piece_prints",
+      "breakpoints": true
     }
   ]
 }

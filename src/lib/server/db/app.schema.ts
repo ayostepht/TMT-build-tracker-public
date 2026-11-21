@@ -409,6 +409,8 @@ export const buildParts = pgTable(
 		startedAt: timestamp('started_at', TS),
 		printedOn: text('printed_on'),
 		runEstSeconds: integer('run_est_seconds'),
+		/** Piece indexes (0-based indexes into the part's `components`) printing now. Null = the whole part / none. */
+		printingComps: jsonb('printing_comps').$type<number[]>(),
 		comps: jsonb('comps')
 			.$type<Record<string, boolean>>()
 			.notNull()
@@ -467,6 +469,8 @@ export const printRuns = pgTable(
 		plateNumber: integer('plate_number'),
 		partSlug: text('part_slug'),
 		partSlugs: jsonb('part_slugs').$type<string[]>(),
+		/** Pieces this run printed (0-based indexes into the part's `components`). Null = the whole part. */
+		comps: jsonb('comps').$type<number[]>(),
 		date: text('date').notNull(),
 		result: text('result').notNull(),
 		grams: doublePrecision('grams'),
@@ -707,6 +711,8 @@ export const printerJobs = pgTable(
 		buildId: text('build_id').references(() => builds.id, { onDelete: 'set null' }),
 		plateNumber: integer('plate_number'),
 		partSlugs: jsonb('part_slugs').$type<string[]>(),
+		/** Pieces this job prints (0-based indexes into the part's `components`). Null = the whole part. */
+		comps: jsonb('comps').$type<number[]>(),
 		fileName: text('file_name').notNull().default(''),
 		status: text('status').notNull().default('printing'), // printing | paused | done | failed | cancelled
 		progress: doublePrecision('progress'),

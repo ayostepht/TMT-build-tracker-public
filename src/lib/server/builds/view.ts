@@ -341,6 +341,7 @@ export async function loadBuildView(
 			printedOn: s.printedOn,
 			runEstSeconds: s.runEstSeconds,
 			comps: s.comps,
+			printingComps: s.printingComps?.length ? s.printingComps : null,
 			assigneeUserId: s.assigneeUserId,
 			manualGrams: s.manualGrams,
 			updatedAt: s.updatedAt.toISOString()
@@ -355,6 +356,7 @@ export async function loadBuildView(
 			printedOn: null,
 			runEstSeconds: null,
 			comps: {},
+			printingComps: null,
 			assigneeUserId: null,
 			manualGrams: null,
 			updatedAt: b.createdAt.toISOString()
@@ -481,6 +483,7 @@ export async function loadBuildView(
 		plateNumber: r.plateNumber,
 		partSlug: r.partSlug,
 		partSlugs: r.partSlugs ?? null,
+		comps: r.comps?.length ? r.comps : null,
 		date: r.date,
 		result: r.result as RunResult,
 		grams: r.grams,
@@ -633,6 +636,7 @@ export async function applyPatches(
 		if ('printedOn' in p) set.printedOn = p.printedOn ?? null;
 		if ('runEstSeconds' in p) set.runEstSeconds = p.runEstSeconds ?? null;
 		if (p.comps !== undefined) set.comps = p.comps;
+		if ('printingComps' in p) set.printingComps = p.printingComps?.length ? p.printingComps : null;
 		if ('assigneeUserId' in p) set.assigneeUserId = p.assigneeUserId ?? null;
 		if ('manualGrams' in p) set.manualGrams = p.manualGrams ?? null;
 		sets.push([slug, set]);
