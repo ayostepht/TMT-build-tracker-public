@@ -52,6 +52,7 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 
 ### Fixed
 
+- Replacing or re-arranging the plates of a build that has started no longer turns a "some pieces" print log into a log of the whole part: the log keeps its pieces, its place in the history and its link to the printer's job.
 - The wheel rims plate (printed four times) now reads per print everywhere on the Files tab: grams and time of one print, then the totals, and its counter counts prints ("0/4 printed"). The TPU tires plate shows the grams of one print, not of both.
 - The chair on the home page drew every alternative part at once, which showed as jagged patches of two colors on the wheels.
 - Deleting the photo on screen in the photo viewer could leave keyboard focus nowhere after closing it.
