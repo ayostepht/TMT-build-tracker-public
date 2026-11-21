@@ -34,7 +34,8 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - **Merged, not yet deployed (2026-11-21):** #27 leave and delete teams, #28 #30 #31 #34 the
   kit layout comes first in the arranger (planner 3, plan cache), #29 print some parts of a
   plate, #32 keep-alive above the proxy's, #33 print some pieces of a part, #35 tests clean
-  up their temp directories. **#33 carries migration `0002_piece_prints`** (three nullable
+  up their temp directories, #36 logged pieces are ticked and locked and "Print some…" sits
+  in the status menu, #37 converted plate logs keep their pieces and their row. **#33 carries migration `0002_piece_prints`** (three nullable
   jsonb columns, additive; the previous image keeps working against the migrated database).
   It runs when the container starts on the new image: the maintainer backs up the database
   right before pulling. Rehearsed on a database built by the previous `main`: counts
@@ -126,6 +127,11 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   whole-part run; a logged run stores `partSlugs` validated against the build, not the
   plate [build-state]. `migrate.test.ts` simulates "baseline only" by dropping the 0002
   columns and later journal rows: a future migration needs the same treatment there.
+- Plate conversion (#37): `convertPlateRuns` updates the original run row for the first
+  target part (id, creation time, planned time and a piece run's `comps` survive) and
+  inserts rows only for further parts of a multi-part log. Open, low: a log whose part is no
+  longer on the plate is still deleted, and a printer job's `run_id` then dangles; the
+  UPDATE is scoped by run id only (the runs come from the build's own view).
 - Connections: the image sets `KEEP_ALIVE_TIMEOUT=120` and `HEADERS_TIMEOUT=125` so the
   origin outlasts cloudflared's 90 s idle timeout (#32). E2E: GET and HEAD API requests
   retry on ECONNRESET (`e2e/fixtures.ts`); never compare the key order of `state` from the

@@ -29,18 +29,16 @@ _Updated 2026-11-21. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 ## State
 
 - `sha-828df84` is live (sixth deploy, #12 to #26).
-- Merged since and waiting for the maintainer to pull: #27 to #35 (list in STATUS). **#33
+- Merged since and waiting for the maintainer to pull: #27 to #37 (list in STATUS). **#33
   adds migration `0002_piece_prints`**, the first since the site has users: additive, runs
   at container start. The maintainer takes a database backup right before pulling. After
   they confirm the update: log the seventh deploy in `docs/dev/CHANGELOG.md` and ask what
   they saw (24 plates equal to the kit, rims on one plate reading "per print", "Print some
-  parts…", "Print some pieces…" on Harness and Straps, Members page leave and delete, their
-  existing build unchanged).
-- Open: #36 "Logged pieces are ticked and locked; Print some… moves into the status menu"
-  (branch `fix/piece-ticks-status-menu`), opened from the sibling's session as the port of
-  its #95. Gate passed (check, lint, unit, build, the four `print-some-*` specs and
-  neighbours); no migration. It is finished and merged from here, after a look at the
-  status menu entry and the "logged" pieces. Worktrees and screenshots are session-local.
+  parts…" and "Print some pieces…" in the status menu, logged pieces ticked and locked on
+  Harness and Straps, Members page leave and delete, their existing build unchanged).
+- No pull requests open here. Worktrees and screenshots are session-local.
+- Open in the sibling from this session: its #96, the port of #37 (converted plate logs
+  keep their pieces); its developer merges it.
 - Sibling repository: the arranger is merged there (its #92 and #94) and it has the piece
   prints (#93); its resource-limit back-port branch `fix/resource-limits` is still open.
   Not yet offered there: the keep-alive default and e2e read retry (#32), the test temp
