@@ -31,15 +31,15 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 - Live: the code of `main` 28aa7aa (seventh deploy, confirmed 2026-11-22, #27 to #37,
   migration `0002_piece_prints` applied). Rollback image `sha-828df84`. Not yet asked: what
   the maintainer saw of the new plate and piece features.
-- **In flight: `fix/picker-pick-sticks`** (local branch, not pushed yet, no pull request yet).
-  Reported from the live site on a phone: tapping a swatch in the color picker sometimes
-  neither recolors the 3D preview nor saves. `design-studio-ui` is reproducing and fixing.
-  Known so far: `pickFilament` in `DesignWorkspace.svelte` compares a `$state` proxy with the
-  picked object, so the optimistic value for a slot is never cleared; the no-recolor tap is
-  not yet explained (suspect: hover handlers on touch). Left: agent report, `verifier`, pull
-  request, screenshots to the maintainer before the merge, then offer the fix to the sibling
-  (shared code).
-- No pull requests open here, and none open in the sibling from this project (its #92, #94
+- **In flight: #38 `fix/picker-pick-sticks`** (head e72f1fd), the color picker fix reported
+  from the live site on a phone. The optimistic color of a slot is now dropped when its save
+  returns, a refused save shows next to the picker, swatches ignore touch hover. Agent
+  checks and `verifier` passed; the maintainer said to merge when `public-ci` is green.
+  Left: merge, tell the maintainer the image to pull, ask them to retest on the iPhone (the
+  lost tap was not reproduced in Chromium; if it still happens, look for 429 responses on
+  the filament update), log the deploy, add the Design studio notes to
+  `docs/architecture.md`, then offer the fix to the sibling (shared code).
+- No other pull requests open here, and none open in the sibling from this project (its #92, #94
   and #96 are merged). Worktrees and screenshots are session-local.
 - Sibling repository: the arranger is merged there (its #92 and #94) and it has the piece
   prints (#93); its resource-limit back-port branch `fix/resource-limits` is still open.
@@ -49,7 +49,7 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## Next step
 
-1. Finish `fix/picker-pick-sticks` (above).
+1. Finish #38 (above).
 2. Offer the sibling's developer, as pull requests into its `edge` (its developer merges):
    the keep-alive default and e2e read retry (#32) and the test temp cleanup (#35).
 3. Small follow-ups in STATUS, each its own pull request: `printer-match.ts` uses the
