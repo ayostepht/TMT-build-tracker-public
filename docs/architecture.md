@@ -521,6 +521,13 @@ can also be added "not connected" (kind `manual`) to log prints by hand.
   status region; 44 px targets are `pointer: coarse` blocks in `SwatchPicker`, `PartList`,
   `PartSheet` and `DesignWorkspace`; the contrast guard is `domain/design-tokens.test.ts`.
 
+- **Picking a color** (#38): `DesignWorkspace.pickFilament` shows `optimistic[role]` only
+  until the latest save of that slot returns (one token per role; `ctx.act` re-fetches the
+  view on success and on failure, so the server's value is then the truth). A refused save
+  shows `ctx.error` in the page banner and next to the picker (`picker-error`).
+  `SwatchPicker` updates its detail row on mouse hover and keyboard focus only: touch
+  pointer events are ignored (a hover-driven content change can make iOS drop the click)
+  and `.sw:hover` sits inside `@media (hover: hover)`. Spec: `e2e/swatch-picker-pick.spec.ts`.
 - **Design system** (`src/app.css`): scales `--fs-*` (8 steps, `--fs-field` 16 px for
   inputs), `--sp-*`, `--r-*`, `--shadow-*`; breakpoints 760 (phone shell), 900 (two
   columns), 1440 (wide); primitives `ds-seg`, `ds-card`, `ds-badge`, `ds-modal` (older

@@ -32,9 +32,13 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - **Live (seventh deploy, confirmed 2026-11-22):** the code of `main` 28aa7aa, everything
   through #37, with migration `0002_piece_prints` applied (three nullable jsonb columns).
   Rollback image: `sha-828df84` (runs against the migrated database).
-- **In progress (2026-11-22):** color picker on a phone: a tapped swatch does not always
-  recolor the preview or save (branch `fix/picker-pick-sticks`). Known cause so far: the
-  Design tab never clears its "just picked" value for a slot, which then hides the saved one.
+- **Merged, not yet deployed (2026-11-22):** #38 color picker: a picked color no longer
+  hides the saved one, a refused save shows next to the picker, swatches ignore touch hover
+  (image `sha-388df30`, no migration). Open: the tap that did nothing on an iPhone was not
+  reproduced in Chromium; to be confirmed on the phone. If it still happens, look for 429
+  responses on the filament update (write-rate limit). Small follow-ups from the review: a
+  `try/finally` around the save in `pickFilament`; after a tap, tabbing back into the swatch
+  grid does not refresh the detail row until the next arrow key.
 - **Speed (2026-11-20):** pages were slow because of sequential database round trips (the app
   and the database are a network hop apart). Measured through a latency proxy at 40 ms per
   round trip, before → after #18/#19: build page 2.3 s → 0.6 s, builds list 3.0 → 1.1 s, team
