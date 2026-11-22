@@ -35,8 +35,10 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
   color picker fix reported from the live site on a phone; no migration. When the maintainer
   has pulled it: ask whether a tap on a swatch now always recolors and saves on the iPhone
   (the lost tap was not reproduced in Chromium; if it still happens, look for 429 responses
-  on the filament update), then log the eighth deploy. Still to do: offer the fix to the
-  sibling as a pull request into its `edge` (shared code).
+  on the filament update), then log the eighth deploy. Offered to the sibling as its #98 into `edge` (branch `claude/elegant-fermi-ea7mci`,
+  agent checks and `verifier` passed; its developer merges). #98 also carries two small
+  follow-ups not yet here: a `finally` around the save in `pickFilament`, and clearing the
+  picker's touch flag on any key press. Bring them back here on `fix/picker-followups`.
 - No pull requests open here, and none open in the sibling from this project (its #92, #94
   and #96 are merged). Worktrees and screenshots are session-local.
 - Sibling repository: the arranger is merged there (its #92 and #94) and it has the piece
