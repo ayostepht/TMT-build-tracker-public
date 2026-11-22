@@ -38,8 +38,8 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
   on the filament update), then log the eighth deploy. Offered to the sibling as its #98 into `edge` (branch `claude/elegant-fermi-ea7mci`,
   agent checks and `verifier` passed; its developer merges). #98 also carries two small
   follow-ups not yet here: a `finally` around the save in `pickFilament`, and clearing the
-  picker's touch flag on any key press. Bring them back here on `fix/picker-followups`.
-- No pull requests open here, and none open in the sibling from this project (its #92, #94
+  picker's touch flag on any key press. They are here as **#39** (`fix/picker-followups`, head a verified single commit; agent checks and `verifier` passed). Not merged: merging publishes to the live site, so it waits for the maintainer's word.
+- No other pull requests open here, and none open in the sibling from this project (its #92, #94
   and #96 are merged). Worktrees and screenshots are session-local.
 - Sibling repository: the arranger is merged there (its #92 and #94) and it has the piece
   prints (#93); its resource-limit back-port branch `fix/resource-limits` is still open.
