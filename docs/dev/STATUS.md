@@ -67,6 +67,11 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 
 ## Open items
 
+- **Share a picture** (#41, a999ad6; sibling #99) [design-studio-ui]: Design tab button,
+  in-browser PNG/JPEG for the family or social media (square, portrait, tall; text sections
+  on portrait and tall). Nothing is uploaded; it also shows in the demo (maintainer,
+  2026-11-22: keep it). Open: the share sheet is unchecked on Android; no e2e assertion for
+  the compose retry (`share-picture-retry`).
 - Sibling repository (self-hosted): carry over by hand when convenient (not security fixes):
   the color picker scroll fix (#5) and compact desktop controls (#9) in `SwatchPicker.svelte`
   with `e2e/picker-scroll.spec.ts`; the export following the chosen layout (#6,
