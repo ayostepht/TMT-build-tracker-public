@@ -269,12 +269,15 @@
 		)} is now ${v.name}, ${v.material}`;
 		// `act` re-fetches the view whether the save worked or not (a failure also shows its sentence),
 		// so by now the server's value is the truth: drop ours, unless a newer pick of this slot is in flight.
-		await ctx.act(() => updateFilament(ctx.id, role, v));
-		if (pickTokens[role] === token) {
-			delete pickTokens[role];
-			const next = { ...optimistic };
-			delete next[role];
-			optimistic = next;
+		try {
+			await ctx.act(() => updateFilament(ctx.id, role, v));
+		} finally {
+			if (pickTokens[role] === token) {
+				delete pickTokens[role];
+				const next = { ...optimistic };
+				delete next[role];
+				optimistic = next;
+			}
 		}
 	}
 
@@ -712,11 +715,11 @@
 	.panel.picking > :global(:not(.pickhost)) {
 		display: none;
 	}
-	/* Phones: the card grows with its content and the page scrolls (no fixed height, nothing overflows it). */
 	.pickerr {
 		margin: 0 0 var(--sp-3);
 		flex: none;
 	}
+	/* Phones: the card grows with its content and the page scrolls (no fixed height, nothing overflows it). */
 	.pickhost {
 		display: flex;
 		flex-direction: column;
