@@ -14,6 +14,12 @@ repository was split off on 2026-11-19) is in the sibling repository,
 
 ## 2026-11
 
+- **Seventh deploy, confirmed 2026-11-22.** Image `latest` with the code of `main` 28aa7aa
+  (#27 to #37: leave and delete teams, the kit layout first in the arranger, print some parts
+  of a plate and some pieces of a part, keep-alive above the proxy's, logged pieces ticked and
+  locked, converted plate logs keep their pieces). Migration: `0002_piece_prints` applied on
+  start (additive). Found the same day on a phone: a tapped swatch in the color picker does
+  not always recolor or save (fix in progress).
 - **2026-11-20, sixth deploy.** Image `sha-828df84` (`main` 828df84: #12 to #26; strict
   Turnstile checks, way back to the home page, signed-out guards, hero wheel fix and link
   previews, first-time journey fixes, faster navigation and build loading, clean shutdown,

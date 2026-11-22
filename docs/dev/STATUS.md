@@ -29,17 +29,12 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
 - **Real users since 2026-11-20:** the site was shared with a first few makers. Updates
   must keep their data: additive, backward-compatible migrations only, a backup and a
   rehearsal before any migration reaches `main` (rules in `docs/dev/HANDOFF.md`).
-- **Live (sixth deploy, 2026-11-20):** `sha-828df84`, everything through #26. No
-  migrations since `0001`. The maintainer confirmed the speed-up on the live site.
-- **Merged, not yet deployed (2026-11-21):** #27 leave and delete teams, #28 #30 #31 #34 the
-  kit layout comes first in the arranger (planner 3, plan cache), #29 print some parts of a
-  plate, #32 keep-alive above the proxy's, #33 print some pieces of a part, #35 tests clean
-  up their temp directories, #36 logged pieces are ticked and locked and "Print some…" sits
-  in the status menu, #37 converted plate logs keep their pieces and their row. **#33 carries migration `0002_piece_prints`** (three nullable
-  jsonb columns, additive; the previous image keeps working against the migrated database).
-  It runs when the container starts on the new image: the maintainer backs up the database
-  right before pulling. Rehearsed on a database built by the previous `main`: counts
-  unchanged, new columns NULL, second start a no-op, previous code still runs.
+- **Live (seventh deploy, confirmed 2026-11-22):** the code of `main` 28aa7aa, everything
+  through #37, with migration `0002_piece_prints` applied (three nullable jsonb columns).
+  Rollback image: `sha-828df84` (runs against the migrated database).
+- **In progress (2026-11-22):** color picker on a phone: a tapped swatch does not always
+  recolor the preview or save (branch `fix/picker-pick-sticks`). Known cause so far: the
+  Design tab never clears its "just picked" value for a slot, which then hides the saved one.
 - **Speed (2026-11-20):** pages were slow because of sequential database round trips (the app
   and the database are a network hop apart). Measured through a latency proxy at 40 ms per
   round trip, before → after #18/#19: build page 2.3 s → 0.6 s, builds list 3.0 → 1.1 s, team

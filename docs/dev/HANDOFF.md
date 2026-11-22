@@ -28,18 +28,17 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## State
 
-- `sha-828df84` is live (sixth deploy, #12 to #26).
-- Merged since and published, waiting for the maintainer to pull: #27 to #37 (list in
-  STATUS). The image was announced to the maintainer on 2026-11-21 as `sha-28aa7aa`
-  (`latest` then; a later docs-only commit publishes the same code under a newer tag).
-  **#33 adds migration `0002_piece_prints`**, the first since the site has users: additive,
-  runs at container start. The maintainer takes a database backup right before pulling;
-  rollback is the previous image `sha-828df84`, which works against the migrated database.
-  **Not yet confirmed as deployed.** When they confirm: log the seventh deploy in
-  `docs/dev/CHANGELOG.md`, move "Merged, not yet deployed" in STATUS to "Live", and ask what
-  they saw (24 plates equal to the kit, rims on one plate reading "per print", "Print some
-  parts…" and "Print some pieces…" in the status menu, logged pieces ticked and locked on
-  Harness and Straps, Members page leave and delete, their existing build unchanged).
+- Live: the code of `main` 28aa7aa (seventh deploy, confirmed 2026-11-22, #27 to #37,
+  migration `0002_piece_prints` applied). Rollback image `sha-828df84`. Not yet asked: what
+  the maintainer saw of the new plate and piece features.
+- **In flight: `fix/picker-pick-sticks`** (local branch, not pushed yet, no pull request yet).
+  Reported from the live site on a phone: tapping a swatch in the color picker sometimes
+  neither recolors the 3D preview nor saves. `design-studio-ui` is reproducing and fixing.
+  Known so far: `pickFilament` in `DesignWorkspace.svelte` compares a `$state` proxy with the
+  picked object, so the optimistic value for a slot is never cleared; the no-recolor tap is
+  not yet explained (suspect: hover handlers on touch). Left: agent report, `verifier`, pull
+  request, screenshots to the maintainer before the merge, then offer the fix to the sibling
+  (shared code).
 - No pull requests open here, and none open in the sibling from this project (its #92, #94
   and #96 are merged). Worktrees and screenshots are session-local.
 - Sibling repository: the arranger is merged there (its #92 and #94) and it has the piece
@@ -50,7 +49,7 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## Next step
 
-1. Wait for the maintainer's word on the update (above), then log the deploy.
+1. Finish `fix/picker-pick-sticks` (above).
 2. Offer the sibling's developer, as pull requests into its `edge` (its developer merges):
    the keep-alive default and e2e read retry (#32) and the test temp cleanup (#35).
 3. Small follow-ups in STATUS, each its own pull request: `printer-match.ts` uses the
