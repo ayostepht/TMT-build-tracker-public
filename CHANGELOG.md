@@ -10,6 +10,8 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 
 ### Added
 
+- **Share a picture of a build's colors.** The Design tab has a "Share a picture" button that makes a PNG or JPEG of the chair in the build's colors. "For the family" is a calm card with a title and the colors as plain swatches, to send when a family wants to approve the colors. "For social media" comes in three sizes (square for a grid post, portrait for a feed post, tall for a story), and the portrait and tall sizes take optional text sections with a bold heading (one on portrait, up to three on tall), for example "About the recipient" or "How you can help". The picture uses the angle shown in the 3D view and holds only what you type, the chair, its colors and a credit to MakeGood: no build, team, recipient or filament names are filled in. It is made in your browser and nothing is uploaded. On a phone that supports it, Share hands the picture to the system share sheet; otherwise use Download.
+
 - The server keeps idle connections open for 120 seconds (`KEEP_ALIVE_TIMEOUT`, `HEADERS_TIMEOUT`; Node's default is 5), longer than the Cloudflare Tunnel's 90 seconds, so a proxy no longer hits an occasional 502 from reusing a connection as the app closes it.
 
 - Public home page: what the tracker is and who it is for, with the real MakeGood chair model you can turn, MakeGood credit, sign-in and a link to the demo.
