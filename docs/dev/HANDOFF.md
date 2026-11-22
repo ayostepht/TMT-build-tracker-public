@@ -47,7 +47,13 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
   the maintainer has pulled the image, log the deploy with #38 and #39.
 - Sibling: the same fix with both follow-ups is its #98 into `edge` (branch
   `claude/elegant-fermi-ea7mci`; agent checks and `verifier` passed; its developer merges).
-- No pull requests open here, and none open in the sibling from this project (its #92, #94
+- **Open here, from the self-hosted project's session: "Add Space Coast 3D and Dancyn 3D
+  Prints to the filament catalog"** (branch `feat/filaments-space-coast-dancyn`; its
+  counterpart there is #100). Data and picker order only, no migration; the seven filament
+  files are byte-identical to the sibling's. Checks passed (check, lint, full unit, build,
+  the filament and picker e2e specs). This session finishes and merges it (merging is
+  deploying).
+- No other pull requests open here, and none open in the sibling from this project (its #92, #94
   and #96 are merged). Worktrees and screenshots are session-local.
 - Sibling repository: the arranger is merged there (its #92 and #94) and it has the piece
   prints (#93); its resource-limit back-port branch `fix/resource-limits` is still open.
