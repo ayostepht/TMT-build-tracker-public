@@ -31,15 +31,16 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 - Live: the code of `main` 28aa7aa (seventh deploy, confirmed 2026-11-22, #27 to #37,
   migration `0002_piece_prints` applied). Rollback image `sha-828df84`. Not yet asked: what
   the maintainer saw of the new plate and piece features.
-- **#38 merged (388df30), published as `sha-388df30`, not yet confirmed as deployed.** The
-  color picker fix reported from the live site on a phone; no migration. When the maintainer
-  has pulled it: ask whether a tap on a swatch now always recolors and saves on the iPhone
-  (the lost tap was not reproduced in Chromium; if it still happens, look for 429 responses
-  on the filament update), then log the eighth deploy. Offered to the sibling as its #98 into `edge` (branch `claude/elegant-fermi-ea7mci`,
-  agent checks and `verifier` passed; its developer merges). #98 also carries two small
-  follow-ups not yet here: a `finally` around the save in `pickFilament`, and clearing the
-  picker's touch flag on any key press. They are here as **#39** (`fix/picker-followups`, head a verified single commit; agent checks and `verifier` passed). Not merged: merging publishes to the live site, so it waits for the maintainer's word.
-- No other pull requests open here, and none open in the sibling from this project (its #92, #94
+- **#38 and #39 merged (916fcb8), published as `sha-916fcb8`, not yet confirmed as
+  deployed.** #38 is the color picker fix reported from the live site on a phone; #39 its two
+  review follow-ups (a `finally` around the save, the touch flag cleared on any key press).
+  No migration. When the maintainer has pulled it: ask whether a tap on a swatch now always
+  recolors and saves on the iPhone (the lost tap was not reproduced in Chromium; if it still
+  happens, look for 429 responses on the filament update and the error line next to the
+  picker), then log the eighth deploy.
+- Sibling: the same fix with both follow-ups is its #98 into `edge` (branch
+  `claude/elegant-fermi-ea7mci`; agent checks and `verifier` passed; its developer merges).
+- No pull requests open here, and none open in the sibling from this project (its #92, #94
   and #96 are merged). Worktrees and screenshots are session-local.
 - Sibling repository: the arranger is merged there (its #92 and #94) and it has the piece
   prints (#93); its resource-limit back-port branch `fix/resource-limits` is still open.
@@ -49,7 +50,7 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## Next step
 
-1. Wait for the maintainer's word on #38 (above), then log the deploy.
+1. Wait for the maintainer's word on #38 and #39 (above), then log the deploy.
 2. Offer the sibling's developer, as pull requests into its `edge` (its developer merges):
    the keep-alive default and e2e read retry (#32) and the test temp cleanup (#35).
 3. Small follow-ups in STATUS, each its own pull request: `printer-match.ts` uses the
