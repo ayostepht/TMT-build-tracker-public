@@ -422,6 +422,7 @@
 
 <svelte:window
 	onkeydown={(e) => {
+		touching = false;
 		if (e.key === 'Escape') {
 			if (screen === 'form') screen = 'pick';
 			else onclose();
