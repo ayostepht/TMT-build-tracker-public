@@ -478,7 +478,9 @@ can also be added "not connected" (kind `manual`) to log prints by hand.
   `DesignActions` (needs the model and WebGL; hidden in the embedded wizard; viewers may use
   it). The chair comes from `ModelStage.snapshot({ clean: true })` (no selection highlight or
   dimming, transparent, trimmed). Browser only: nothing is uploaded and no names are
-  pre-filled. `Dialog` has a `wide` prop for it.
+  pre-filled. `Dialog` has a `wide` prop for it. Section bodies keep typed line breaks
+  (`cleanBody`; `fitSections` wraps per paragraph); a failed compose offers a retry
+  (`share-picture-retry`).
 - **Parts:** `PartSheet` (part chip + slot strip over the stage), `PartList` (role filter
   chips, sticky groups). `share/DesignActions` above the tabs ("Saved automatically",
   Saved designs, Share / Save as design).
