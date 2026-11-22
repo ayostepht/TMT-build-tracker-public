@@ -38,6 +38,13 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
   recolors and saves on the iPhone (the lost tap was not reproduced in Chromium; if it still
   happens, look for 429 responses on the filament update and the error line next to the
   picker), then log the eighth deploy.
+- **#41 "Share a picture of a build's colors" merged 2026-11-22 (a999ad6), not yet confirmed
+  as deployed.** Port of the sibling's #101, #102 and #104 (opened from the self-hosted
+  project's session; merged on the maintainer's go-ahead after they tested it on a phone on
+  the sibling's `edge` image). Browser only: no migration, no server, CSP or dependency
+  change. Decided by the maintainer: the button stays visible in the demo. Not checked: the
+  system share sheet on Android; the retry after a failed draw has no e2e assertion. When
+  the maintainer has pulled the image, log the deploy with #38 and #39.
 - Sibling: the same fix with both follow-ups is its #98 into `edge` (branch
   `claude/elegant-fermi-ea7mci`; agent checks and `verifier` passed; its developer merges).
 - No pull requests open here, and none open in the sibling from this project (its #92, #94
