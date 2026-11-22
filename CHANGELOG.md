@@ -52,6 +52,7 @@ The hosted edition starts from the self-hosted 0.9.2 release and turns it into a
 
 ### Fixed
 
+- Color picker: picking a color always shows the saved color afterwards (a pick could keep showing after its save was refused, and hide later changes to that color), a refused save now says so next to the picker, and a tap on a swatch on a phone is no longer treated as a hover.
 - Replacing or re-arranging the plates of a build that has started no longer turns a "some pieces" print log into a log of the whole part: the log keeps its pieces, its place in the history and its link to the printer's job.
 - The wheel rims plate (printed four times) now reads per print everywhere on the Files tab: grams and time of one print, then the totals, and its counter counts prints ("0/4 printed"). The TPU tires plate shows the grams of one print, not of both.
 - The chair on the home page drew every alternative part at once, which showed as jagged patches of two colors on the wheels.
