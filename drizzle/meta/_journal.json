@@ -22,6 +22,13 @@
       "when": 1795213653423,
       "tag": "0002_piece_prints",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795475332099,
+      "tag": "0003_custom_parts",
+      "breakpoints": true
     }
   ]
 }

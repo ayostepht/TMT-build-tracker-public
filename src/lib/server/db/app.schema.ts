@@ -415,12 +415,91 @@ export const buildParts = pgTable(
 			.$type<Record<string, boolean>>()
 			.notNull()
 			.default(sql`'{}'::jsonb`),
+		/**
+		 * Maker marked this part 'Not printing' (issue 113): it leaves progress, filament and
+		 * time totals; status and runs are kept so it can be restored.
+		 */
+		skipped: boolean('skipped').notNull().default(false),
 		assigneeUserId: text('assignee_user_id').references(() => user.id, { onDelete: 'set null' }),
 		/** Grams the maker typed for the whole part (all copies). Null = none entered. */
 		manualGrams: doublePrecision('manual_grams'),
 		updatedAt: timestamp('updated_at', TS).notNull().defaultNow()
 	},
 	(t) => [primaryKey({ columns: [t.buildId, t.partSlug] })]
+);
+
+/**
+ * A custom piece added to one build from the maker's own .3mf. Its plates are `build_plates`
+ * rows with `source = 'custom:<id>'`, its parts are `build_parts` rows with the slugs in
+ * `parts`; never part of a template.
+ */
+export const buildCustomPieces = pgTable(
+	'build_custom_pieces',
+	{
+		id: id(),
+		buildId: buildId(),
+		name: text('name').notNull(),
+		fileName: text('file_name'),
+		sliced: boolean('sliced').notNull().default(false),
+		/** Kit part slugs this piece replaces. */
+		replaces: jsonb('replaces')
+			.$type<string[]>()
+			.notNull()
+			.default(sql`'[]'::jsonb`),
+		parts: jsonb('parts')
+			.$type<{ slug: string; name: string; role: string }[]>()
+			.notNull()
+			.default(sql`'[]'::jsonb`),
+		/** Workspace library entry (no foreign key). */
+		libraryId: text('library_id'),
+		createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
+		createdAt: createdAt()
+	},
+	(t) => [index('build_custom_pieces_build_idx').on(t.buildId)]
+);
+
+/** Per-plate summary of a library piece (no geometry, never the 3MF). */
+export type LibraryPlate = {
+	name: string;
+	estSeconds: number | null;
+	grams: number | null;
+	filamentGrams: Record<string, number>;
+	role: string;
+	runs: number;
+	thumb: boolean;
+};
+
+/**
+ * A custom part saved to a workspace (team or personal) from a build's custom piece so new
+ * builds can include it. Holds per-plate summaries only, never the 3MF;
+ * `build_custom_pieces.library_id` points here without a foreign key.
+ */
+export const workspaceCustomPieces = pgTable(
+	'workspace_custom_pieces',
+	{
+		id: id(),
+		organizationId: text('organization_id')
+			.notNull()
+			.references(() => organization.id, { onDelete: 'cascade' }),
+		name: text('name').notNull(),
+		fileName: text('file_name'),
+		sliced: boolean('sliced').notNull().default(false),
+		/** The kit the `replaces` slugs refer to (no foreign key). */
+		templateId: text('template_id'),
+		replaces: jsonb('replaces')
+			.$type<string[]>()
+			.notNull()
+			.default(sql`'[]'::jsonb`),
+		plates: jsonb('plates')
+			.$type<LibraryPlate[]>()
+			.notNull()
+			.default(sql`'[]'::jsonb`),
+		/** Included in new builds by default. */
+		isDefault: boolean('is_default').notNull().default(false),
+		createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
+		createdAt: createdAt()
+	},
+	(t) => [index('workspace_custom_pieces_org_idx').on(t.organizationId)]
 );
 
 export const buildPlates = pgTable(

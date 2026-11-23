@@ -10,7 +10,14 @@ afterAll(async () => {
 
 const n = (rows: unknown) => (rows as { n: number }[])[0].n;
 
+const dropCustomParts = async (db: Db) => {
+	await db.execute(sql`drop table "build_custom_pieces"`);
+	await db.execute(sql`drop table "workspace_custom_pieces"`);
+	await db.execute(sql`alter table "build_parts" drop column "skipped"`);
+};
+
 const dropPieceColumns = async (db: Db) => {
+	await dropCustomParts(db);
 	await db.execute(sql`alter table "build_parts" drop column "printing_comps"`);
 	await db.execute(sql`alter table "print_runs" drop column "comps"`);
 	await db.execute(sql`alter table "printer_jobs" drop column "comps"`);
@@ -33,7 +40,7 @@ describe('runMigrations', () => {
 		made.push(db);
 		await Promise.all([runMigrations(db), runMigrations(db), runMigrations(db)]);
 		const rows = await db.execute(sql`select count(*)::int as n from drizzle.__drizzle_migrations`);
-		expect(n(rows)).toBe(3);
+		expect(n(rows)).toBe(4);
 	});
 });
 
@@ -56,7 +63,7 @@ describe('0001 drop duplicate organization slug index', () => {
 		made.push(old);
 		await runMigrations(old);
 		await old.execute(sql`create unique index "organization_slug_uidx" on "organization" ("slug")`);
-		// Back to the baseline-only state: forget 0001 and 0002 and undo 0002's columns.
+		// Back to the baseline-only state: forget 0001 to 0003 and undo their changes.
 		await dropPieceColumns(old);
 		await old.execute(
 			sql`delete from drizzle.__drizzle_migrations where id > (select min(id) from drizzle.__drizzle_migrations)`
@@ -72,7 +79,7 @@ describe('0002 piece prints', () => {
 		const db = await createEmptyTestDb();
 		made.push(db);
 		await runMigrations(db);
-		// The live state: 0000 and 0001 applied, 0002 not.
+		// The live state: 0000 and 0001 applied, 0002 and 0003 not.
 		await dropPieceColumns(db);
 		await db.execute(
 			sql`delete from drizzle.__drizzle_migrations where id > (select min(id) + 1 from drizzle.__drizzle_migrations)`
@@ -115,6 +122,65 @@ describe('0002 piece prints', () => {
 				+ (select count(*)::int from printer_jobs where comps is null) as n`
 		);
 		expect(n(nulls)).toBe(3);
+		await runMigrations(db); // second run is a no-op
+	});
+});
+
+describe('0003 custom parts', () => {
+	it('adds two tables and a defaulted column to a database at 0002 without touching its rows', async () => {
+		const db = await createEmptyTestDb();
+		made.push(db);
+		await runMigrations(db);
+		// The live state: 0000 to 0002 applied, 0003 not.
+		await dropCustomParts(db);
+		await db.execute(
+			sql`delete from drizzle.__drizzle_migrations where id > (select min(id) + 2 from drizzle.__drizzle_migrations)`
+		);
+		await db.execute(
+			sql`insert into "user" (id, name, email) values ('u1', 'U', 'u1@example.com')`
+		);
+		await db.execute(
+			sql`insert into organization (id, name, slug, created_at) values ('o1', 'Team', 'team', now())`
+		);
+		await db.execute(
+			sql`insert into templates (id, slug, name, version) values ('t1', 'tmt', 'TMT', '1')`
+		);
+		await db.execute(
+			sql`insert into builds (id, organization_id, template_id, name, created_by) values ('b1', 'o1', 't1', 'B', 'u1')`
+		);
+		await db.execute(sql`insert into build_parts (build_id, part_slug) values ('b1', 'seat')`);
+
+		await runMigrations(db);
+		const skipped = (await db.execute(
+			sql`select skipped from build_parts where build_id = 'b1'`
+		)) as unknown as { skipped: boolean }[];
+		expect(skipped).toEqual([{ skipped: false }]);
+
+		// Both tables work with their defaults, and the cascades fire.
+		await db.execute(
+			sql`insert into build_custom_pieces (id, build_id, name) values ('c1', 'b1', 'Cup')`
+		);
+		await db.execute(
+			sql`insert into workspace_custom_pieces (id, organization_id, name) values ('w1', 'o1', 'Cup')`
+		);
+		const row = (await db.execute(
+			sql`select p.sliced, p.replaces, p.parts, w.is_default, w.plates, w.replaces as wr
+				from build_custom_pieces p, workspace_custom_pieces w`
+		)) as unknown as Record<string, unknown>[];
+		expect(row[0]).toEqual({
+			sliced: false,
+			replaces: [],
+			parts: [],
+			is_default: false,
+			plates: [],
+			wr: []
+		});
+		await db.execute(sql`delete from builds where id = 'b1'`);
+		await db.execute(sql`delete from organization where id = 'o1'`);
+		const left = await db.execute(
+			sql`select (select count(*)::int from build_custom_pieces) + (select count(*)::int from workspace_custom_pieces) as n`
+		);
+		expect(n(left)).toBe(0);
 		await runMigrations(db); // second run is a no-op
 	});
 });
