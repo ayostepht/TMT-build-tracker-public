@@ -28,32 +28,16 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## State
 
-- Live: the code of `main` 28aa7aa (seventh deploy, confirmed 2026-11-22, #27 to #37,
-  migration `0002_piece_prints` applied). Rollback image `sha-828df84`. Not yet asked: what
-  the maintainer saw of the new plate and piece features.
-- **#38 and #39 merged (916fcb8), published as `sha-916fcb8`, not yet confirmed as
-  deployed.** #38 is the color picker fix reported from the live site on a phone; #39 its two
-  review follow-ups (a `finally` around the save, the touch flag cleared on any key press).
-  No migration. When the maintainer has pulled it: ask whether a tap on a swatch now always
-  recolors and saves on the iPhone (the lost tap was not reproduced in Chromium; if it still
-  happens, look for 429 responses on the filament update and the error line next to the
-  picker), then log the eighth deploy.
-- **#41 "Share a picture of a build's colors" merged 2026-11-22 (a999ad6), not yet confirmed
-  as deployed.** Port of the sibling's #101, #102 and #104 (opened from the self-hosted
-  project's session; merged on the maintainer's go-ahead after they tested it on a phone on
-  the sibling's `edge` image). Browser only: no migration, no server, CSP or dependency
-  change. Decided by the maintainer: the button stays visible in the demo. Not checked: the
-  system share sheet on Android; the retry after a failed draw has no e2e assertion. When
-  the maintainer has pulled the image, log the deploy with #38 and #39.
-- Sibling: the same fix with both follow-ups is its #98 into `edge` (branch
-  `claude/elegant-fermi-ea7mci`; agent checks and `verifier` passed; its developer merges).
-- **Open here, from the self-hosted project's session: "Add Space Coast 3D and Dancyn 3D
-  Prints to the filament catalog"** (branch `feat/filaments-space-coast-dancyn`; its
-  counterpart there is #100). Data and picker order only, no migration; the seven filament
-  files are byte-identical to the sibling's. Checks passed (check, lint, full unit, build,
-  the filament and picker e2e specs). This session finishes and merges it (merging is
-  deploying).
-- No other pull requests open here, and none open in the sibling from this project (its #92, #94
+- **Live: the code of `main` 26aba73 (eighth deploy, confirmed 2026-11-23): #38 to #41**
+  (color picker fixes, two filament brands, Share a picture). No migration; migration
+  `0002_piece_prints` is applied since the seventh deploy. The maintainer checked swatch
+  taps and Share a picture on an iPhone: all good. Rollback: the image of 28aa7aa. The
+  Share a picture button stays visible in the demo (maintainer). Not checked: the share
+  sheet on Android; the retry after a failed draw has no e2e assertion. Not yet asked: what
+  the maintainer saw of the plate and piece features from the seventh deploy.
+- Sibling: the picker fix (its #98), the filament brands (#100) and Share a picture (#101,
+  #102, #104) are merged there and released as its 0.9.4.
+- No pull requests open here, and none open in the sibling from this project (its #92, #94
   and #96 are merged). Worktrees and screenshots are session-local.
 - Sibling repository: the arranger is merged there (its #92 and #94) and it has the piece
   prints (#93); its resource-limit back-port branch `fix/resource-limits` is still open.
@@ -63,7 +47,7 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## Next step
 
-1. Wait for the maintainer's word on #38 and #39 (above), then log the deploy.
+1. Nothing is waiting to be deployed; pick from the items below.
 2. Offer the sibling's developer, as pull requests into its `edge` (its developer merges):
    the keep-alive default and e2e read retry (#32) and the test temp cleanup (#35).
 3. Small follow-ups in STATUS, each its own pull request: `printer-match.ts` uses the
