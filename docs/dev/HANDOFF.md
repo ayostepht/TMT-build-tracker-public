@@ -47,13 +47,12 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
   the maintainer has pulled the image, log the deploy with #38 and #39.
 - Sibling: the same fix with both follow-ups is its #98 into `edge` (branch
   `claude/elegant-fermi-ea7mci`; agent checks and `verifier` passed; its developer merges).
-- **Open here, from the self-hosted project's session: "Add Space Coast 3D and Dancyn 3D
-  Prints to the filament catalog"** (branch `feat/filaments-space-coast-dancyn`; its
-  counterpart there is #100). Data and picker order only, no migration; the seven filament
-  files are byte-identical to the sibling's. Checks passed (check, lint, full unit, build,
-  the filament and picker e2e specs). This session finishes and merges it (merging is
-  deploying).
-- No other pull requests open here, and none open in the sibling from this project (its #92, #94
+- **#40 "Add Space Coast 3D and Dancyn 3D Prints to the filament catalog" merged 2026-11-22
+  (26aba73), not yet confirmed as deployed.** Counterpart of the sibling's #100. Data and
+  picker order only, no migration; the seven filament files are byte-identical to the
+  sibling's. `main` 26aba73 is published as `latest` and `sha-26aba73` (public-ci green,
+  2026-11-23) and holds #38, #39, #40 and #41.
+- No pull requests open here, and none open in the sibling from this project (its #92, #94
   and #96 are merged). Worktrees and screenshots are session-local.
 - Sibling repository: the arranger is merged there (its #92 and #94) and it has the piece
   prints (#93); its resource-limit back-port branch `fix/resource-limits` is still open.
@@ -63,7 +62,8 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## Next step
 
-1. Wait for the maintainer's word on #38 and #39 (above), then log the deploy.
+1. Wait for the maintainer to pull `latest` (#38 to #41, above) and for their word on the
+   swatch taps and Share a picture on the iPhone, then log the deploy.
 2. Offer the sibling's developer, as pull requests into its `edge` (its developer merges):
    the keep-alive default and e2e read retry (#32) and the test temp cleanup (#35).
 3. Small follow-ups in STATUS, each its own pull request: `printer-match.ts` uses the
