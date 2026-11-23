@@ -14,6 +14,11 @@ repository was split off on 2026-11-19) is in the sibling repository,
 
 ## 2026-11
 
+- **Eighth deploy, confirmed 2026-11-23.** Image `latest` = `sha-26aba73` (`main` 26aba73:
+  #38 and #39 color picker fixes, #40 Space Coast 3D and Dancyn 3D Prints in the filament
+  catalog, #41 Share a picture). No migration. The maintainer checked on an iPhone: swatch
+  taps recolor and save, and Share a picture looks right ("All looks good"). Rollback: the
+  image of 28aa7aa. Not checked: the share sheet on Android.
 - **Seventh deploy, confirmed 2026-11-22.** Image `latest` with the code of `main` 28aa7aa
   (#27 to #37: leave and delete teams, the kit layout first in the arranger, print some parts
   of a plate and some pieces of a part, keep-alive above the proxy's, logged pieces ticked and
