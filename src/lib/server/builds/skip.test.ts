@@ -163,15 +163,30 @@ describe('Not printing (skip / restore)', () => {
 		expect((await view()).skipped).toEqual([]);
 	});
 
-	it('refuses drafts, viewers and unknown slugs', async () => {
+	it('refuses viewers and unknown slugs', async () => {
 		expect(await status(() => skip(['handle-left'], true, 'viewer'))).toBe(403);
 		expect(await status(() => skip(['nope']))).toBe(400);
 		expect(await status(() => skip([]))).toBe(400);
 		expect(await status(() => skip(['handle-left'], false))).toBe(0); // nothing to restore: no-op
 		expect(await activityRows('part.restore')).toHaveLength(0);
+	});
+
+	it('works on a Studio draft and changes its estimate', async () => {
 		await db.update(builds).set({ kind: 'draft' }).where(eq(builds.id, id));
-		expect(await status(() => skip(['handle-left']))).toBe(400);
+		const before = await view();
+		const gramsOf = (v: typeof before) => filamentStats(v).reduce((a, f) => a + f.total, 0);
+		const plate = before.plates.find((p) => p.parts.length > 0)!;
+		await skip(plate.parts);
+		const after = await view();
+		expect(after.skipped.map((s) => s.slug).sort()).toEqual([...plate.parts].sort());
+		expect(after.plates.find((p) => p.number === plate.number)).toBeUndefined();
+		expect(gramsOf(after)).toBeLessThan(gramsOf(before));
+		expect(timeStats(after).totalSec).toBeLessThan(timeStats(before).totalSec);
+		expect(await activityRows('part.skip')).toHaveLength(1);
+		await skip(plate.parts, false);
 		expect((await view()).skipped).toEqual([]);
+		expect((await view()).plates.map((p) => p.number)).toEqual(before.plates.map((p) => p.number));
+		expect(await status(() => skip(['handle-left'], true, 'viewer'))).toBe(403);
 	});
 
 	it('records the plate in the payload when a whole plate is skipped', async () => {

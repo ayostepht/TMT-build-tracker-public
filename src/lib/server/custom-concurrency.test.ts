@@ -2,14 +2,16 @@
  * The hosted edition runs requests in parallel against Postgres: every count-then-insert of custom parts
  * (build caps, workspace library cap) and every plate number (max + 1) must hold under concurrent requests.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { and, eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { and, eq, sql } from 'drizzle-orm';
 import { MAX_CUSTOM_PIECES, isCustomPlate } from '#lib/domain/custom.ts';
 import { ApiError } from './access';
 import { advisoryLock, first, type Db } from './db';
 import { createTestDb, dropTestDb } from './db/testing';
 import {
 	buildCustomPieces,
+	builds,
+	activity,
 	buildPlates,
 	member,
 	organization,
@@ -22,14 +24,16 @@ import { templateSeeds } from './seed';
 import { seedTemplates } from './seed/run';
 import { createBuild } from './builds/create';
 import { loadBuildView } from './builds/view';
-import { removeCustomPiece, renameCustomPiece } from './builds/custom-pieces';
+import { moveBuild, promoteDraft } from './builds/actions';
+import { recolorCustomPiece, removeCustomPiece, renameCustomPiece } from './builds/custom-pieces';
 import {
 	MAX_LIBRARY_PIECES,
 	applyLibraryPiece,
 	createLibraryPiece,
 	deleteLibraryPiece,
 	refreshLibraryPiece,
-	saveToLibrary
+	saveToLibrary,
+	updateLibraryPiece
 } from './custom-library';
 
 let db: Db;
@@ -338,4 +342,306 @@ describe('saved parts against builds that change at the same time', () => {
 		// either the save ran first (one saved part) or it found no piece (404, nothing saved)
 		expect(sv === 'ok' ? rows.length : sv === 404 ? rows.length : -1).toBe(sv === 'ok' ? 1 : 0);
 	});
+});
+
+describe('custom parts round 2: read-modify-write paths', () => {
+	it('two recolors of different parts of one piece in parallel both land', async () => {
+		const id = await mk();
+		const [r] = await libRows(1, 0, 2);
+		const out = (await applyLibraryPiece(db, id, 'owner', r.id))!;
+		const piece = (await loadBuildView(db, id, 'owner'))!.customPieces[0];
+		expect(piece.parts).toHaveLength(2);
+		const res = await Promise.all([
+			outcome(
+				recolorCustomPiece(db, id, 'owner', out.pieceId, {
+					roles: { [piece.parts[0]]: { primary: 'accent' } }
+				})
+			),
+			outcome(
+				recolorCustomPiece(db, id, 'owner', out.pieceId, {
+					roles: { [piece.parts[1]]: { primary: 'tire' } }
+				})
+			)
+		]);
+		expect(res).toEqual(['ok', 'ok']);
+		const after = (await loadBuildView(db, id, 'owner'))!;
+		const roleOf = (slug: string) => after.parts.find((x) => x.slug === slug)!.role;
+		expect([roleOf(piece.parts[0]), roleOf(piece.parts[1])]).toEqual(['accent', 'tire']);
+		const grams = (await db.select().from(buildPlates).where(eq(buildPlates.buildId, id)))
+			.filter((p) => isCustomPlate({ source: p.source }))
+			.sort((a, b) => a.number - b.number)
+			.map((p) => p.filamentGrams);
+		expect(grams).toEqual([{ accent: 5 }, { tire: 5 }]);
+	});
+
+	it('a recolor racing a rename or a removal never loses either change or errors', async () => {
+		for (let i = 0; i < 3; i++) {
+			const id = await mk();
+			const [r] = await libRows(1, i, 1);
+			const out = (await applyLibraryPiece(db, id, 'owner', r.id))!;
+			const slug = (await loadBuildView(db, id, 'owner'))!.customPieces[0].parts[0];
+			const res = await Promise.all([
+				outcome(
+					recolorCustomPiece(db, id, 'owner', out.pieceId, {
+						roles: { [slug]: { primary: 'accent' } }
+					})
+				),
+				outcome(renameCustomPiece(db, id, 'owner', out.pieceId, { name: `New ${i}` }))
+			]);
+			expect(res).toEqual(['ok', 'ok']);
+			const piece = (await loadBuildView(db, id, 'owner'))!.customPieces[0];
+			expect(piece.name).toBe(`New ${i}`);
+			expect(piece.colors[0].roles).toEqual([{ role: 'accent', grams: 5 }]);
+		}
+	});
+
+	it('plate edits of one saved part in parallel both land (one writer at a time)', async () => {
+		const [r] = await libRows(1, 0, 2);
+		const res = await Promise.all([
+			outcome(updateLibraryPiece(db, 'owner', 'org1', r.id, { plates: [{ index: 0, runs: 3 }] })),
+			outcome(
+				updateLibraryPiece(db, 'owner', 'org1', r.id, { plates: [{ index: 1, name: 'Second' }] })
+			),
+			outcome(updateLibraryPiece(db, 'owner', 'org1', r.id, { replaces: [] }))
+		]);
+		expect(res).toEqual(['ok', 'ok', 'ok']);
+		const row = (await first(
+			db.select().from(workspaceCustomPieces).where(eq(workspaceCustomPieces.id, r.id))
+		))!;
+		expect(row.plates[0].runs).toBe(3);
+		expect(row.plates[1].name).toBe('Second');
+	});
+
+	it('an add with a replaces override waits for a saved-part edit in progress and sees its result', async () => {
+		const id = await mk();
+		const kit = (await loadBuildView(db, id, 'owner'))!.parts.filter((p) => !p.custom);
+		const [r] = await libRows(1, 0, 1);
+		const res = await Promise.all([
+			outcome(updateLibraryPiece(db, 'owner', 'org1', r.id, { plates: [{ index: 0, runs: 4 }] })),
+			outcome(applyLibraryPiece(db, id, 'owner', r.id, { replaces: [kit[0].slug] }))
+		]);
+		expect(res).toEqual(['ok', 'ok']);
+		const v = (await loadBuildView(db, id, 'owner'))!;
+		expect(v.skipped.map((s) => s.slug)).toEqual([kit[0].slug]);
+		expect(v.customPieces[0].replaces).toEqual([kit[0].slug]);
+	});
+});
+
+describe('moving a build while one of its custom parts is saved', () => {
+	const personalAndTeam = async () => {
+		await db
+			.update(organization)
+			.set({ metadata: JSON.stringify({ personal: true }) })
+			.where(eq(organization.id, 'org1'));
+		await db
+			.insert(organization)
+			.values({ id: 'org2', name: 'Team', slug: 'org2', createdAt: new Date() });
+		await db.insert(member).values({
+			id: 'm-owner-2',
+			organizationId: 'org2',
+			userId: 'owner',
+			role: 'owner',
+			createdAt: new Date()
+		});
+	};
+
+	it('a save that waited for a move saves into the workspace the build is in now', async () => {
+		await personalAndTeam();
+		const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+		const id = await mk();
+		const [r] = await libRows(1, 0, 1);
+		const out = (await applyLibraryPiece(db, id, 'owner', r.id))!;
+		await db.update(buildCustomPieces).set({ libraryId: null });
+		// a move holds the build lock and has changed the workspace, but has not committed
+		let release!: () => void;
+		const gate = new Promise<void>((res) => (release = res));
+		const moving = db.transaction(async (tx) => {
+			await advisoryLock(tx, `build:${id}`);
+			await tx.update(builds).set({ organizationId: 'org2' }).where(eq(builds.id, id));
+			await gate;
+		});
+		await sleep(150);
+		const saving = outcome(saveToLibrary(db, 'owner', id, out.pieceId));
+		await sleep(400);
+		release();
+		const [, res] = await Promise.all([moving, saving]);
+		expect(res).toBe('ok');
+		const [piece] = await db
+			.select()
+			.from(buildCustomPieces)
+			.where(eq(buildCustomPieces.id, out.pieceId));
+		const saved = (await first(
+			db.select().from(workspaceCustomPieces).where(eq(workspaceCustomPieces.id, piece.libraryId!))
+		))!;
+		expect(saved.organizationId).toBe('org2');
+	});
+
+	it('save and move in parallel never leave a piece linked to another workspace than its build', async () => {
+		await personalAndTeam();
+		for (let i = 0; i < 3; i++) {
+			const id = await mk();
+			const [r] = await libRows(1, i, 1);
+			const out = (await applyLibraryPiece(db, id, 'owner', r.id))!;
+			await db
+				.update(buildCustomPieces)
+				.set({ libraryId: null })
+				.where(eq(buildCustomPieces.id, out.pieceId));
+			const res = await Promise.all([
+				outcome(saveToLibrary(db, 'owner', id, out.pieceId)),
+				outcome(moveBuild(db, id, 'owner', { organizationId: 'org2' }))
+			]);
+			expect(res).not.toContain('error');
+			const [b] = await db.select().from(builds).where(eq(builds.id, id));
+			const [piece] = await db
+				.select()
+				.from(buildCustomPieces)
+				.where(eq(buildCustomPieces.id, out.pieceId));
+			if (piece.libraryId) {
+				const lib = (await first(
+					db
+						.select()
+						.from(workspaceCustomPieces)
+						.where(eq(workspaceCustomPieces.id, piece.libraryId))
+				))!;
+				expect(lib.organizationId).toBe(b.organizationId);
+			}
+		}
+	});
+});
+
+describe('moves decide on the build as it is once its lock is held', () => {
+	const setup = async () => {
+		await db
+			.update(organization)
+			.set({ metadata: JSON.stringify({ personal: true }) })
+			.where(eq(organization.id, 'org1'));
+		for (const o of ['org2', 'org3']) {
+			await db
+				.insert(organization)
+				.values({ id: o, name: `Team ${o}`, slug: o, createdAt: new Date() });
+			await db.insert(member).values({
+				id: `m-owner-${o}`,
+				organizationId: o,
+				userId: 'owner',
+				role: 'owner',
+				createdAt: new Date()
+			});
+		}
+	};
+	afterEach(() => vi.unstubAllEnvs());
+
+	it('two moves of one personal build to two teams: one wins, the other is refused, from is the personal workspace', async () => {
+		await setup();
+		for (let i = 0; i < 3; i++) {
+			const id = await mk();
+			await db.update(builds).set({ organizationId: 'org1' }).where(eq(builds.id, id));
+			const res = await Promise.all([
+				outcome(moveBuild(db, id, 'owner', { organizationId: 'org2' })),
+				outcome(moveBuild(db, id, 'owner', { organizationId: 'org3' }))
+			]);
+			expect([...res].sort()).toEqual([400, 'ok']);
+			const rows = await db
+				.select()
+				.from(activity)
+				.where(and(eq(activity.buildId, id), eq(activity.kind, 'build.move')));
+			expect(rows).toHaveLength(1);
+			expect((rows[0].payload as { from: string }).from).toBe('org1');
+			const [b] = await db.select().from(builds).where(eq(builds.id, id));
+			expect((rows[0].payload as { to: string }).to).toBe(b.organizationId);
+		}
+	});
+
+	const fullTeamSetup = async () => {
+		vi.stubEnv('TMT_MODE', 'public');
+		vi.stubEnv('PUBLIC_URL', 'https://example.test');
+		vi.stubEnv('QUOTA_BUILDS_PER_WORKSPACE', '1');
+		await setup();
+		// org2 already holds its one tracked build
+		await createBuild(
+			db,
+			{ organizationId: 'org2', templateId, designId: null, name: 'Full' },
+			'owner'
+		);
+		return await createBuild(
+			db,
+			{ organizationId: 'org1', templateId, designId: null, name: 'D', kind: 'draft' },
+			'owner'
+		);
+	};
+	/** Resolves once some session waits for an advisory lock (no fixed sleep). */
+	const waitForLockWaiter = async () => {
+		for (let i = 0; i < 200; i++) {
+			const r = await db.execute(
+				sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted`
+			);
+			if ((r as unknown as { n: number }[])[0].n > 0) return;
+			await new Promise((res) => setTimeout(res, 10));
+		}
+		throw new Error('nothing waited for the lock');
+	};
+
+	it('a promote that waited for a move counts the team the draft is in now', async () => {
+		const id = await fullTeamSetup();
+		let release!: () => void;
+		const gate = new Promise<void>((res) => (release = res));
+		let locked!: () => void;
+		const held = new Promise<void>((res) => (locked = res));
+		// a move holds the build lock and has changed the workspace (a draft needs no quota), not yet committed
+		const moving = db.transaction(async (tx) => {
+			await advisoryLock(tx, `build:${id}`);
+			await tx.update(builds).set({ organizationId: 'org2' }).where(eq(builds.id, id));
+			locked();
+			await gate;
+		});
+		await held;
+		const promoting = outcome(promoteDraft(db, id, 'owner'));
+		await waitForLockWaiter();
+		release();
+		const [, res] = await Promise.all([moving, promoting]);
+		expect(res).toBe(409);
+		const [b] = await db.select().from(builds).where(eq(builds.id, id));
+		expect(b.organizationId).toBe('org2');
+		expect(b.kind).toBe('draft');
+	});
+
+	it('a move that waited for a promote counts the target as a tracked build', async () => {
+		const id = await fullTeamSetup();
+		let release!: () => void;
+		const gate = new Promise<void>((res) => (release = res));
+		let locked!: () => void;
+		const held = new Promise<void>((res) => (locked = res));
+		// a promote holds the build lock and has made the draft a build, not yet committed
+		const promoting = db.transaction(async (tx) => {
+			await advisoryLock(tx, `build:${id}`);
+			await tx.update(builds).set({ kind: 'build' }).where(eq(builds.id, id));
+			locked();
+			await gate;
+		});
+		await held;
+		const moving = outcome(moveBuild(db, id, 'owner', { organizationId: 'org2' }));
+		await waitForLockWaiter();
+		release();
+		const [, res] = await Promise.all([promoting, moving]);
+		expect(res).toBe(409);
+		const [b] = await db.select().from(builds).where(eq(builds.id, id));
+		expect(b.organizationId).toBe('org1');
+	});
+
+	it('promoting a draft in parallel with its move never leaves a tracked build in a full team', async () => {
+		for (let i = 0; i < 3; i++) {
+			const id = i === 0 ? await fullTeamSetup() : await mkDraft();
+			await Promise.all([
+				outcome(promoteDraft(db, id, 'owner')),
+				outcome(moveBuild(db, id, 'owner', { organizationId: 'org2' }))
+			]);
+			const [b] = await db.select().from(builds).where(eq(builds.id, id));
+			expect(!(b.organizationId === 'org2' && b.kind === 'build')).toBe(true);
+		}
+	});
+	const mkDraft = () =>
+		createBuild(
+			db,
+			{ organizationId: 'org1', templateId, designId: null, name: 'D', kind: 'draft' },
+			'owner'
+		);
 });
