@@ -10,13 +10,18 @@
 		plateThumbnailUrl,
 		arrangePlates,
 		forgetPrintTemplate,
+		refreshLibraryPiece,
+		removeCustomPiece,
+		renameCustomPiece,
+		saveCustomPieceToLibrary,
 		getArrangement,
 		exportDownloadUrl,
 		type ArrangementDto,
 		type PlateLayoutInfo
 	} from '#lib/client/api.ts';
 	import { getBuildCtx, filLabel } from '#lib/components/build-context.svelte.ts';
-	import type { Plate, PrintRun } from '#lib/domain/types.ts';
+	import type { CustomPiece, Plate, PrintRun } from '#lib/domain/types.ts';
+	import { CUSTOM_NAME_MAX, isCustomPlate } from '#lib/domain/custom.ts';
 	import RoleChip from '#lib/components/RoleChip.svelte';
 	import RunTable from '#lib/components/RunTable.svelte';
 	import LogRunSheet from '#lib/components/LogRunSheet.svelte';
@@ -27,6 +32,7 @@
 	import SlicerTimeInput from '#lib/components/SlicerTimeInput.svelte';
 	import PlateLayoutPicker from '#lib/components/PlateLayoutPicker.svelte';
 	import PlateUpload from '#lib/components/PlateUpload.svelte';
+	import CustomPieceUpload from '#lib/components/CustomPieceUpload.svelte';
 	import { exportPref, FLAVOR_OPTIONS } from '#lib/client/export-flavor.svelte.ts';
 	import { createCoalescer } from '#lib/client/coalesce.ts';
 	import PlateArrangement from '#lib/components/PlateArrangement.svelte';
@@ -45,6 +51,12 @@
 	let uploading = $state(false);
 	let notice = $state<string | null>(null);
 	let upload = $state<PlateUpload>();
+	// "Add a custom part": an accessory or beta replacement from its own 3MF (Files tab, editors, not drafts)
+	let addingCustom = $state(false);
+	let customUpload = $state<CustomPieceUpload>();
+	const canAddCustom = $derived(ctx.canEdit && !wizard && !draft);
+	// A demo sandbox user cannot upload a file (the server refuses it): the card says so.
+	const demo = $derived((page.data as { isDemo?: boolean }).isDemo === true);
 	// The control that opened the upload sheet. The "Use my own sliced file" card is replaced while
 	// the sheet is open, so focus goes back to the control with the same test id when it closes.
 	let openerId: string | null = null;
@@ -55,6 +67,20 @@
 		openerId = a instanceof HTMLElement ? (a.dataset.testid ?? null) : null;
 		uploading = true;
 		notice = null;
+	}
+	function openCustom() {
+		const a = document.activeElement;
+		openerEl = a instanceof HTMLElement && a !== document.body ? a : null;
+		openerId = a instanceof HTMLElement ? (a.dataset.testid ?? null) : null;
+		addingCustom = true;
+		notice = null;
+	}
+	async function closeCustom() {
+		addingCustom = false;
+		await tick();
+		const a = document.activeElement;
+		if (openerId && (!a || a === document.body))
+			document.querySelector<HTMLElement>(`[data-testid="${openerId}"]`)?.focus();
 	}
 	async function closeUpload() {
 		uploading = false;
@@ -147,7 +173,7 @@
 	// silently ignores a pick of it (no "Replace plates?" question).
 	let layoutsSeq = 0;
 	$effect(() => {
-		const seed = sourceLayout(ctx.view.plates[0]?.source);
+		const seed = sourceLayout(ctx.view.plates.find((p) => !isCustomPlate(p))?.source);
 		if (seed !== undefined) current = seed;
 		const seq = ++layoutsSeq;
 		buildPlateLayouts(ctx.id)
@@ -397,6 +423,106 @@
 		}
 		return ctx.act(() => updatePlate(ctx.id, pl.number, { slicerGrams: v }));
 	}
+	// ---- custom pieces
+	let removing = $state<CustomPiece | null>(null);
+	let removeBack = $state(true);
+	let removeBusy = $state(false);
+	let savingId = $state<string | null>(null);
+	/** Keep a custom part's plates, time and grams in the workspace for new builds. */
+	async function saveForNewBuilds(c: CustomPiece) {
+		if (savingId) return;
+		savingId = c.id;
+		try {
+			await saveCustomPieceToLibrary(ctx.id, c.id);
+			notice = `Saved "${c.name}" for new builds.`;
+			await ctx.refresh();
+		} catch (e) {
+			ctx.error = e instanceof Error ? e.message : 'Could not save the part.';
+		} finally {
+			savingId = null;
+		}
+	}
+	// rename a custom part inline
+	let renamingId = $state<string | null>(null);
+	let renameText = $state('');
+	let renameBusy = $state(false);
+	function startRename(c: CustomPiece) {
+		renamingId = c.id;
+		renameText = c.name;
+	}
+	async function saveRename(c: CustomPiece) {
+		const name = renameText.trim();
+		if (renameBusy || !name) return;
+		if (name === c.name) {
+			renamingId = null;
+			return;
+		}
+		renameBusy = true;
+		try {
+			await renameCustomPiece(ctx.id, c.id, name);
+			renamingId = null;
+			notice = `Renamed "${c.name}" to "${name}".`;
+			await ctx.refresh();
+		} catch (e) {
+			ctx.error = e instanceof Error ? e.message : 'Could not rename the part.';
+		} finally {
+			renameBusy = false;
+		}
+	}
+	/** Overwrite the saved part with this build's values, so a correction made here is what other builds get. */
+	let updatingId = $state<string | null>(null);
+	async function updateSaved(c: CustomPiece) {
+		if (updatingId || !c.libraryId) return;
+		const yes = await asking.ask(
+			'New builds and other builds that add this part later use these values. Builds that already have it are not changed.',
+			{ title: `Update saved part "${c.name}"`, confirmLabel: 'Update saved part' }
+		);
+		if (!yes) return;
+		updatingId = c.id;
+		try {
+			await refreshLibraryPiece(ctx.view.build.organizationId, c.libraryId, ctx.id, c.id);
+			notice = `Updated the saved part "${c.name}".`;
+			await ctx.refresh();
+		} catch (e) {
+			ctx.error = e instanceof Error ? e.message : 'Could not update the saved part.';
+		} finally {
+			updatingId = null;
+		}
+	}
+	/** Kit parts the piece replaced that are still Not printing. */
+	const backParts = (c: CustomPiece) =>
+		ctx.view.skipped.filter((s) => !s.custom && c.replaces.includes(s.slug));
+	function askRemove(c: CustomPiece, e: Event) {
+		const el = e.currentTarget;
+		openerEl = el instanceof HTMLElement ? el : null;
+		openerId = el instanceof HTMLElement ? (el.dataset.testid ?? null) : null;
+		removeBack = true;
+		removing = c;
+	}
+	async function confirmRemove() {
+		const c = removing;
+		if (!c) return;
+		removeBusy = true;
+		try {
+			if (!c.removable) {
+				removing = null;
+				await ctx.skipParts(c.parts, c.name);
+				return;
+			}
+			const back = removeBack ? backParts(c).length : 0;
+			await removeCustomPiece(ctx.id, c.id, removeBack && back > 0);
+			removing = null;
+			notice = `Removed "${c.name}"${back ? ` and brought back ${back} part${back === 1 ? '' : 's'}` : ''}.`;
+			await ctx.refresh();
+		} catch (e) {
+			removing = null;
+			ctx.error = e instanceof Error ? e.message : 'Could not remove the part.';
+			await ctx.refresh();
+		} finally {
+			removeBusy = false;
+		}
+	}
+	const customOf = (pl: Plate) => ctx.view.customPieces.find((c) => pl.source === `custom:${c.id}`);
 	const printersHref = $derived(
 		printersHrefFor(
 			(page.data as { teams?: { id: string; slug: string }[] }).teams,
@@ -425,19 +551,146 @@
 	</div>
 {/if}
 
-{#if ctx.canEdit && !uploading}
-	<section class="card sliced-card" aria-label="Use my own sliced file">
-		<div class="sliced-text">
-			<h2>Use my own sliced file</h2>
-			<p class="muted">
-				A .3mf or .gcode.3mf from your slicer: real print times and grams. Use its plates as they
-				are, or use it as a print template for your own plates. You can also drop the file anywhere
-				on this page.
-			</p>
-		</div>
-		<button class="btn" type="button" data-testid="use-own-sliced" onclick={openUpload}
-			>Choose a sliced file…</button
-		>
+<div class="own-cards">
+	{#if ctx.canEdit && !uploading}
+		<section class="card sliced-card" aria-label="Use my own sliced file">
+			<div class="sliced-text">
+				<h2>Use my own sliced file</h2>
+				<p class="muted">
+					A .3mf or .gcode.3mf from your slicer: real print times and grams. Use its plates as they
+					are, or use it as a print template for your own plates. You can also drop the file
+					anywhere on this page.
+				</p>
+			</div>
+			<button class="btn" type="button" data-testid="use-own-sliced" onclick={openUpload}
+				>Choose a sliced file…</button
+			>
+		</section>
+	{/if}
+	{#if canAddCustom && !addingCustom}
+		<section class="card sliced-card" aria-label="Add a custom part" data-testid="custom-card">
+			<div class="sliced-text">
+				<h2>Add a custom part</h2>
+				<p class="muted">
+					An accessory or beta replacement that is not in the kit, such as a one-piece push handle
+					or a cup holder: its own .3mf, kept as sliced, with its time and grams counted in this
+					build.
+				</p>
+				{#if demo}
+					<p class="muted" data-testid="custom-card-demo">
+						Adding your own file is not available in the demo. Sign in to use your own account.
+					</p>
+				{/if}
+			</div>
+			<button class="btn" type="button" data-testid="add-custom-part" onclick={openCustom}
+				>Add a custom part…</button
+			>
+		</section>
+	{/if}
+</div>
+
+{#if ctx.view.customPieces.length}
+	<section class="card custom-list" aria-label="Custom parts" data-testid="custom-pieces">
+		<h2>Custom parts</h2>
+		<ul>
+			{#each ctx.view.customPieces as c (c.id)}
+				{@const gone = backParts(c)}
+				<li data-testid="custom-piece">
+					<div class="cl-text">
+						{#if renamingId === c.id}
+							<form
+								class="cl-rename"
+								data-testid="custom-rename-form"
+								onsubmit={(e) => {
+									e.preventDefault();
+									void saveRename(c);
+								}}
+							>
+								<input
+									type="text"
+									bind:value={renameText}
+									maxlength={CUSTOM_NAME_MAX}
+									autocomplete="off"
+									aria-label="Name of the custom part"
+									data-testid="custom-rename-input"
+									onkeydown={(e) => e.key === 'Escape' && (renamingId = null)}
+								/>
+								<button
+									class="btn sm primary"
+									type="submit"
+									data-testid="custom-rename-save"
+									disabled={renameBusy || !renameText.trim()}>Save</button
+								>
+								<button
+									class="btn sm"
+									type="button"
+									data-testid="custom-rename-cancel"
+									disabled={renameBusy}
+									onclick={() => (renamingId = null)}>Cancel</button
+								>
+							</form>
+						{:else}
+							<b>{c.name}</b>
+						{/if}
+						<span class="meta"
+							>{c.fileName ?? ''}{c.fileName ? ' · ' : ''}{c.plates.length} plate{c.plates
+								.length === 1
+								? ''
+								: 's'}{c.plates.length ? ` (${c.plates.join(', ')})` : ''}{c.sliced
+								? ''
+								: ' · not sliced'}</span
+						>
+						{#if c.replaces.length}
+							<span class="meta"
+								>Replaces {c.replaces
+									.map((s) => ctx.view.allParts.find((p) => p.slug === s)?.name ?? s)
+									.join(', ')}{gone.length < c.replaces.length ? ' (some are back)' : ''}</span
+							>
+						{/if}
+					</div>
+					{#if c.libraryId}
+						<span class="cl-saved" data-testid="custom-saved" title="Saved for new builds"
+							>Saved</span
+						>
+					{/if}
+					{#if ctx.canEdit && !draft}
+						{#if renamingId !== c.id}
+							<button
+								class="btn sm"
+								type="button"
+								data-testid="custom-rename"
+								onclick={() => startRename(c)}>Rename</button
+							>
+						{/if}
+						{#if c.libraryId}
+							<button
+								class="btn sm"
+								type="button"
+								data-testid="custom-update-saved"
+								disabled={updatingId === c.id}
+								onclick={() => updateSaved(c)}
+								>{updatingId === c.id ? 'Updating…' : 'Update saved part'}</button
+							>
+						{:else}
+							<button
+								class="btn sm"
+								type="button"
+								data-testid="custom-save"
+								disabled={savingId === c.id}
+								onclick={() => saveForNewBuilds(c)}
+								>{savingId === c.id ? 'Saving…' : 'Save for new builds'}</button
+							>
+						{/if}
+						<button
+							class="btn sm"
+							type="button"
+							data-testid="custom-remove"
+							onclick={(e) => askRemove(c, e)}>Remove…</button
+						>
+					{/if}
+				</li>
+			{/each}
+		</ul>
 	</section>
 {/if}
 
@@ -603,8 +856,87 @@
 	</dialog>
 {/if}
 
+{#if addingCustom && canAddCustom}
+	<dialog
+		class="ds-modal ds-modal--sheet upload-sheet"
+		aria-label="Add a custom part"
+		data-testid="custom-dialog"
+		use:modal
+		oncancel={(e) => {
+			e.preventDefault();
+			customUpload?.close();
+		}}
+	>
+		<CustomPieceUpload
+			bind:this={customUpload}
+			view={ctx.view}
+			{demo}
+			onclose={closeCustom}
+			ondone={(msg) => {
+				void closeCustom();
+				notice = msg;
+				ctx.refresh();
+			}}
+		/>
+	</dialog>
+{/if}
+
+{#if removing}
+	{@const c = removing}
+	{@const gone = backParts(c)}
+	<dialog
+		class="ds-modal"
+		aria-labelledby="cp-remove-title"
+		data-testid="custom-remove-dialog"
+		use:modal
+		oncancel={(e) => {
+			e.preventDefault();
+			if (!removeBusy) removing = null;
+		}}
+	>
+		<header class="ds-modal__head">
+			<h2 id="cp-remove-title">{c.removable ? 'Remove' : 'Take out'} "{c.name}"?</h2>
+		</header>
+		<div class="ds-modal__body cp-body">
+			{#if c.removable}
+				<p>
+					This deletes the custom part and its {c.plates.length} plate{c.plates.length === 1
+						? ''
+						: 's'} from the build. Nothing has been printed from it.
+				</p>
+				{#if gone.length}
+					<label class="cp-chk">
+						<input type="checkbox" bind:checked={removeBack} data-testid="custom-restore" />
+						Bring back {gone.length} replaced part{gone.length === 1 ? '' : 's'}: {gone
+							.map((g) => g.name)
+							.join(', ')}
+					</label>
+				{/if}
+			{:else}
+				<p>
+					"{c.name}" has print logs or is printing right now, so it cannot be deleted. You can mark
+					it Not printing instead: it leaves the plates, totals and progress, and you can bring it
+					back from the Print tab.
+				</p>
+			{/if}
+		</div>
+		<footer class="ds-modal__foot">
+			<button class="btn" type="button" disabled={removeBusy} onclick={() => (removing = null)}
+				>Cancel</button
+			>
+			<button
+				class="btn primary"
+				type="button"
+				data-testid="custom-remove-confirm"
+				disabled={removeBusy}
+				onclick={confirmRemove}>{c.removable ? 'Remove part' : 'Mark Not printing'}</button
+			>
+		</footer>
+	</dialog>
+{/if}
+
 {#snippet plateExport(pl: Plate)}
-	{#if printer}
+	{#if printer && !isCustomPlate(pl)}
 		<span class="plate-export" data-testid="plate-export">
 			<!-- eslint-disable svelte/no-navigation-without-resolve -->
 			<a
@@ -650,7 +982,11 @@
 		<!-- finished plates are collapsed -->
 	{:else if fin && !expandedPl[pl.number]}
 		<div class="plate-row" id="plate-{pl.number}" data-testid="plate-row">
-			<span class="pr-name"><b>Plate {pl.number}</b> · {pl.name}</span>
+			<span class="pr-name"
+				><b>Plate {pl.number}</b> · {pl.name}{#if isCustomPlate(pl)}
+					<span class="ds-badge ds-badge--sm ds-badge--accent" data-testid="custom-tag">Custom</span
+					>{/if}</span
+			>
 			<span class="meta pr-ok">Printed</span>
 			{#if plateSecs(pl)}<span class="meta num">{fmtH(plateSecs(pl))}</span>{/if}
 			<span class="pr-actions">
@@ -672,6 +1008,11 @@
 		>
 			<div class="group-head">
 				<h2>Plate {pl.number} · {pl.name}</h2>
+				{#if isCustomPlate(pl)}<span
+						class="ds-badge ds-badge--sm ds-badge--accent"
+						data-testid="custom-tag"
+						title={customOf(pl) ? `Custom part: ${customOf(pl)!.name}` : 'Custom part'}>Custom</span
+					>{/if}
 				<span class="meta num"
 					>{draft
 						? `${pl.parts.length} parts`
@@ -694,7 +1035,7 @@
 				{/if}
 			</div>
 
-			{#if arranged(pl.number) && arr}
+			{#if arranged(pl.number) && arr && !isCustomPlate(pl)}
 				{@const ap = arranged(pl.number)!}
 				{#if pl.thumbnailPath}
 					<div class="ds-seg view-toggle" role="group" aria-label="Plate {pl.number} view">
@@ -810,7 +1151,11 @@
 						>
 					{/if}
 					{#if !pl.slicerGrams && !Object.keys(pl.slicerByPart).length}
-						<span class="meta">Using the parts' weights until you enter grams.</span>
+						<span class="meta"
+							>{isCustomPlate(pl)
+								? 'Type the grams and time from your slicer.'
+								: "Using the parts' weights until you enter grams."}</span
+						>
 					{/if}
 					<span style="margin-left:auto"><PlateControl plate={pl} alwaysLog /></span>
 				</div>
@@ -1011,6 +1356,84 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--sp-2) var(--sp-6);
+	}
+	.own-cards {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+		gap: var(--sp-6);
+		margin-bottom: var(--sp-7);
+	}
+	.own-cards:empty {
+		display: none;
+	}
+	.own-cards .sliced-card {
+		margin-bottom: 0;
+	}
+	.custom-list {
+		margin-bottom: var(--sp-7);
+	}
+	.custom-list h2 {
+		margin: 0 0 var(--sp-4);
+		font-size: var(--fs-lg);
+	}
+	.custom-list ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		gap: var(--sp-4);
+	}
+	.custom-list li {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--sp-3) var(--sp-6);
+	}
+	.cl-rename {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--sp-3);
+		align-items: center;
+	}
+	.cl-rename input {
+		flex: 1 1 200px;
+		min-width: 0;
+		padding: 7px var(--sp-4);
+		border: 1px solid var(--field-line);
+		border-radius: var(--r-md);
+		background: var(--card);
+		color: var(--ink);
+		font-size: var(--fs-md);
+	}
+	@media (pointer: coarse) {
+		.cl-rename input {
+			font-size: var(--fs-field);
+			min-height: 40px;
+		}
+	}
+	.cl-saved {
+		font-size: var(--fs-sm);
+		font-weight: 600;
+		color: var(--muted);
+		padding: 2px var(--sp-4);
+		border: 1px solid var(--line);
+		border-radius: 999px;
+	}
+	.cl-text {
+		display: grid;
+		gap: var(--sp-1);
+		min-width: 0;
+		flex: 1 1 240px;
+		overflow-wrap: anywhere;
+	}
+	.cp-body p {
+		margin: 0 0 var(--sp-4);
+	}
+	.cp-chk {
+		display: flex;
+		gap: var(--sp-4);
+		align-items: baseline;
 	}
 	.sliced-card {
 		display: flex;

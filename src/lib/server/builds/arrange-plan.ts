@@ -29,6 +29,7 @@ import {
 import { pieceBrimMm, type PrintFootprint } from '#lib/domain/print-footprint.ts';
 import type { LearnedTime } from '#lib/domain/time-estimate.ts';
 import type { BuildView } from '#lib/domain/types.ts';
+import { kitOnly } from '#lib/domain/custom.ts';
 import { layoutBed } from '#lib/printers/layout-bed.ts';
 import { effectiveKeepOut } from '#lib/printers/printer.ts';
 import { asc } from 'drizzle-orm';
@@ -41,6 +42,7 @@ import {
 	templatePrintGeometry
 } from '../db/schema';
 import { gramsSourceOf, loadBuildView } from './view';
+import { detachCustomPlates } from './custom-plates';
 import { estimateArrangedPlates, loadTimeModel } from './time-model';
 import { ensureSilhouettes } from '../print-geometry/store';
 
@@ -208,7 +210,9 @@ const SAME_BED = 0.5;
  * build's printer still holds (the default layout for a 256 bed, the H series one for a big bed). A
  * layout made for a bigger bed than the printer's is no source (rule E). Null without a printer.
  */
-export async function loadKitSource(db: DbOrTx, view: BuildView): Promise<KitSource | null> {
+export async function loadKitSource(db: DbOrTx, fullView: BuildView): Promise<KitSource | null> {
+	// custom pieces' plates are never part of the kit's layout
+	const view = kitOnly(fullView);
 	const p = view.printer;
 	if (!p) return null;
 	const active = new Set(view.parts.map((x) => x.slug));
@@ -340,6 +344,8 @@ export function planArrangement(
 	kit: KitSource | 'legacy' | null = null,
 	version: number = PLANNER_VERSION
 ): Plan | null {
+	// kit parts only: a custom piece never reaches the arranger, the plan cache key or the signature
+	view = kitOnly(view);
 	const input = arrangeInputFor(view, footprints, layoutHint, options);
 	if (!input) return null;
 	// explicit options (tests, may hold functions) are never cached
@@ -432,6 +438,7 @@ export function placeOnPlates(
 	footprints: Map<string, PrintFootprint>,
 	layoutHint: string | null = null
 ): LayoutPlacement | null {
+	view = kitOnly(view);
 	const input = arrangeInputFor(view, footprints, layoutHint);
 	if (!input) return null;
 	const source: SourcePlate[] = view.plates.map((pl) => ({
@@ -580,6 +587,7 @@ export async function writePlan(
 		buildId,
 		plan.result.plates.map((pl) => ({ number: pl.number, parts: pl.parts }))
 	);
+	const reattachCustom = await detachCustomPlates(tx, buildId);
 	await tx.delete(buildPlates).where(eq(buildPlates.buildId, buildId));
 	for (const pl of plan.result.plates)
 		await tx.insert(buildPlates).values({
@@ -596,6 +604,7 @@ export async function writePlan(
 			source: ARRANGED_SOURCE,
 			arrangement: { ...pl, v: version }
 		});
+	await reattachCustom();
 	await tx.update(builds).set({ plateLayout: ARRANGED_LAYOUT }).where(eq(builds.id, buildId));
 	return plan.result.plates.length;
 }
