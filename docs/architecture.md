@@ -100,6 +100,15 @@ skip)` (inside another mutation, no activity row). A Printing or live part is re
   plate's grams. `remapRoleKey` / `removeSlot` re-key custom part roles. Activity kinds
   `part.skip`, `part.restore`, `custom.add`, `custom.remove` are in `REARRANGE_KINDS`;
   `custom.rename` is not.
+- **Custom parts, round 2 (2026-11-24):** drafts may skip parts and hold custom parts
+  (`DRAFT_KINDS` has `part.skip`, `part.restore` and the `custom.*` kinds; print logs stay
+  build-only; `promoteDraft` only flips `kind`, so everything carries over; default saved
+  parts are never applied to drafts). `moveBuild` takes `build:<id>` first, like
+  `mutateBuild`, and clears `build_custom_pieces.library_id`. `recolorCustomPiece`
+  (`PATCH …/custom-pieces/[pieceId]` with `{ roles }`; `name` and `roles` together are a
+  400; activity `custom.recolor`, not in `REARRANGE_KINDS`) re-keys a part's role and its
+  plate's grams (`rekeyRoles`, `addGram` with own-key reads); the view exposes
+  `CustomPiece.colors`.
 - **Workspaces:** every user has a personal workspace (organization with metadata
   `{ personal: true, userId }`, "My builds", created on sign-up and lazily for legacy users
   in `teams.ts`). Personal workspaces can't take invitations. Builds move personal → chapter
@@ -328,7 +337,18 @@ skip)` (inside another mutation, no activity row). A Printing or live part is re
   stores nothing (temp `<uuid>.zip` in `importsDir()`, removed in `finally`, swept at
   startup); `threemf/upload-guard.ts` `guardedReceiveThreeMf` (429, 409, 507) is shared
   with the build upload. Demo users are refused by the upload and inspect routes before the
-  body is read; everything without a file works in the demo. The build DELETE route removes
+  body is read; everything without a file works in the demo. Round 2: `addCustomPiece`
+  takes `ignore: string[]` (file slots whose grams are left out of `filament_grams` and
+  `slicer_grams`; at least one kept slot per plate with grams) and `applyUpload` leaves
+  "Not tracked" slots out of `slicerGrams`; `POST …/custom-pieces` with
+  `{ libraryId, replaces? }` overrides what a saved part replaces for one add
+  (`cleanReplaces`, kit parts only); `updateLibraryPiece` also edits `replaces` and a
+  plate's `name`, `runs`, `role` / `roles` under the row lock. UI:
+  `CustomReplacesPicker.svelte` (`primary` prop for the compact confirm steps),
+  `setup/SetupCustomParts.svelte` (the wizard's card; a note instead of a file picker in
+  the demo), `design/CustomPartsGroup.svelte` (recolor in the Design tab; custom parts
+  still never enter `designParts`, `partRoles` or the 3D stage), "Not printing" in
+  `PartSheet.svelte`. The build DELETE route removes
   `plates/<id>`. Grams and time inputs use `follow-prop.svelte.ts` so a refresh does not
   overwrite a half-typed value.
 - **Export:** `src/lib/server/threemf-export/` (Orca/Elegoo, Bambu, plain), painted
