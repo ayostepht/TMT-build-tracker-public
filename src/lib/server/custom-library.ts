@@ -138,6 +138,24 @@ async function rowOf(
 	return row;
 }
 
+/**
+ * The saved part's row again, share-locked until the caller's transaction ends, or null when it is gone or
+ * belongs to another workspace. For code that applies a saved part it read earlier (`createBuild`): a
+ * concurrent `deleteLibraryPiece` waits for it, so the new piece never links to a deleted row.
+ */
+export async function lockLibraryRow(
+	tx: DbOrTx,
+	orgId: string,
+	libId: string
+): Promise<LibraryRow | null> {
+	try {
+		return await rowOf(tx, orgId, libId, true);
+	} catch (e) {
+		if (e instanceof ApiError && e.status === 404) return null;
+		throw e;
+	}
+}
+
 /** Tell the build's open pages (after the commit, never inside a transaction). */
 async function announce(db: DbOrTx, buildId: string, userId: string, kind: string): Promise<void> {
 	const u = await first(db.select({ name: user.name }).from(user).where(eq(user.id, userId)));
@@ -200,8 +218,11 @@ export async function saveToLibrary(
 	if (opts.isDefault !== undefined && typeof opts.isDefault !== 'boolean')
 		throw new ApiError(400, 'isDefault must be true or false');
 	const row = await db.transaction(async (tx) => {
-		// The count below and the insert (and the "already saved?" check) must not interleave with another save
-		// in this workspace: one lock per workspace library.
+		// Lock order everywhere: the build first (`mutateBuild` takes the same lock), then the library. With
+		// the build lock a parallel remove, rename or re-arrange of the piece cannot slip between reading the
+		// piece and writing its `library_id`. The count below and the insert (and the "already saved?" check)
+		// must not interleave with another save in this workspace: one lock per workspace library.
+		await advisoryLock(tx, `build:${buildId}`);
 		await advisoryLock(tx, `custom-library:${access.organizationId}`);
 		const view = await loadBuildView(tx, buildId, userId);
 		if (!view) throw new ApiError(404, 'Not found');
@@ -358,6 +379,7 @@ export async function refreshLibraryPiece(
 		throw new ApiError(400, 'Drafts have no build tracking. Make it a build first.');
 	if (typeof pieceId !== 'string') throw new ApiError(404, 'Custom piece not found');
 	const row = await db.transaction(async (tx) => {
+		await advisoryLock(tx, `build:${buildId}`); // build first, then the saved part (see saveToLibrary)
 		await advisoryLock(tx, `custom-library-row:${libId}`);
 		const view = await loadBuildView(tx, buildId, userId);
 		if (!view) throw new ApiError(404, 'Not found');

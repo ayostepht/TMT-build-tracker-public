@@ -6,7 +6,7 @@ import { ApiError, requireEditor } from '../access';
 import { canSeeDesign } from '../designs/access';
 import { arrangeForPrinter } from './plates';
 import { loadBuildView } from './view';
-import { applyLibraryPieceTx, defaultLibraryRows } from '../custom-library';
+import { applyLibraryPieceTx, defaultLibraryRows, lockLibraryRow } from '../custom-library';
 import { first, one, type Db } from '../db';
 import { BUILD_HOSPITAL_MAX, BUILD_NAME_MAX, BUILD_RECIPIENT_MAX } from './limits';
 import { assertUnder, countBuilds, countDrafts } from '../quota';
@@ -220,10 +220,14 @@ export async function createBuild(
 			let pieces = 0;
 			let platesUsed = 0;
 			let view: BuildView | null | undefined;
-			for (const lib of await defaultLibraryRows(tx, input.organizationId)) {
+			for (const listed of await defaultLibraryRows(tx, input.organizationId)) {
 				if (pieces >= MAX_CUSTOM_PIECES || platesUsed >= MAX_CUSTOM_PLATES) break;
-				const n = (lib.plates ?? []).length;
+				const n = (listed.plates ?? []).length;
 				if (!n || platesUsed + n > MAX_CUSTOM_PLATES) continue;
+				// Read again with a share lock: a saved part deleted since the list was read is skipped, and a
+				// delete that comes in now waits for this build, so no piece links to a deleted row.
+				const lib = await lockLibraryRow(tx, input.organizationId, listed.id);
+				if (!lib) continue;
 				try {
 					view ??= await loadBuildView(tx, id, userId);
 					if (!view) break;

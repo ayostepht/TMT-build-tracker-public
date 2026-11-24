@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { MAX_CUSTOM_PIECES, isCustomPlate } from '#lib/domain/custom.ts';
 import { ApiError } from './access';
-import { first, type Db } from './db';
+import { advisoryLock, first, type Db } from './db';
 import { createTestDb, dropTestDb } from './db/testing';
 import {
 	buildCustomPieces,
@@ -22,12 +22,13 @@ import { templateSeeds } from './seed';
 import { seedTemplates } from './seed/run';
 import { createBuild } from './builds/create';
 import { loadBuildView } from './builds/view';
-import { removeCustomPiece } from './builds/custom-pieces';
+import { removeCustomPiece, renameCustomPiece } from './builds/custom-pieces';
 import {
 	MAX_LIBRARY_PIECES,
 	applyLibraryPiece,
 	createLibraryPiece,
 	deleteLibraryPiece,
+	refreshLibraryPiece,
 	saveToLibrary
 } from './custom-library';
 
@@ -226,5 +227,115 @@ describe('removing a piece', () => {
 			status: 409
 		});
 		expect((await loadBuildView(db, id, 'owner'))!.customPieces).toHaveLength(1);
+	});
+});
+
+describe('saved parts against builds that change at the same time', () => {
+	it('a new build never links a default part that was deleted meanwhile', async () => {
+		const [r] = await db
+			.insert(workspaceCustomPieces)
+			.values({
+				organizationId: 'org1',
+				name: 'Default',
+				sliced: false,
+				templateId,
+				isDefault: true,
+				plates: [plate(1)]
+			})
+			.returning();
+		// the delete is open (not committed) while the build is created: the build lists the row, then the
+		// delete commits; the build must notice and skip it
+		let release!: () => void;
+		const gate = new Promise<void>((res) => (release = res));
+		const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+		const deleting = db.transaction(async (tx) => {
+			await tx.delete(workspaceCustomPieces).where(eq(workspaceCustomPieces.id, r.id));
+			await gate;
+		});
+		await sleep(150);
+		const creating = createBuild(
+			db,
+			{ organizationId: 'org1', templateId, designId: null, name: 'N', setup: true },
+			'owner'
+		);
+		await sleep(500);
+		release();
+		const [, buildId] = await Promise.all([deleting, creating]);
+		expect(
+			await db.select().from(buildCustomPieces).where(eq(buildCustomPieces.libraryId, r.id))
+		).toEqual([]);
+		expect((await loadBuildView(db, buildId, 'owner'))!.customPieces).toEqual([]);
+	});
+
+	it('save, refresh, rename, remove and delete of one piece in parallel never deadlock or leave a dangling link', async () => {
+		for (let i = 0; i < 4; i++) {
+			const id = await mk();
+			const [r] = await libRows(1, i);
+			const out = (await applyLibraryPiece(db, id, 'owner', r.id))!;
+			const lib = (await first(
+				db.select().from(workspaceCustomPieces).where(eq(workspaceCustomPieces.id, r.id))
+			))!;
+			expect(lib).toBeTruthy();
+			const res = await Promise.all([
+				outcome(refreshLibraryPiece(db, 'owner', 'org1', r.id, id, out.pieceId)),
+				outcome(renameCustomPiece(db, id, 'owner', out.pieceId, { name: `Renamed ${i}` })),
+				outcome(removeCustomPiece(db, id, 'owner', out.pieceId)),
+				outcome(saveToLibrary(db, 'owner', id, out.pieceId)),
+				outcome(deleteLibraryPiece(db, 'owner', 'org1', r.id))
+			]);
+			expect(res).not.toContain('error');
+			// no build piece points at a saved part that is gone
+			const ids = new Set((await db.select().from(workspaceCustomPieces)).map((x) => x.id));
+			for (const p of await db.select().from(buildCustomPieces))
+				if (p.libraryId) expect(ids.has(p.libraryId)).toBe(true);
+		}
+	});
+
+	it('save and refresh wait for a change of the same build in progress, and see its result', async () => {
+		const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+		for (const how of ['save', 'refresh'] as const) {
+			const id = await mk();
+			const [r] = await libRows(1, 0, 1);
+			const out = (await applyLibraryPiece(db, id, 'owner', r.id))!;
+			if (how === 'save') {
+				await db.update(buildCustomPieces).set({ libraryId: null });
+				await db.delete(workspaceCustomPieces).where(eq(workspaceCustomPieces.id, r.id));
+			}
+			const before = (await db.select().from(workspaceCustomPieces)).length;
+			// a removal of the piece holds the build lock and has not committed yet
+			let release!: () => void;
+			const gate = new Promise<void>((res) => (release = res));
+			const removing = db.transaction(async (tx) => {
+				await advisoryLock(tx, `build:${id}`);
+				await tx.delete(buildCustomPieces).where(eq(buildCustomPieces.id, out.pieceId));
+				await gate;
+			});
+			await sleep(150);
+			const racing =
+				how === 'save'
+					? outcome(saveToLibrary(db, 'owner', id, out.pieceId))
+					: outcome(refreshLibraryPiece(db, 'owner', 'org1', r.id, id, out.pieceId));
+			await sleep(400);
+			release();
+			const [, res] = await Promise.all([removing, racing]);
+			expect(res).toBe(404);
+			expect((await db.select().from(workspaceCustomPieces)).length).toBe(before);
+		}
+	});
+
+	it('a save that comes after the piece was removed finds nothing and saves nothing', async () => {
+		const id = await mk();
+		const [r] = await libRows(1);
+		const out = (await applyLibraryPiece(db, id, 'owner', r.id))!;
+		await db.update(buildCustomPieces).set({ libraryId: null });
+		await db.delete(workspaceCustomPieces).where(eq(workspaceCustomPieces.id, r.id));
+		const [rm, sv] = await Promise.all([
+			outcome(removeCustomPiece(db, id, 'owner', out.pieceId)),
+			outcome(saveToLibrary(db, 'owner', id, out.pieceId))
+		]);
+		expect(rm).toBe('ok');
+		const rows = await db.select().from(workspaceCustomPieces);
+		// either the save ran first (one saved part) or it found no piece (404, nothing saved)
+		expect(sv === 'ok' ? rows.length : sv === 404 ? rows.length : -1).toBe(sv === 'ok' ? 1 : 0);
 	});
 });
