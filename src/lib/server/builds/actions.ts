@@ -275,9 +275,19 @@ export async function promoteDraft(db: Db, buildId: string, userId: string): Pro
 	if (!access.canEdit) throw new ApiError(403, 'Your role cannot edit');
 	if (access.kind !== 'draft') throw new ApiError(400, 'This is already a build');
 	await mutateBuild(db, buildId, userId, async (tx) => {
-		await assertUnder(tx, 'buildsPerWorkspace', () => countBuilds(tx, access.organizationId), {
+		// The build lock is held: count on the workspace and kind the build has now, not on the pre-lock read
+		// (a move or another promote may have run in between).
+		const cur = await first(
+			tx
+				.select({ organizationId: builds.organizationId, kind: builds.kind })
+				.from(builds)
+				.where(eq(builds.id, buildId))
+		);
+		if (!cur) throw new ApiError(404, 'Not found');
+		if (cur.kind !== 'draft') throw new ApiError(400, 'This is already a build');
+		await assertUnder(tx, 'buildsPerWorkspace', () => countBuilds(tx, cur.organizationId), {
 			userId,
-			scope: access.organizationId
+			scope: cur.organizationId
 		});
 		await tx.update(builds).set({ kind: 'build', setupStep: 5 }).where(eq(builds.id, buildId));
 		return { kind: 'build.promote', payload: {} };
@@ -1183,8 +1193,20 @@ export async function moveBuild(
 		// save of one of its custom pieces to the old workspace's library cannot slip in between the move and
 		// the clearing of the pieces' saved-part links below.
 		await advisoryLock(tx, `build:${buildId}`);
+		// Decide on what the build is now, not on what the pre-lock read saw: a move or a promote that held
+		// the lock first may have changed its workspace or kind.
+		const cur = await first(
+			tx
+				.select({ organizationId: builds.organizationId, kind: builds.kind })
+				.from(builds)
+				.where(eq(builds.id, buildId))
+		);
+		if (!cur) throw new ApiError(404, 'Not found');
+		if (cur.organizationId === targetId) bad('The build is already there');
+		if (!(await isPersonalOrg(tx, cur.organizationId)))
+			bad('Only builds in My builds can be moved to a team');
 		// A draft does not count toward a workspace's builds; a tracked build does.
-		if (access.kind !== 'draft')
+		if (cur.kind !== 'draft')
 			await assertUnder(tx, 'buildsPerWorkspace', () => countBuilds(tx, targetId), {
 				userId,
 				scope: targetId
@@ -1204,7 +1226,7 @@ export async function moveBuild(
 			buildId,
 			userId,
 			kind: 'build.move',
-			payload: { from: access.organizationId, to: targetId, toName: target?.name ?? null },
+			payload: { from: cur.organizationId, to: targetId, toName: target?.name ?? null },
 			at: now
 		});
 	});

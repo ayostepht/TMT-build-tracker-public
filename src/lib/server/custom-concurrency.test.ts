@@ -2,8 +2,8 @@
  * The hosted edition runs requests in parallel against Postgres: every count-then-insert of custom parts
  * (build caps, workspace library cap) and every plate number (max + 1) must hold under concurrent requests.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { and, eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { and, eq, sql } from 'drizzle-orm';
 import { MAX_CUSTOM_PIECES, isCustomPlate } from '#lib/domain/custom.ts';
 import { ApiError } from './access';
 import { advisoryLock, first, type Db } from './db';
@@ -11,6 +11,7 @@ import { createTestDb, dropTestDb } from './db/testing';
 import {
 	buildCustomPieces,
 	builds,
+	activity,
 	buildPlates,
 	member,
 	organization,
@@ -23,7 +24,7 @@ import { templateSeeds } from './seed';
 import { seedTemplates } from './seed/run';
 import { createBuild } from './builds/create';
 import { loadBuildView } from './builds/view';
-import { moveBuild } from './builds/actions';
+import { moveBuild, promoteDraft } from './builds/actions';
 import { recolorCustomPiece, removeCustomPiece, renameCustomPiece } from './builds/custom-pieces';
 import {
 	MAX_LIBRARY_PIECES,
@@ -506,4 +507,141 @@ describe('moving a build while one of its custom parts is saved', () => {
 			}
 		}
 	});
+});
+
+describe('moves decide on the build as it is once its lock is held', () => {
+	const setup = async () => {
+		await db
+			.update(organization)
+			.set({ metadata: JSON.stringify({ personal: true }) })
+			.where(eq(organization.id, 'org1'));
+		for (const o of ['org2', 'org3']) {
+			await db
+				.insert(organization)
+				.values({ id: o, name: `Team ${o}`, slug: o, createdAt: new Date() });
+			await db.insert(member).values({
+				id: `m-owner-${o}`,
+				organizationId: o,
+				userId: 'owner',
+				role: 'owner',
+				createdAt: new Date()
+			});
+		}
+	};
+	afterEach(() => vi.unstubAllEnvs());
+
+	it('two moves of one personal build to two teams: one wins, the other is refused, from is the personal workspace', async () => {
+		await setup();
+		for (let i = 0; i < 3; i++) {
+			const id = await mk();
+			await db.update(builds).set({ organizationId: 'org1' }).where(eq(builds.id, id));
+			const res = await Promise.all([
+				outcome(moveBuild(db, id, 'owner', { organizationId: 'org2' })),
+				outcome(moveBuild(db, id, 'owner', { organizationId: 'org3' }))
+			]);
+			expect([...res].sort()).toEqual([400, 'ok']);
+			const rows = await db
+				.select()
+				.from(activity)
+				.where(and(eq(activity.buildId, id), eq(activity.kind, 'build.move')));
+			expect(rows).toHaveLength(1);
+			expect((rows[0].payload as { from: string }).from).toBe('org1');
+			const [b] = await db.select().from(builds).where(eq(builds.id, id));
+			expect((rows[0].payload as { to: string }).to).toBe(b.organizationId);
+		}
+	});
+
+	const fullTeamSetup = async () => {
+		vi.stubEnv('TMT_MODE', 'public');
+		vi.stubEnv('PUBLIC_URL', 'https://example.test');
+		vi.stubEnv('QUOTA_BUILDS_PER_WORKSPACE', '1');
+		await setup();
+		// org2 already holds its one tracked build
+		await createBuild(
+			db,
+			{ organizationId: 'org2', templateId, designId: null, name: 'Full' },
+			'owner'
+		);
+		return await createBuild(
+			db,
+			{ organizationId: 'org1', templateId, designId: null, name: 'D', kind: 'draft' },
+			'owner'
+		);
+	};
+	/** Resolves once some session waits for an advisory lock (no fixed sleep). */
+	const waitForLockWaiter = async () => {
+		for (let i = 0; i < 200; i++) {
+			const r = await db.execute(
+				sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted`
+			);
+			if ((r as unknown as { n: number }[])[0].n > 0) return;
+			await new Promise((res) => setTimeout(res, 10));
+		}
+		throw new Error('nothing waited for the lock');
+	};
+
+	it('a promote that waited for a move counts the team the draft is in now', async () => {
+		const id = await fullTeamSetup();
+		let release!: () => void;
+		const gate = new Promise<void>((res) => (release = res));
+		let locked!: () => void;
+		const held = new Promise<void>((res) => (locked = res));
+		// a move holds the build lock and has changed the workspace (a draft needs no quota), not yet committed
+		const moving = db.transaction(async (tx) => {
+			await advisoryLock(tx, `build:${id}`);
+			await tx.update(builds).set({ organizationId: 'org2' }).where(eq(builds.id, id));
+			locked();
+			await gate;
+		});
+		await held;
+		const promoting = outcome(promoteDraft(db, id, 'owner'));
+		await waitForLockWaiter();
+		release();
+		const [, res] = await Promise.all([moving, promoting]);
+		expect(res).toBe(409);
+		const [b] = await db.select().from(builds).where(eq(builds.id, id));
+		expect(b.organizationId).toBe('org2');
+		expect(b.kind).toBe('draft');
+	});
+
+	it('a move that waited for a promote counts the target as a tracked build', async () => {
+		const id = await fullTeamSetup();
+		let release!: () => void;
+		const gate = new Promise<void>((res) => (release = res));
+		let locked!: () => void;
+		const held = new Promise<void>((res) => (locked = res));
+		// a promote holds the build lock and has made the draft a build, not yet committed
+		const promoting = db.transaction(async (tx) => {
+			await advisoryLock(tx, `build:${id}`);
+			await tx.update(builds).set({ kind: 'build' }).where(eq(builds.id, id));
+			locked();
+			await gate;
+		});
+		await held;
+		const moving = outcome(moveBuild(db, id, 'owner', { organizationId: 'org2' }));
+		await waitForLockWaiter();
+		release();
+		const [, res] = await Promise.all([promoting, moving]);
+		expect(res).toBe(409);
+		const [b] = await db.select().from(builds).where(eq(builds.id, id));
+		expect(b.organizationId).toBe('org1');
+	});
+
+	it('promoting a draft in parallel with its move never leaves a tracked build in a full team', async () => {
+		for (let i = 0; i < 3; i++) {
+			const id = i === 0 ? await fullTeamSetup() : await mkDraft();
+			await Promise.all([
+				outcome(promoteDraft(db, id, 'owner')),
+				outcome(moveBuild(db, id, 'owner', { organizationId: 'org2' }))
+			]);
+			const [b] = await db.select().from(builds).where(eq(builds.id, id));
+			expect(!(b.organizationId === 'org2' && b.kind === 'build')).toBe(true);
+		}
+	});
+	const mkDraft = () =>
+		createBuild(
+			db,
+			{ organizationId: 'org1', templateId, designId: null, name: 'D', kind: 'draft' },
+			'owner'
+		);
 });
