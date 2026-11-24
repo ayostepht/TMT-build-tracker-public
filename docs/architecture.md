@@ -82,6 +82,24 @@ Sections match the subagents in `.claude/agents/`:
   (`elapsedSec + remainingSec`), via `startPrinting(view, slugs, now, live)`.
 - **Variants:** `templates.variant_groups`, `builds.variant_choices`, `domain/variants.ts`.
   `BuildView.parts`/`state`/`plates` hold active parts only; `allParts` has everything.
+- **Not printing (#113 of the sibling):** `build_parts.skipped` is a read-time filter in
+  `loadBuildView`: inactive = variant-inactive ∪ skipped, for `parts`, `state` and plate
+  parts. `build_plates.parts` is never rewritten; a plate with every part skipped
+  disappears. `view.skipped` lists them; `list.ts` and `startedBuildIds` ignore skipped
+  rows. Restore keeps the stored status and never recomputes from runs. Assembly steps stay
+  (`filterSteps` 4th argument). The arranger, planner and export read `view.parts`. Route
+  `POST /api/builds/[id]/parts/skip`; async `skipParts` / `skipPartsTx(tx, view, slugs,
+skip)` (inside another mutation, no activity row). A Printing or live part is refused
+  (409). Demo users may skip and restore.
+- **Custom pieces, read side:** a `build_custom_pieces` row becomes one `PartDef` per plate
+  (section 'Custom', `custom.pieceId`) in `view.parts`, never in `allParts`;
+  `designParts(view)` is what design UI iterates, and designs resolve slugs through
+  `allParts`, so a custom slug cannot enter `design.partRoles`. Plates are `build_plates`
+  rows with `source = 'custom:<pieceId>'`. `domain/custom.ts`: `partBySlug`, `kitOnly`,
+  caps. Accounting: a custom plate trusts its file's role map, a custom part takes its
+  plate's grams. `remapRoleKey` / `removeSlot` re-key custom part roles. Activity kinds
+  `part.skip`, `part.restore`, `custom.add`, `custom.remove` are in `REARRANGE_KINDS`;
+  `custom.rename` is not.
 - **Workspaces:** every user has a personal workspace (organization with metadata
   `{ personal: true, userId }`, "My builds", created on sign-up and lazily for legacy users
   in `teams.ts`). Personal workspaces can't take invitations. Builds move personal → chapter
@@ -293,6 +311,26 @@ Sections match the subagents in `.claude/agents/`:
   printer set, `PlateLayoutPicker` shows a one-line `printerSummary()`. In build mode
   `PlatesPanel` owns the single `plates/layouts` fetch and hands it to the picker through
   `preload` (`null` = loading: heading seeded from the plates' `source`, select disabled).
+- **Custom pieces and saved custom parts:** `builds/custom-pieces.ts` (`addCustomPiece`
+  from a parsed upload with typed `times` / `grams`, `insertCustomPieceTx` as the single
+  insert path, `renameCustomPiece`, `removeCustomPiece`), `builds/custom-plates.ts`
+  (`detachCustomPlates` around the three whole-build deletes of `build_plates` in
+  `setPlateLayout`, `applyUpload` and `writePlan`; thumbnails at
+  `plates/<buildId>/custom-<hex>.png`, path recomputed, never trusted from the row), and
+  `custom-library.ts` (`workspace_custom_pieces`: per-plate summaries only, no file, no
+  thumbnail; save, create by hand, edit, refresh from a build, apply; role keys are the
+  kit's filament role keys). `kitOnly(view)` keeps custom parts and plates out of the
+  arranger, the plan cache and the export. Locks: `build:<id>` through `mutateBuild`
+  (caps, numbering, detach / re-attach); `custom-library:<orgId>` for save and create (the
+  50 per workspace cap); `custom-library-row:<libId>` for update, refresh and delete; a
+  `FOR SHARE` row lock when a build applies a saved part, with delete-first-then-unlink in
+  `deleteLibraryPiece`. `POST /api/custom-library/inspect` reads a 3MF for the add form and
+  stores nothing (temp `<uuid>.zip` in `importsDir()`, removed in `finally`, swept at
+  startup); `threemf/upload-guard.ts` `guardedReceiveThreeMf` (429, 409, 507) is shared
+  with the build upload. Demo users are refused by the upload and inspect routes before the
+  body is read; everything without a file works in the demo. The build DELETE route removes
+  `plates/<id>`. Grams and time inputs use `follow-prop.svelte.ts` so a refresh does not
+  overwrite a half-typed value.
 - **Export:** `src/lib/server/threemf-export/` (Orca/Elegoo, Bambu, plain), painted
   supports, `bed_exclude_area`.
 
@@ -574,6 +612,10 @@ can also be added "not connected" (kind `manual`) to log prints by hand.
 
 ## Kit and startup (`kit-and-startup`)
 
+- **Migration `0003_custom_parts`** (additive): `build_parts.skipped`, `build_custom_pieces`,
+  `workspace_custom_pieces` (`library_id` on a build's piece has no foreign key). The
+  Supabase lockdown is schema-wide and covers both tables.
+
 - **Postgres layer** (`db/index.ts`): postgres-js pool (`DATABASE_POOL_MAX`, default 10;
   `prepare: false`), Drizzle `pg-core`. Every query is awaited; `first`/`one` replace
   `.get()`; helpers that may run inside a transaction take `DbOrTx`; `advisoryLock(tx, name)`
@@ -638,6 +680,14 @@ can also be added "not connected" (kind `manual`) to log prints by hand.
   `site_admin`.
 
 ## App shell (`app-shell`)
+
+- **Custom parts screens:** `(app)/teams/[slug]/pieces` (the Custom parts page, also for the
+  personal workspace; `LibraryPartForm.svelte`; `ws-custom-parts` in the Settings menu,
+  `saved-parts-link` on the Builds page); the setup page load returns `savedParts`
+  (`server/library-names.ts`); `createBuild` applies the workspace's default saved parts
+  for setup builds only (never the demo's seeded build), one savepoint per piece; the
+  account export lists `customPieces` per workspace and each build's `customPieces` and
+  `skippedParts`.
 
 - r48: top-level nav is Builds, Studio, Designs, Printers, Help; the account menu holds
   Create a chapter (phone), Kit admin, Account, Sign out; a 761-1100 px media block
