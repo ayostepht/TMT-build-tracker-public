@@ -35,6 +35,7 @@ import { ApiError, buildAccess, requireEditor, requireOwner } from '../access';
 import { advisoryLock, first, one, type Db, type DbOrTx, type Tx } from '../db';
 import {
 	activity,
+	buildCustomPieces,
 	buildFilaments,
 	buildPlates,
 	builds,
@@ -141,6 +142,7 @@ export function assertPiecePlate(view: BuildView, slug: string, plateNumber: num
 /**
  * Activity kinds a Studio draft may produce. Everything else (runs, part status, printing,
  * assembly, handoff, photos, spools, imports) is build tracking and is refused with a 400.
+ * "Not printing" and custom parts are allowed: they decide what the draft's estimate counts.
  */
 const DRAFT_KINDS = new Set([
 	'build.update',
@@ -150,7 +152,14 @@ const DRAFT_KINDS = new Set([
 	'build.move',
 	'build.promote',
 	'filament.update',
-	'plate.slicer'
+	'plate.slicer',
+	// "Not printing" and custom parts shape what a draft would print (its estimate); no logging.
+	'part.skip',
+	'part.restore',
+	'custom.add',
+	'custom.remove',
+	'custom.rename',
+	'custom.recolor'
 ]);
 export function draftAllows(kind: string): boolean {
 	return DRAFT_KINDS.has(kind) || kind.startsWith('design.') || kind.startsWith('plates.');
@@ -254,8 +263,9 @@ export async function deleteBuild(db: Db, buildId: string, userId: string): Prom
 }
 
 /**
- * Studio draft to tracked build: keeps the design, variants, printer, plates and uploaded
- * files. Setup counts as done up to the Export step (everything it asks for exists already), so
+ * Studio draft to tracked build: keeps the design, variants, printer, plates, uploaded
+ * files, "Not printing" parts and custom pieces (rows, plates, thumbnails, saved-part links).
+ * Only `kind` and the setup step change, so nothing is copied. Setup counts as done up to the Export step (everything it asks for exists already), so
  * the wizard opens there with every earlier step one click away.
  * Editors and owners. Writes a `build.promote` activity row.
  */
@@ -391,7 +401,7 @@ export async function skipPartsTx(
 
 /**
  * Body `{ slugs, skip }`: mark parts "Not printing" (`skip: true`) or bring them back (`false`).
- * Editors and owners; drafts refuse it (no build tracking).
+ * Editors and owners; drafts too (a part skipped in a draft is skipped when the draft is promoted).
  */
 export async function skipParts(
 	db: Db,
@@ -1169,6 +1179,10 @@ export async function moveBuild(
 		db.select({ name: organization.name }).from(organization).where(eq(organization.id, targetId))
 	);
 	await db.transaction(async (tx) => {
+		// The build's own lock first (as `mutateBuild`, `saveToLibrary` and `refreshLibraryPiece` take it): a
+		// save of one of its custom pieces to the old workspace's library cannot slip in between the move and
+		// the clearing of the pieces' saved-part links below.
+		await advisoryLock(tx, `build:${buildId}`);
 		// A draft does not count toward a workspace's builds; a tracked build does.
 		if (access.kind !== 'draft')
 			await assertUnder(tx, 'buildsPerWorkspace', () => countBuilds(tx, targetId), {
@@ -1176,6 +1190,11 @@ export async function moveBuild(
 				scope: targetId
 			});
 		await tx.update(builds).set({ organizationId: targetId }).where(eq(builds.id, buildId));
+		// Saved parts belong to a workspace: a piece's link to one does not follow the build.
+		await tx
+			.update(buildCustomPieces)
+			.set({ libraryId: null })
+			.where(eq(buildCustomPieces.buildId, buildId));
 		// A kit copy owned by the personal workspace stays behind: the build goes back to the base kit.
 		const tpl = await first(
 			tx.select({ id: builds.templateId }).from(builds).where(eq(builds.id, buildId))
