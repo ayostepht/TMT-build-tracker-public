@@ -56,6 +56,10 @@ the sibling repository [ayostepht/TMT-Build-Tracker](https://github.com/ayosteph
   "Not printing", "Add a custom part" and Settings → Custom parts on the live site after
   the deploy with migration `0003_custom_parts`; check the demo shows the by-hand form and
   no file picker; review the new `/privacy` sentence about saved custom parts.
+- Custom parts, round 2 (#46, 2026-11-24, no migration): try the wizard's "Custom parts"
+  card, a custom part in a Studio draft, "Not used in this build" on a file with support
+  filament, changing a custom part's color, the confirm step when adding a saved part, and
+  the Edit form on the Custom parts page.
 - Backups: nightly User Script on the maintainer's server since 2026-11-20 (`pg_dump` 17 of
   the `public` and `drizzle` schemas plus a tarball of `/data`, 14 days kept, on an array
   share apart from appdata). Still to do: an off-site copy and a first restore test.

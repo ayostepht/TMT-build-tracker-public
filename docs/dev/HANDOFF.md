@@ -28,21 +28,28 @@ _Updated 2026-11-24. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## State
 
-- **Custom parts (port of the sibling's #114, #117 and #122)** on branch
-  `claude/gallant-newton-s64g9v`, opened from the self-hosted project's session, which the
-  maintainer put in charge of this feature and told to merge it here (2026-11-24). It adds
-  **migration `0003_custom_parts`** (additive: `build_parts.skipped`, `build_custom_pieces`,
-  `workspace_custom_pieces`); the maintainer took a database backup before the merge.
-  Contents: "Not printing" for parts and plates; custom parts from a .3mf on the Files tab
-  (typed time and grams, rename); saved custom parts per workspace or team, a Custom parts
-  page in the Settings menu, default parts in new builds and the wizard; grams and time
-  boxes keep a half-typed value through a refresh; the demo gets no file picker (by-hand
-  parts work); `/privacy` names saved custom parts. Gate on ad3752f: check, lint, 2374 unit
-  tests, build, empty-database start twice, the 0002 → 0003 upgrade test, 28 e2e specs;
-  security review with no high or medium finding, its four low points fixed. Not done: a
-  rehearsal of 0003 on a restored copy of the live database (the upgrade is covered by
-  `migrate.test.ts` only); `docker build`; the real-kit tests. After the deploy: log it in
-  `docs/dev/CHANGELOG.md`, and ask the maintainer what they saw.
+- **Custom parts** (the sibling's #114, #117 and #122) merged as #45 (5f2d54c, image
+  `sha-5f2d54c`, **migration `0003_custom_parts`**, additive; the maintainer took a backup
+  first and has used it on the live site). Not yet logged in `docs/dev/CHANGELOG.md`: ask
+  the maintainer when they pulled it.
+- **Custom parts, round 2: #46** on branch `claude/gallant-newton-s64g9v` (port of the
+  sibling's #126, from the maintainer's feedback on the live site; opened by the
+  self-hosted project's session, which the maintainer put in charge of this feature and
+  told to merge it here). No migration. Contents: a "Custom parts" card in the setup
+  wizard; Studio drafts take custom parts and "Not printing"; a file's filament can be
+  "Not used in this build"; a custom part's color can be changed on the Files and Design
+  tabs; adding a saved part asks which kit parts to mark "Not printing"; one Edit form per
+  saved part and the switch reads "Add to every new build automatically"; `moveBuild` and
+  `promoteDraft` decide on the build as re-read under its lock. Gate on e2988b4: check,
+  lint, 2419 unit tests, build, empty-database start twice, 68 e2e tests in 12 specs;
+  security review with no high or medium finding. Not done: `docker build` locally; the
+  real-kit tests. Merge when `public-ci` is green (merging is deploying), then ask the
+  maintainer what they saw and log the deploy. Decided while the maintainer was away, theirs
+  to overrule: new Studio drafts start as the plain kit (automatic saved parts only for
+  wizard builds); an unused filament leaves the grams but not the print time; a part with
+  print logs can still be recolored; the confirm step shows only when the saved part
+  replaces something in this build; the demo still takes no file. Open, small:
+  `mutateBuild` checks `draftAllows` on the kind read before the lock.
 - Live: the code of `main` 28aa7aa (seventh deploy, confirmed 2026-11-22, #27 to #37,
   migration `0002_piece_prints` applied). Rollback image `sha-828df84`. Not yet asked: what
   the maintainer saw of the new plate and piece features.
