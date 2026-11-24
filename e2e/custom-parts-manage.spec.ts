@@ -38,7 +38,13 @@ interface ViewJson {
 	build: { organizationId: string };
 	plates: ViewPlate[];
 	skipped: { slug: string; name: string }[];
-	customPieces: { id: string; name: string; libraryId?: string | null; plates: number[] }[];
+	customPieces: {
+		id: string;
+		name: string;
+		libraryId?: string | null;
+		plates: number[];
+		colors: { slug: string; roles: { role: string }[] }[];
+	}[];
 }
 interface LibJson {
 	id: string;
@@ -843,6 +849,7 @@ test('Demo: no file picker, Not printing works, a part added by hand joins the d
 	// Not printing and Bring back, on a part that has not been started.
 	const v0 = (await (await page.request.get(`/api/builds/${buildId}/view`)).json()) as {
 		plates: { parts: string[]; perPartRuns: boolean }[];
+		parts: { slug: string; name: string }[];
 		state: Record<string, { status: string }>;
 	};
 	const slug = v0.plates
@@ -861,6 +868,19 @@ test('Demo: no file picker, Not printing works, a part added by hand joins the d
 	await group.getByTestId('bring-back').click();
 	await expect(partRow).toBeVisible();
 	await expect(page.getByTestId('not-printing')).toHaveCount(0);
+	const kitName = v0.parts.find((p) => p.slug === slug)!.name;
+
+	// The setup wizard's Custom parts card offers the add button, with the same demo note in its sheet.
+	await page.goto(`/builds/${buildId}/setup?step=2`);
+	await page.waitForLoadState('networkidle');
+	await expect(page.getByTestId('setup-saved-parts')).toContainText('Custom parts');
+	await expect(page.getByTestId('setup-add-custom')).toHaveText('Add a custom part');
+	await page.getByTestId('setup-add-custom').click();
+	const wdlg = page.getByTestId('custom-dialog');
+	await expect(wdlg.getByTestId('custom-demo-note')).toBeVisible();
+	await expect(wdlg.getByTestId('custom-3mf-file')).toHaveCount(0);
+	await wdlg.getByRole('button', { name: 'Cancel' }).first().click();
+	await expect(wdlg).toBeHidden();
 
 	// Files tab: the sheet has the demo note and no file picker.
 	await openFiles(page, buildId);
@@ -884,17 +904,41 @@ test('Demo: no file picker, Not printing works, a part added by hand joins the d
 	await form.getByTestId('library-plate-name').fill('Cup');
 	await type(form.getByLabel('Print time'), '1h');
 	await form.getByTestId('library-plate-grams').fill('20');
+	await form.getByTestId('library-replaces').locator('summary').click();
+	await form
+		.getByTestId('library-replaces')
+		.getByRole('checkbox', { name: kitName, exact: true })
+		.check();
 	await form.getByTestId('library-create').click();
 	await expect(page.getByTestId('saved-part-notice')).toContainText('Added "Demo cup holder"');
 
-	// Add it to the demo build from the Files tab.
+	// Add it to the demo build from the Files tab: it replaces a kit part, so the sheet confirms first.
 	await openFiles(page, buildId);
 	await page.getByTestId('add-custom-part').click();
 	await expect(dlg.getByTestId('custom-demo-note')).toBeVisible();
 	await expect(dlg.getByTestId('custom-3mf-file')).toHaveCount(0);
 	await dlg.getByTestId('custom-saved-add').click();
+	await expect(dlg.getByTestId('custom-saved-confirm-step')).toBeVisible();
+	await expect(
+		dlg.getByTestId('custom-saved-replaces').locator(`[data-slug="${slug}"]`)
+	).toBeChecked();
+	await dlg.getByTestId('custom-saved-confirm').click();
 	await expect(dlg).toBeHidden();
 	await expect(page.getByTestId('custom-piece')).toContainText('Demo cup holder');
+	expect((await view(page, buildId)).skipped.map((p) => p.slug)).toEqual([slug]);
+
+	// Design tab: its color can be changed, in the demo too.
+	await page.goto(`/builds/${buildId}/design`);
+	await page.waitForLoadState('networkidle');
+	await page.getByRole('tab', { name: 'Parts' }).click();
+	const dcolor = page.getByTestId('design-custom-parts').getByTestId('design-custom-color');
+	await expect(dcolor).toHaveCount(1);
+	const fromRole = await dcolor.inputValue();
+	const toRole = fromRole === 'soft' ? 'tire' : 'soft';
+	await dcolor.selectOption(toRole);
+	await expect
+		.poll(async () => (await view(page, buildId)).customPieces[0].colors[0].roles[0].role)
+		.toBe(toRole);
 	const plates = customPlates(await view(page, buildId));
 	expect(plates).toHaveLength(1);
 	expect(plates[0].estSeconds).toBe(3600);
