@@ -28,6 +28,7 @@ import {
 	buildUploads,
 	colorDesigns,
 	customFilaments,
+	workspaceCustomPieces,
 	invitation,
 	member,
 	organization,
@@ -556,6 +557,8 @@ export async function exportAccountData(db: DbOrTx, userId: string): Promise<str
 			variantChoices: v.variantChoices,
 			state: v.state,
 			plates: v.plates,
+			customPieces: v.customPieces,
+			skippedParts: v.skipped.map((x) => x.slug),
 			runs: v.runs,
 			activity: v.activity,
 			assembly: v.assembly,
@@ -592,6 +595,35 @@ export async function exportAccountData(db: DbOrTx, userId: string): Promise<str
 				.where(eq(customFilaments.organizationId, mine.id))
 		: [];
 
+	// Saved custom parts of every workspace the user belongs to (per-plate summaries; no files exist).
+	const customPieces = [];
+	for (const o of orgs) {
+		const rows = await db
+			.select()
+			.from(workspaceCustomPieces)
+			.where(eq(workspaceCustomPieces.organizationId, o.id))
+			.orderBy(asc(workspaceCustomPieces.createdAt), asc(workspaceCustomPieces.id));
+		if (!rows.length) continue;
+		customPieces.push({
+			workspace: o.id === mine?.id ? 'My builds' : o.name,
+			parts: rows.map((r) => ({
+				name: r.name,
+				fileName: r.fileName,
+				sliced: r.sliced,
+				replaces: r.replaces,
+				plates: r.plates.map((p) => ({
+					name: p.name,
+					estSeconds: p.estSeconds,
+					grams: p.grams,
+					filamentGrams: p.filamentGrams,
+					role: p.role,
+					runs: p.runs
+				})),
+				isDefault: r.isDefault
+			}))
+		});
+	}
+
 	const json = JSON.stringify(
 		{
 			exportedAt: new Date().toISOString(),
@@ -611,6 +643,7 @@ export async function exportAccountData(db: DbOrTx, userId: string): Promise<str
 			})),
 			savedDesigns: designs,
 			customFilaments: filamentsOwn,
+			customPieces,
 			builds: exportedBuilds
 		},
 		null,

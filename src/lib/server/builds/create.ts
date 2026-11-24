@@ -1,9 +1,12 @@
 import { and, eq } from 'drizzle-orm';
-import type { BuildKind, BuildPrinter } from '#lib/domain/types.ts';
+import { MAX_CUSTOM_PIECES, MAX_CUSTOM_PLATES } from '#lib/domain/custom.ts';
+import type { BuildKind, BuildPrinter, BuildView } from '#lib/domain/types.ts';
 import { resolveChoices, validateChoices } from '#lib/domain/variants.ts';
 import { ApiError, requireEditor } from '../access';
 import { canSeeDesign } from '../designs/access';
 import { arrangeForPrinter } from './plates';
+import { loadBuildView } from './view';
+import { applyLibraryPieceTx, defaultLibraryRows, lockLibraryRow } from '../custom-library';
 import { first, one, type Db } from '../db';
 import { BUILD_HOSPITAL_MAX, BUILD_NAME_MAX, BUILD_RECIPIENT_MAX } from './limits';
 import { assertUnder, countBuilds, countDrafts } from '../quota';
@@ -142,7 +145,7 @@ export async function createBuild(
 
 		// Everything below hangs off the new build id and is independent, so the reads go out together,
 		// then the inserts (multi-row, one statement per table) go out together in the same order as
-		// before: filaments, parts, plates, activity.
+		// before: filaments, parts, plates. The creation activity row comes last, after the saved parts.
 		const [roleRows, partRows, tplPlates] = await Promise.all([
 			tx.select().from(templateFilamentRoles).where(eq(templateFilamentRoles.templateId, tpl.id)),
 			// Rows for every part, active or not, so switching variants keeps any progress.
@@ -205,14 +208,61 @@ export async function createBuild(
 				partRows.map((p) => ({ buildId: id, partSlug: p.slug })),
 				(v) => tx.insert(buildParts).values(v)
 			),
-			insertRows(plates, (v) => tx.insert(buildPlates).values(v)),
-			tx.insert(activity).values({
-				buildId: id,
-				userId,
-				kind: 'build.create',
-				payload: input.kind === 'draft' ? { name, draft: true } : { name }
-			})
+			insertRows(plates, (v) => tx.insert(buildPlates).values(v))
 		]);
+		// Saved custom parts marked "Include in new builds": only for tracked builds made through the setup
+		// flow (not drafts, imports or moves; the demo's seeded sample build passes no `setup`, so it never
+		// gets any). Each piece gets its own savepoint (a nested `tx.transaction`), so one that cannot be
+		// added leaves no partial rows and never fails the build.
+		if (input.setup && input.kind !== 'draft') {
+			// Bounded work: the caps stop the loop, rows that cannot fit are skipped without loading the view,
+			// and the view is reloaded only after a piece was written (a failed piece rolled back to its savepoint).
+			let pieces = 0;
+			let platesUsed = 0;
+			let view: BuildView | null | undefined;
+			for (const listed of await defaultLibraryRows(tx, input.organizationId)) {
+				if (pieces >= MAX_CUSTOM_PIECES || platesUsed >= MAX_CUSTOM_PLATES) break;
+				const n = (listed.plates ?? []).length;
+				if (!n || platesUsed + n > MAX_CUSTOM_PLATES) continue;
+				// Read again with a share lock: a saved part deleted since the list was read is skipped, and a
+				// delete that comes in now waits for this build, so no piece links to a deleted row.
+				const lib = await lockLibraryRow(tx, input.organizationId, listed.id);
+				if (!lib) continue;
+				try {
+					view ??= await loadBuildView(tx, id, userId);
+					if (!view) break;
+					const current = view;
+					const made = await tx.transaction((sp) => applyLibraryPieceTx(sp, current, lib, userId));
+					if (!made) continue;
+					pieces++;
+					platesUsed += n;
+					view = undefined;
+					await tx.insert(activity).values({
+						buildId: id,
+						userId,
+						kind: 'custom.add',
+						payload: {
+							pieceId: made.pieceId,
+							name: lib.name,
+							fileName: lib.fileName,
+							plates: [],
+							sliced: lib.sliced,
+							replaced: made.skippedNames,
+							fromLibrary: true
+						}
+					});
+				} catch (e) {
+					// an unusable saved part is left out; anything unexpected still fails the build
+					if (!(e instanceof ApiError)) throw e;
+				}
+			}
+		}
+		await tx.insert(activity).values({
+			buildId: id,
+			userId,
+			kind: 'build.create',
+			payload: input.kind === 'draft' ? { name, draft: true } : { name }
+		});
 		return id;
 	});
 	// A printer without an explicit layout: plan the plates for it right away.

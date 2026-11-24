@@ -1,6 +1,6 @@
 # Orchestrator handoff
 
-_Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable facts go to
+_Updated 2026-11-24. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable facts go to
 `docs/dev/STATUS.md`._
 
 ## Rules in force right now
@@ -28,6 +28,21 @@ _Updated 2026-11-22. Rewrite in place; see "Handoff doc" in `CLAUDE.md`. Durable
 
 ## State
 
+- **Custom parts (port of the sibling's #114, #117 and #122)** on branch
+  `claude/gallant-newton-s64g9v`, opened from the self-hosted project's session, which the
+  maintainer put in charge of this feature and told to merge it here (2026-11-24). It adds
+  **migration `0003_custom_parts`** (additive: `build_parts.skipped`, `build_custom_pieces`,
+  `workspace_custom_pieces`); the maintainer took a database backup before the merge.
+  Contents: "Not printing" for parts and plates; custom parts from a .3mf on the Files tab
+  (typed time and grams, rename); saved custom parts per workspace or team, a Custom parts
+  page in the Settings menu, default parts in new builds and the wizard; grams and time
+  boxes keep a half-typed value through a refresh; the demo gets no file picker (by-hand
+  parts work); `/privacy` names saved custom parts. Gate on ad3752f: check, lint, 2374 unit
+  tests, build, empty-database start twice, the 0002 → 0003 upgrade test, 28 e2e specs;
+  security review with no high or medium finding, its four low points fixed. Not done: a
+  rehearsal of 0003 on a restored copy of the live database (the upgrade is covered by
+  `migrate.test.ts` only); `docker build`; the real-kit tests. After the deploy: log it in
+  `docs/dev/CHANGELOG.md`, and ask the maintainer what they saw.
 - Live: the code of `main` 28aa7aa (seventh deploy, confirmed 2026-11-22, #27 to #37,
   migration `0002_piece_prints` applied). Rollback image `sha-828df84`. Not yet asked: what
   the maintainer saw of the new plate and piece features.

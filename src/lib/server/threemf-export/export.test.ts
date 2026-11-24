@@ -11,13 +11,22 @@ import { printerFromCatalog } from '#lib/printers/printer.ts';
 import { ApiError } from '../access';
 import { planArrangement } from '../builds/arrange-plan';
 import { createBuild } from '../builds/create';
-import { setPrinter } from '../builds/actions';
+import { setPrinter, skipParts } from '../builds/actions';
 import { updateBuildDesign } from '../designs/mutate';
 import { arrangeForPrinter, buildArrangement, setPlateLayout } from '../builds/plates';
 import { loadBuildView } from '../builds/view';
 import { first, type Db } from '../db';
 import { createTestDb, dropTestDb } from '../db/testing';
-import { buildPlates, builds, member, organization, templates, user } from '../db/schema';
+import {
+	buildCustomPieces,
+	buildParts,
+	buildPlates,
+	builds,
+	member,
+	organization,
+	templates,
+	user
+} from '../db/schema';
 import { and, eq } from 'drizzle-orm';
 import type { ExtractedPart } from '../print-geometry/extract';
 import type { PrintMesh } from '../print-geometry/mesh-format';
@@ -832,6 +841,74 @@ describe('exportBuild3mf with a database', () => {
 				const shown = view.plates.find((pl) => pl.number === g.number)!;
 				expect(shown, `plate ${g.number} is on the Print tab`).toBeTruthy();
 				expect(g.slugs).toEqual(shown.parts.filter((s) => GEOM.includes(s)).sort());
+			}
+		});
+
+		const addCustom = async (id: string) => {
+			await db.insert(buildCustomPieces).values({
+				id: `pc-${id}`,
+				buildId: id,
+				name: 'Beta handle',
+				fileName: 'beta.3mf',
+				sliced: true,
+				replaces: [],
+				parts: [{ slug: 'custom-aa11bb22', name: 'Beta handle', role: 'accent' }],
+				createdAt: new Date()
+			});
+			await db.insert(buildParts).values({ buildId: id, partSlug: 'custom-aa11bb22' });
+			const top = Math.max(
+				...(await db.select().from(buildPlates).where(eq(buildPlates.buildId, id))).map(
+					(r) => r.number
+				),
+				0
+			);
+			await db.insert(buildPlates).values({
+				buildId: id,
+				number: top + 1,
+				name: 'Beta handle',
+				estSeconds: 3600,
+				parts: ['custom-aa11bb22'],
+				source: `custom:pc-${id}`
+			});
+		};
+
+		it('a custom piece is never exported and changes nothing, on arranged plates and on a kit layout', async () => {
+			for (const how of ['arranged', 'layout'] as const) {
+				const id = await mk();
+				await setPrinter(db, id, 'owner', { printer: cc });
+				if (how === 'arranged') await arrangeForPrinter(db, id, 'owner');
+				else await setPlateLayout(db, id, 'owner', { key: 'xpa' });
+				await importSynthetic();
+				const before = await prepareExport(db, id, 'owner', { flavor: 'orca' });
+				await addCustom(id);
+				const after = await prepareExport(db, id, 'owner', { flavor: 'orca' });
+				expect(slugsOf(after.plan)).toEqual(slugsOf(before.plan));
+				expect(after.plan.warnings).toEqual(before.plan.warnings);
+				expect(after.plan.missing).toEqual(before.plan.missing);
+				expect(after.plan.objects.some((o) => o.slug.startsWith('custom-'))).toBe(false);
+				expect(
+					(await previewExport(db, id, 'owner', { flavor: 'orca' })).plates.map((pl) => pl.number)
+				).toEqual(before.plan.plates.map((pl) => pl.number));
+			}
+		});
+
+		it('a part marked Not printing is not exported', async () => {
+			for (const how of ['arranged', 'layout'] as const) {
+				const id = await mk();
+				await setPrinter(db, id, 'owner', { printer: cc });
+				if (how === 'arranged') await arrangeForPrinter(db, id, 'owner');
+				else await setPlateLayout(db, id, 'owner', { key: 'xpa' });
+				await importSynthetic();
+				expect(
+					slugsOf((await prepareExport(db, id, 'owner', { flavor: 'orca' })).plan).flatMap(
+						(g) => g.slugs
+					)
+				).toContain('wing-left');
+				await skipParts(db, id, 'owner', { slugs: ['wing-left'], skip: true });
+				const { plan: p } = await prepareExport(db, id, 'owner', { flavor: 'orca' });
+				expect(slugsOf(p).flatMap((g) => g.slugs)).not.toContain('wing-left');
+				expect(p.objects.some((o) => o.slug === 'wing-left')).toBe(false);
+				expect(p.missing.some((m) => m.slug === 'wing-left')).toBe(false);
 			}
 		});
 

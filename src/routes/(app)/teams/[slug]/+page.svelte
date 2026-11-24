@@ -16,9 +16,14 @@
 			shows what is printing and what to print next.
 		</p>
 		{#if canEdit}
-			<div>
+			<div class="head-actions">
 				<a class="btn primary" href={resolve('/(app)/builds/new')} data-testid="new-build"
 					>New build</a
+				>
+				<a
+					class="btn"
+					href={resolve('/(app)/teams/[slug]/pieces', { slug: data.team.slug })}
+					data-testid="saved-parts-link">Custom parts</a
 				>
 			</div>
 		{:else}
@@ -30,11 +35,18 @@
 	<LandingBoard views={data.landing.views} more={data.landing.more} />
 	<div class="head-row">
 		<h2>Builds</h2>
-		{#if canEdit}
-			<a class="btn primary" href={resolve('/(app)/builds/new')} data-testid="new-build"
-				>New build</a
+		<div class="head-actions">
+			<a
+				class="btn"
+				href={resolve('/(app)/teams/[slug]/pieces', { slug: data.team.slug })}
+				data-testid="saved-parts-link">Custom parts</a
 			>
-		{/if}
+			{#if canEdit}
+				<a class="btn primary" href={resolve('/(app)/builds/new')} data-testid="new-build"
+					>New build</a
+				>
+			{/if}
+		</div>
 	</div>
 	<ul class="tpl-list bl-list">
 		{#each data.builds as b (b.id)}
@@ -81,6 +93,11 @@
 		flex-wrap: wrap;
 		margin-top: 24px;
 		margin-bottom: 8px;
+	}
+	.head-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
 	}
 	.head-row h2 {
 		margin: 0;

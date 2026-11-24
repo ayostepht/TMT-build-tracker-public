@@ -23,7 +23,8 @@ import {
 	session,
 	templates,
 	user,
-	verification
+	verification,
+	workspaceCustomPieces
 } from './db/schema';
 import { templateSeeds } from './seed';
 import { seedTemplates } from './seed/run';
@@ -361,6 +362,37 @@ describe('deleteAccount', () => {
 	});
 });
 
+describe('saved custom parts on account deletion', () => {
+	it('removes the personal workspace parts and keeps a shared team part, creator cleared', async () => {
+		await signUp('Admin', 'admin@example.test');
+		const pat = await signUp('Pat', 'pat@example.test');
+		const lee = await signUp('Lee', 'lee@example.test');
+		const personal = (await findPersonalWorkspace(db, pat.id))!;
+		await addChapter('c1', [
+			[lee.id, 'owner'],
+			[pat.id, 'editor']
+		]);
+		const part = (organizationId: string, name: string) =>
+			db
+				.insert(workspaceCustomPieces)
+				.values({ organizationId, name, plates: [], createdBy: pat.id })
+				.returning({ id: workspaceCustomPieces.id });
+		const [own] = await part(personal.id, 'Mine');
+		const [shared] = await part('c1', 'Shared');
+		await deleteAccount(db, pat.id);
+		expect(
+			await first(
+				db.select().from(workspaceCustomPieces).where(eq(workspaceCustomPieces.id, own.id))
+			)
+		).toBeUndefined();
+		const kept = await first(
+			db.select().from(workspaceCustomPieces).where(eq(workspaceCustomPieces.id, shared.id))
+		);
+		expect(kept?.name).toBe('Shared');
+		expect(kept?.createdBy).toBeNull();
+	});
+});
+
 describe('kit copies used from another workspace', () => {
 	async function copyFor(orgId: string) {
 		const id = `copy-${orgId}`;
@@ -546,6 +578,54 @@ describe('exportAccountData', () => {
 		expect(data.builds[0].build.id).toBe(b);
 		expect(data.builds[0].photos).toEqual([expect.objectContaining({ fileName: 'p.webp' })]);
 		expect(JSON.stringify(data)).not.toContain(dir);
+	});
+
+	it('lists the saved custom parts of each workspace and the builds custom pieces', async () => {
+		await signUp('Admin', 'admin@example.test');
+		const pat = await signUp('Pat', 'pat@example.test');
+		const personal = (await findPersonalWorkspace(db, pat.id))!;
+		await addBuild(personal.id, pat.id);
+		await addChapter('c1', [[pat.id, 'editor']]);
+		await db.insert(workspaceCustomPieces).values({
+			organizationId: 'c1',
+			name: 'Beta handle',
+			fileName: 'beta.3mf',
+			sliced: true,
+			replaces: ['handle'],
+			plates: [
+				{
+					name: 'HANDLE',
+					estSeconds: 7200,
+					grams: 70,
+					filamentGrams: { primary: 70 },
+					role: 'primary',
+					runs: 1,
+					thumb: false
+				}
+			],
+			isDefault: true
+		});
+		const data = JSON.parse(await exportAccountData(db, pat.id)) as {
+			customPieces: { workspace: string; parts: Record<string, unknown>[] }[];
+			builds: { customPieces: unknown[]; skippedParts: string[] }[];
+		};
+		expect(data.customPieces).toEqual([
+			{
+				workspace: 'Chapter c1',
+				parts: [
+					expect.objectContaining({
+						name: 'Beta handle',
+						fileName: 'beta.3mf',
+						sliced: true,
+						replaces: ['handle'],
+						isDefault: true,
+						plates: [expect.objectContaining({ name: 'HANDLE', estSeconds: 7200, grams: 70 })]
+					})
+				]
+			}
+		]);
+		expect(data.builds[0].customPieces).toEqual([]);
+		expect(data.builds[0].skippedParts).toEqual([]);
 	});
 });
 

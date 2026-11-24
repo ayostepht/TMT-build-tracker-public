@@ -16,7 +16,7 @@
 />
 
 <!-- eslint-disable svelte/no-navigation-without-resolve -->
-<LegalPage title="Privacy" updated="2026-11-19" signedIn={data.signedIn} other="terms">
+<LegalPage title="Privacy" updated="2026-11-24" signedIn={data.signedIn} other="terms">
 	<p>
 		This page says what TMT Build Tracker stores about you and where it goes. It describes what the
 		software does. You are using the public instance, which the TMT Build Tracker project runs (the
@@ -88,6 +88,11 @@
 		<li>
 			A slicer file (3MF) you upload is read and then deleted. What stays is a summary (including
 			the file name) and the plate preview images.
+		</li>
+		<li>
+			A custom part you save for reuse keeps its name, the file name, each plate's name, print time,
+			grams and colors, and which kit parts it replaces; the file itself is not kept. Everyone in
+			that workspace or team can see it.
 		</li>
 		<li>
 			The activity history records what was done, when, and by whom. Each build keeps its newest
@@ -169,20 +174,21 @@
 		{:else}
 			On the account page, once you are signed in,
 		{/if}
-		you can download your data as one JSON file (your profile, teams, saved designs and the builds in
-		My builds; photos by file name only; team builds are not included) and delete your account. You confirm
-		by typing your email address. Deleting removes your sign-in and everything in My builds, including
-		photos, drafts, saved designs and custom filaments, and your drafts in teams. Builds you made in a
-		team stay with the team, and their activity shows "Someone" instead of your name. A team where you
-		are the only member is deleted with you. You cannot delete your account while you are the only owner
-		of a team that has other members, or if you are the last site admin.
+		you can download your data as one JSON file (your profile, teams, saved designs, the saved custom
+		parts of your workspaces and the builds in My builds; photos by file name only; team builds are not
+		included) and delete your account. You confirm by typing your email address. Deleting removes your
+		sign-in and everything in My builds, including photos, drafts, saved designs, custom filaments and
+		saved custom parts, and your drafts in teams. Builds you made in a team stay with the team, and their
+		activity shows "Someone" instead of your name. A team where you are the only member is deleted with
+		you. You cannot delete your account while you are the only owner of a team that has other members,
+		or if you are the last site admin.
 	</p>
 	<p>
 		You can also leave a team from its Members page. Your drafts in it are deleted, the builds you
 		made stay with the team, and your name stays in its past activity. An owner can delete a whole
 		team by typing its name: its builds, photos, uploaded files, printers and their saved connection
-		details, invitations, members and custom kits and filaments are deleted for good. The people in
-		it lose access; their accounts and other teams are not touched.
+		details, invitations, members and custom kits, filaments and saved custom parts are deleted for
+		good. The people in it lose access; their accounts and other teams are not touched.
 	</p>
 	<p>
 		Backups are made and kept by the operator, not by the app, so a deleted account can still be in

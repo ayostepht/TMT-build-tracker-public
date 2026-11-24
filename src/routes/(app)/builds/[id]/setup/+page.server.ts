@@ -1,8 +1,10 @@
 import { redirect } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
+import { listLibrary } from '#lib/server/custom-library.ts';
 import { first, getDb } from '#lib/server/db/index.ts';
 import { templates } from '#lib/server/db/schema.ts';
 import { listDesigns } from '#lib/server/designs/designs.ts';
+import { withReplacedNames } from '#lib/server/library-names.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ parent, locals }) => {
@@ -29,5 +31,10 @@ export const load: PageServerLoad = async ({ parent, locals }) => {
 		mine: d.mine,
 		roles: d.roles.map((r) => ({ key: r.key, hex: r.hex }))
 	}));
-	return { baseTemplateId, designs };
+	// The workspace's saved custom parts, to add to this build in the Options step.
+	const savedParts = await withReplacedNames(
+		db,
+		await listLibrary(db, view.build.organizationId, locals.user.id)
+	);
+	return { baseTemplateId, designs, savedParts };
 };

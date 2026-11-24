@@ -77,5 +77,13 @@ describe('Supabase role lockdown', () => {
 			select count(*)::int as n from pg_class c join pg_namespace n on n.oid = c.relnamespace
 			where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity`;
 		expect(rls[0]!.n).toBe(0);
+		// Schema-wide, so tables added by later migrations are covered too.
+		for (const table of ['build_custom_pieces', 'workspace_custom_pieces']) {
+			const c = asRole(roles[0]!);
+			await expect(c.unsafe(`select * from "${table}"`)).rejects.toMatchObject({ code: '42501' });
+			await c.end();
+			const t = await db.$client`select relrowsecurity from pg_class where relname = ${table}`;
+			expect(t[0]?.relrowsecurity).toBe(true);
+		}
 	});
 });

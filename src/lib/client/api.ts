@@ -95,6 +95,10 @@ export const moveBuild = (id: string, organizationId: string) =>
 export const setVariant = (id: string, group: string, option: string) =>
 	call('PATCH', `${b(id)}/variants`, { group, option });
 
+/** Mark parts "Not printing" (`skip: true`) or bring them back (`false`). */
+export const skipPartsApi = (id: string, slugs: string[], skip: boolean) =>
+	call('POST', `${b(id)}/parts/skip`, { slugs, skip });
+
 export const setPartStatus = (id: string, slug: string, status: PartStatus, printedOn?: string) =>
 	call('POST', `${b(id)}/parts/${encodeURIComponent(slug)}/status`, {
 		status,
@@ -451,6 +455,209 @@ export const applyPlateUpload = (
 /** Forget the per-part data learned from a sliced file (plates stay). */
 export const forgetPrintTemplate = (buildId: string) =>
 	call<{ removed: number }>('DELETE', `${b(buildId)}/print-template`);
+/** Add a parsed upload as a custom piece (an accessory or beta replacement) instead of replacing the plates. */
+export const addCustomPiece = (
+	buildId: string,
+	uploadId: string,
+	body: {
+		name: string;
+		/** File plate numbers to add (default: all). */
+		plates?: number[];
+		/** Prints per file plate number, 1 to 20. */
+		runs?: Record<string, number>;
+		/** Print time the maker typed, per file plate number, whole seconds (1 to 30 days). */
+		times?: Record<string, number>;
+		/** Grams per print the maker typed, per file plate number. */
+		grams?: Record<string, number>;
+		/** 3MF filament slot (as a string) → build colour key. */
+		filamentMap?: Record<string, string>;
+		/** Colour of an unsliced file's part. */
+		role?: string;
+		/** Kit part slugs the piece replaces (they are marked Not printing). */
+		replaces?: string[];
+	}
+) =>
+	call<{ pieceId: string; plates: number[]; skipped: string[] }>(
+		'POST',
+		`${b(buildId)}/plates/upload/${encodeURIComponent(uploadId)}/custom`,
+		body
+	);
+/** Remove a custom piece; `restore` also brings back the kit parts it replaced. */
+export const removeCustomPiece = (buildId: string, pieceId: string, restore = false) =>
+	call<{ restored: string[] }>(
+		'DELETE',
+		`${b(buildId)}/custom-pieces/${encodeURIComponent(pieceId)}${restore ? '?restore=1' : ''}`
+	);
+/** Rename a custom piece of a build (its parts and plates follow). */
+export const renameCustomPiece = (buildId: string, pieceId: string, name: string) =>
+	call<{ name: string }>('PATCH', `${b(buildId)}/custom-pieces/${encodeURIComponent(pieceId)}`, {
+		name
+	});
+/** A saved custom part of a workspace (per-plate summaries; never the file). */
+export interface LibraryPiece {
+	id: string;
+	name: string;
+	fileName: string | null;
+	sliced: boolean;
+	templateId: string | null;
+	replaces: string[];
+	plates: {
+		/** 0-based position, what `updateLibraryPiece` `plates[].index` means. */
+		index: number;
+		name: string;
+		estSeconds: number | null;
+		grams: number | null;
+		role: string;
+		runs: number;
+	}[];
+	isDefault: boolean;
+	/** All prints of all plates. */
+	totalSeconds: number;
+	totalGrams: number;
+}
+/** The workspace's saved custom parts (members). */
+export const listCustomLibrary = (organizationId: string) =>
+	call<{
+		pieces: LibraryPiece[];
+		/** The default kit: for labelling `role` and `replaces` in a form. */
+		template: {
+			templateId: string;
+			name: string;
+			roles: { key: string; name: string; material: string; hex: string }[];
+			parts: { slug: string; name: string; section: string }[];
+		};
+	}>('GET', `/api/custom-library?organizationId=${encodeURIComponent(organizationId)}`);
+/** Save a custom piece of a build for new builds of the workspace (idempotent). */
+export const saveCustomPieceToLibrary = (buildId: string, pieceId: string, isDefault = false) =>
+	call<{ piece: LibraryPiece }>('POST', '/api/custom-library', { buildId, pieceId, isDefault });
+/** Rename a saved part or switch "in new builds by default". */
+export const updateLibraryPiece = (
+	organizationId: string,
+	id: string,
+	body: {
+		name?: string;
+		isDefault?: boolean;
+		/** Correct a plate's time (seconds, 1 to 30 days) and grams per print; `null` clears. */
+		plates?: { index: number; estSeconds?: number | null; grams?: number | null }[];
+	}
+) =>
+	call<{ piece: LibraryPiece }>('PATCH', `/api/custom-library/${encodeURIComponent(id)}`, {
+		organizationId,
+		...body
+	});
+/** What `inspectCustomPartFile` answers: the numbers and filament slots of a 3MF, nothing else. */
+export interface InspectedFile {
+	fileName: string;
+	sliced: boolean;
+	printer: string | null;
+	warnings: string[];
+	filaments: { slot: string; name?: string; material: string; color: string | null }[];
+	plates: {
+		index: number;
+		name: string;
+		estSeconds: number | null;
+		grams: number | null;
+		runsHint: number;
+		/** Grams per file slot. */
+		filamentGrams: Record<string, number>;
+		filaments: {
+			slot: string;
+			name?: string;
+			material: string;
+			color: string | null;
+			grams: number;
+		}[];
+	}[];
+}
+/** Reads a 3MF for the add-a-saved-part form; the file is not kept. Raw body, with progress. */
+export function inspectCustomPartFile(
+	organizationId: string,
+	file: File,
+	onProgress?: (fraction: number) => void
+): Promise<InspectedFile> {
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open(
+			'POST',
+			`/api/custom-library/inspect?organizationId=${encodeURIComponent(organizationId)}&name=${encodeURIComponent(file.name)}`
+		);
+		xhr.setRequestHeader('content-type', 'application/octet-stream');
+		xhr.upload.onprogress = (e) => {
+			if (e.lengthComputable) onProgress?.(e.loaded / e.total);
+		};
+		xhr.onerror = () => reject(new Error('Upload failed. Check the connection and try again.'));
+		xhr.onload = () => {
+			let data: Record<string, unknown> = {};
+			try {
+				data = JSON.parse(xhr.responseText);
+			} catch {
+				/* non-JSON error body */
+			}
+			if (xhr.status >= 200 && xhr.status < 300) resolve(data as unknown as InspectedFile);
+			else
+				reject(
+					new Error(
+						xhr.status === 413
+							? ((data.error as string) ?? 'The file is too large for this server')
+							: ((data.error as string) ?? `Upload failed (${xhr.status})`)
+					)
+				);
+		};
+		xhr.send(file);
+	});
+}
+/** What a saved part is made of, by hand: see `POST /api/custom-library`. */
+export interface NewLibraryPiece {
+	name: string;
+	fileName?: string | null;
+	sliced?: boolean;
+	isDefault?: boolean;
+	/** Default: the built-in kit (`CustomLibraryList.template.templateId`). */
+	templateId?: string | null;
+	/** Part slugs of the kit it replaces (at most 60). */
+	replaces?: string[];
+	plates: {
+		name?: string;
+		/** Seconds per print, 1 to 30 days. */
+		estSeconds?: number | null;
+		/** Grams per print, above 0, at most 20000. */
+		grams?: number | null;
+		/** A filament role key of the kit. */
+		role: string;
+		/** 1 to 20. */
+		runs?: number;
+		/** Grams per role key; scaled to `grams` when both are given. */
+		filamentGrams?: Record<string, number>;
+	}[];
+}
+/** Create a saved part without a build (editors). */
+export const createLibraryPiece = (organizationId: string, input: NewLibraryPiece) =>
+	call<{ piece: LibraryPiece }>('POST', '/api/custom-library', { organizationId, ...input });
+/** Overwrite a saved part from a build's linked custom piece as it is now (editors). */
+export const refreshLibraryPiece = (
+	organizationId: string,
+	id: string,
+	buildId: string,
+	pieceId: string
+) =>
+	call<{ piece: LibraryPiece }>('POST', `/api/custom-library/${encodeURIComponent(id)}/refresh`, {
+		organizationId,
+		buildId,
+		pieceId
+	});
+/** Delete a saved part; builds keep the pieces they already have. */
+export const deleteLibraryPiece = (organizationId: string, id: string) =>
+	call(
+		'DELETE',
+		`/api/custom-library/${encodeURIComponent(id)}?organizationId=${encodeURIComponent(organizationId)}`
+	);
+/** Add a saved part to a build. `already: true` when the build has it. */
+export const applyLibraryPiece = (buildId: string, libraryId: string) =>
+	call<{ pieceId: string; plates: number[]; skipped: string[] } | { already: true }>(
+		'POST',
+		`${b(buildId)}/custom-pieces`,
+		{ libraryId }
+	);
 export const discardPlateUpload = (buildId: string, uploadId: string) =>
 	call('DELETE', `${b(buildId)}/plates/upload/${encodeURIComponent(uploadId)}`);
 export const plateThumbnailUrl = (buildId: string, number: number, v = '') =>

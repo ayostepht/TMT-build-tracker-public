@@ -56,9 +56,14 @@ export async function buildRows(
 	]);
 	if (!list.length) return [];
 	const groupsByTemplate = new Map(templateRows.map((t) => [t.id, t.groups]));
-	const partsByBuild = new Map<string, { slug: string; status: string }[]>();
+	const partsByBuild = new Map<string, { slug: string; status: string; skipped: boolean }[]>();
 	for (const r of await db
-		.select({ id: buildParts.buildId, slug: buildParts.partSlug, status: buildParts.status })
+		.select({
+			id: buildParts.buildId,
+			slug: buildParts.partSlug,
+			status: buildParts.status,
+			skipped: buildParts.skipped
+		})
 		.from(buildParts)
 		.where(
 			inArray(
@@ -73,7 +78,7 @@ export async function buildRows(
 	const out: BuildRow[] = [];
 	for (const { templateId, choices, createdAt, ...b } of list) {
 		const off = inactiveSlugs(groupsByTemplate.get(templateId) ?? [], choices);
-		const rows = (partsByBuild.get(b.id) ?? []).filter((r) => !off.has(r.slug));
+		const rows = (partsByBuild.get(b.id) ?? []).filter((r) => !off.has(r.slug) && !r.skipped);
 		const total = rows.length;
 		const printed = rows.filter((r) => r.status === 'Printed').length;
 		out.push({
